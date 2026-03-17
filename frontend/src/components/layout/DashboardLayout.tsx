@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Menu, X, LayoutDashboard, Video, Settings, LogOut, Sparkles } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { authService } from '../../services/authService';
+import { cn } from '../../lib/utils';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -12,6 +14,7 @@ interface LayoutProps {
 
 export default function DashboardLayout({ children, user }: LayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const pathname = usePathname();
 
   const handleLogout = () => {
     authService.logout();
@@ -19,7 +22,9 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
 
   const navLinks = [
     { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
-    // Expandable for future routes
+    { name: 'History', icon: History, href: '/history' },
+    { name: 'Payments', icon: CreditCard, href: '/payments' },
+    { name: 'Settings', icon: Settings, href: '/settings' },
   ];
 
   return (
@@ -58,13 +63,25 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
           <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
             {navLinks.map((link) => {
               const Icon = link.icon;
+              const isActive = pathname === link.href;
+
               return (
                 <a
                   key={link.name}
                   href={link.href}
-                  className="group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg bg-slate-800/50 text-white transition-all duration-200"
+                  className={cn(
+                    "group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-200 relative",
+                    isActive ? "text-white bg-slate-800/80" : "text-slate-400 hover:text-white hover:bg-slate-800/40"
+                  )}
                 >
-                  <Icon className="text-green-500 mr-3 flex-shrink-0 h-5 w-5" />
+                  {isActive && (
+                    <motion.div
+                      layoutId="active-sidebar-nav"
+                      className="absolute left-0 w-1 h-6 bg-green-500 rounded-r-md"
+                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                    />
+                  )}
+                  <Icon className={cn("mr-3 flex-shrink-0 h-5 w-5 transition-colors", isActive ? "text-green-500" : "text-slate-500 group-hover:text-green-400")} />
                   {link.name}
                 </a>
               )
