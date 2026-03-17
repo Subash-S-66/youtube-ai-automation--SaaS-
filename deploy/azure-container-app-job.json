@@ -1,0 +1,46 @@
+{
+  "location": "eastus",
+  "properties": {
+    "environmentId": "<YOUR_CONTAINER_APPS_ENVIRONMENT_ID>",
+    "configuration": {
+      "triggerType": "Manual",
+      "replicaTimeout": 3600,
+      "replicaRetryLimit": 1,
+      "registries": [
+        {
+          "server": "<YOUR_ACR_NAME>.azurecr.io",
+          "username": "<YOUR_ACR_USERNAME>",
+          "passwordSecretRef": "acr-password"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "acr-password",
+          "value": "<YOUR_ACR_PASSWORD>"
+        },
+        {
+          "name": "gemini-api-key",
+          "value": "<YOUR_GEMINI_API_KEY>"
+        }
+      ]
+    },
+    "template": {
+      "containers": [
+        {
+          "image": "<YOUR_ACR_NAME>.azurecr.io/pipeline-worker:latest",
+          "name": "pipeline-worker",
+          "resources": {
+            "cpu": 2.0,
+            "memory": "4.0Gi"
+          },
+          "env": [
+            {
+              "name": "GEMINI_API_KEY",
+              "secretRef": "gemini-api-key"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

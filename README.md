@@ -70,6 +70,20 @@ ClipForge's architecture decouples intensive background logic from standard web 
 - **Backend API (Node.js):** [Railway](https://railway.app), [Render](https://render.com), or [Azure](https://azure.microsoft.com/)
 - **Background Worker:** A *separate* background service on the same platform as the Backend API (using the exact same repository and environment variables).
 - **Redis Queue:** [Upstash](https://upstash.com)
+- **Pipeline Engine:** Azure Container Apps (Provisioned via Docker/ACR)
+
+### CI/CD Pipelines & GitHub Secrets
+
+ClipForge automatically deploys using GitHub Actions (`.github/workflows`). Before pushing to `main`, ensure the following repository **GitHub Secrets** are configured:
+
+*   `MONGO_URI`
+*   `JWT_SECRET`
+*   `STRIPE_SECRET_KEY`
+*   `REDIS_URL`
+*   `GOOGLE_CLIENT_SECRET`
+*   `GEMINI_API_KEY`
+*   `NEXT_PUBLIC_API_URL`
+*   *Azure Specific:* `ACR_LOGIN_SERVER`, `ACR_USERNAME`, `ACR_PASSWORD`
 
 ### Security Requirements (CRITICAL)
 - **HTTPS Enforcement:** Production environments MUST be served over HTTPS. OAuth integrations and Next.js require it.
