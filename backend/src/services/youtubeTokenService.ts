@@ -25,9 +25,14 @@ export const getValidYouTubeToken = async (userId: string): Promise<string> => {
 
   if (!refresh_token) {
     // If we reach here, we don't have a valid access token and no refresh token
+    const wasConnected = user.isYoutubeConnected;
     user.isYoutubeConnected = false;
     user.set('youtubeTokens', undefined);
     await user.save();
+
+    if (wasConnected) {
+        await notifyUser(user, 'Action Required: Reconnect YouTube', '⚠️ Your YouTube connection expired. Please reconnect.').catch(console.error);
+    }
     throw new Error('No valid token and no refresh token available');
   }
 
@@ -59,13 +64,18 @@ export const getValidYouTubeToken = async (userId: string): Promise<string> => {
     // If refresh fails (e.g., user revoked access)
     console.error('Failed to refresh YouTube access token:', error);
 
+    const wasConnected = user.isYoutubeConnected;
+
     // Revoke access on our end
     user.isYoutubeConnected = false;
     user.set('youtubeTokens', undefined);
     await user.save();
 
-    // Notify user of token expiry
-    await notifyUser(user, 'Action Required: Reconnect YouTube', '⚠️ Your YouTube connection expired. Please reconnect.');
+    // Trigger notification ONLY once per failure event (when transitioning from connected to disconnected)
+    if (wasConnected) {
+      // Notify user of token expiry
+      await notifyUser(user, 'Action Required: Reconnect YouTube', '⚠️ Your YouTube connection expired. Please reconnect.').catch(console.error);
+    }
 
     throw new Error('YouTube authentication expired. Please reconnect your account.');
   }

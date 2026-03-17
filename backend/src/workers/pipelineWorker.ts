@@ -121,7 +121,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
             await JobModel.findByIdAndUpdate(jobId, { status: 'success', logs: currentLogs }).catch(console.error);
 
             if (user) {
-              await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.');
+              // Notification based on markers, not exit code
+              if (hasSuccess && !hasRejected) {
+                await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
+              } else {
+                await notifyUser(user, 'Video Upload Failed', '❌ Video generation or upload failed. Please try again.').catch(console.error);
+              }
             }
             resolve();
           } else {
@@ -129,7 +134,8 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
             await JobModel.findByIdAndUpdate(jobId, { status: 'failed', logs: currentLogs }).catch(console.error);
 
             if (user) {
-              await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed. Please try again.');
+              // Non-zero exit code implies failure
+              await notifyUser(user, 'Video Upload Failed', '❌ Video generation or upload failed. Please try again.').catch(console.error);
             }
             reject(new Error(`Process failed with code ${code}`));
           }
