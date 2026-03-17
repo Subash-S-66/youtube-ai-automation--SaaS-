@@ -48,21 +48,13 @@ export const startPipeline = asyncHandler(
         throw new AppError('YouTube is not connected or token is invalid. Please connect your account first.', 400);
     }
 
-    // Call Pipeline Service and wait for it
-    const result: any = await runPipeline(userId, promptId, prompt.gemini_prompt, settings);
+    // Call Pipeline Service to trigger process asynchronously
+    const jobId = await runPipeline(userId, promptId, prompt.gemini_prompt, settings, youtubeToken);
 
-    if (result.success) {
-      res.status(200).json({
-        success: true,
-        message: 'Pipeline executed successfully',
-        jobId: result.jobId,
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        message: result.error || 'Pipeline execution failed',
-        jobId: result.jobId,
-      });
-    }
+    res.status(200).json({
+      success: true,
+      jobId: jobId,
+      message: 'Pipeline started',
+    });
   }
 );
