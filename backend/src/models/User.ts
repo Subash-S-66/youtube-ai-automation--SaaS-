@@ -10,9 +10,10 @@ export interface IUser extends Document {
   email: string;
   password?: string;
   role: string;
-  plan: string;
+  plan: 'free' | 'pro';
   uploadLimitPerDay: number;
   uploadsUsedToday: number;
+  lastUploadReset: Date;
   youtubeTokens?: IYoutubeTokens;
   isYoutubeConnected: boolean;
   telegramChatId?: string;
@@ -48,6 +49,7 @@ const UserSchema = new Schema<IUser>(
     },
     plan: {
       type: String,
+      enum: ['free', 'pro'],
       default: 'free',
     },
     uploadLimitPerDay: {
@@ -57,6 +59,10 @@ const UserSchema = new Schema<IUser>(
     uploadsUsedToday: {
       type: Number,
       default: 0,
+    },
+    lastUploadReset: {
+      type: Date,
+      default: Date.now,
     },
     youtubeTokens: {
       type: YoutubeTokensSchema,

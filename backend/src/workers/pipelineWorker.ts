@@ -9,6 +9,7 @@ import JobModel from '../models/Job';
 import Prompt from '../models/Prompt';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import { PipelineJobPayload } from '../queues/pipelineQueue';
+import { incrementUploadCount } from '../services/uploadLimitService';
 
 // Load env vars
 dotenv.config();
@@ -81,9 +82,11 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         });
 
         let currentLogs = dbJob.logs;
+        let combinedStdoutStderr = ''; // To check for markers later
 
         pythonProcess.stdout.on('data', (data) => {
           const text = data.toString();
+          combinedStdoutStderr += text;
           currentLogs = appendLogSafe(currentLogs, text);
           console.log(`[Pipeline ${jobId} STDOUT]: ${text.trim()}`);
 
@@ -92,6 +95,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
         pythonProcess.stderr.on('data', (data) => {
           const text = data.toString();
+          combinedStdoutStderr += text;
           currentLogs = appendLogSafe(currentLogs, text);
           console.error(`[Pipeline ${jobId} STDERR]: ${text.trim()}`);
 
@@ -99,6 +103,15 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         });
 
         pythonProcess.on('close', async (code) => {
+          // Check for pipeline success or youtube rejected to increment upload count
+          if (combinedStdoutStderr.includes('PIPELINE_STATUS:SUCCESS') ||
+              combinedStdoutStderr.includes('PIPELINE_STATUS:YOUTUBE_REJECTED')) {
+              await incrementUploadCount(userId).catch(console.error);
+          } else {
+              // Includes PIPELINE_STATUS:FAILED or missing marker (treat as FAILED)
+              // Do not increment
+          }
+
           if (code === 0) {
             currentLogs = appendLogSafe(currentLogs, `\nProcess exited successfully.`);
             await JobModel.findByIdAndUpdate(jobId, { status: 'success', logs: currentLogs }).catch(console.error);

@@ -6,6 +6,7 @@ import Prompt from '../models/Prompt';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import Job from '../models/Job';
 import { pipelineQueue } from '../queues/pipelineQueue';
+import { canUserUpload } from '../services/uploadLimitService';
 
 // @desc    Add generation pipeline job to queue
 // @route   POST /api/pipeline/run
@@ -19,6 +20,12 @@ export const startPipeline = asyncHandler(
     }
 
     const userId = req.user.id;
+
+    // Check Upload Limits
+    const limitCheck = await canUserUpload(userId);
+    if (!limitCheck.allowed) {
+      throw new AppError(limitCheck.message || 'Daily upload limit reached', 403);
+    }
 
     // Check for a running or pending job here to prevent multiple queued tasks
     const existingJob = await Job.findOne({
@@ -68,10 +75,17 @@ export const startPipeline = asyncHandler(
       settings,
     });
 
-    res.status(200).json({
+    const responsePayload: any = {
       success: true,
       jobId: job._id.toString(),
       message: 'Job added to queue',
-    });
+    };
+
+    // Include warning if high volume is requested
+    if (settings.videoCount > 10) {
+      responsePayload.warning = 'YouTube allows ~10 uploads per 10 hours. This may affect uploads.';
+    }
+
+    res.status(200).json(responsePayload);
   }
 );
