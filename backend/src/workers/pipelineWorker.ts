@@ -2,6 +2,7 @@ import { Worker, Job as BullJob } from 'bullmq';
 import { spawn } from 'child_process';
 import path from 'path';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 import connectDB from '../config/db';
 import { connection } from '../config/redis';
 import JobModel from '../models/Job';
@@ -12,10 +13,21 @@ import { PipelineJobPayload } from '../queues/pipelineQueue';
 // Load env vars
 dotenv.config();
 
-// Connect to MongoDB
+// Connect to MongoDB BEFORE starting worker
 connectDB();
 
-console.log('Worker is starting and connecting to Redis/MongoDB...');
+console.log('Worker is starting and connected to Redis/MongoDB...');
+
+const MAX_LOG_SIZE = 100 * 1024; // Limit log to 100 KB
+
+const appendLogSafe = (currentLogs: string, newText: string): string => {
+  let combined = currentLogs + newText;
+  if (combined.length > MAX_LOG_SIZE) {
+    // Keep the last MAX_LOG_SIZE characters, optionally adding a truncation notice
+    combined = '...[LOGS TRUNCATED]...\n' + combined.substring(combined.length - MAX_LOG_SIZE);
+  }
+  return combined;
+};
 
 const pipelineWorker = new Worker<PipelineJobPayload>(
   'pipelineQueue',
@@ -30,7 +42,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     }
 
     dbJob.status = 'running';
-    dbJob.logs += 'Starting pipeline execution...\n';
+    dbJob.logs = appendLogSafe(dbJob.logs, 'Starting pipeline execution...\n');
     await dbJob.save();
 
     try {
@@ -72,7 +84,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
         pythonProcess.stdout.on('data', (data) => {
           const text = data.toString();
-          currentLogs += text;
+          currentLogs = appendLogSafe(currentLogs, text);
           console.log(`[Pipeline ${jobId} STDOUT]: ${text.trim()}`);
 
           JobModel.findByIdAndUpdate(jobId, { logs: currentLogs }).exec().catch(console.error);
@@ -80,7 +92,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
         pythonProcess.stderr.on('data', (data) => {
           const text = data.toString();
-          currentLogs += text;
+          currentLogs = appendLogSafe(currentLogs, text);
           console.error(`[Pipeline ${jobId} STDERR]: ${text.trim()}`);
 
           JobModel.findByIdAndUpdate(jobId, { logs: currentLogs }).exec().catch(console.error);
@@ -88,18 +100,18 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
         pythonProcess.on('close', async (code) => {
           if (code === 0) {
-            currentLogs += `\nProcess exited successfully.`;
+            currentLogs = appendLogSafe(currentLogs, `\nProcess exited successfully.`);
             await JobModel.findByIdAndUpdate(jobId, { status: 'success', logs: currentLogs }).catch(console.error);
             resolve();
           } else {
-            currentLogs += `\nProcess failed with code ${code}.`;
+            currentLogs = appendLogSafe(currentLogs, `\nProcess failed with code ${code}.`);
             await JobModel.findByIdAndUpdate(jobId, { status: 'failed', logs: currentLogs }).catch(console.error);
             reject(new Error(`Process failed with code ${code}`));
           }
         });
 
         pythonProcess.on('error', async (err) => {
-          currentLogs += `\nProcess failed to spawn: ${err.message}`;
+          currentLogs = appendLogSafe(currentLogs, `\nProcess failed to spawn: ${err.message}`);
           await JobModel.findByIdAndUpdate(jobId, { status: 'failed', logs: currentLogs }).catch(console.error);
           reject(err);
         });
@@ -109,17 +121,22 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       console.error(`Error processing job ${jobId}:`, error);
 
       // Attempt to record failure in DB if not already captured
-      await JobModel.findByIdAndUpdate(jobId, {
-        status: 'failed',
-        $set: { logs: dbJob.logs + `\nWorker Error: ${error.message}` },
-      }).catch(console.error);
+      const errorMsg = `\nWorker Error: ${error.message}`;
+      const updatedJob = await JobModel.findById(jobId);
+      if (updatedJob) {
+          const finalLogs = appendLogSafe(updatedJob.logs, errorMsg);
+          await JobModel.findByIdAndUpdate(jobId, {
+            status: 'failed',
+            logs: finalLogs,
+          }).catch(console.error);
+      }
 
       throw error;
     }
   },
   {
     connection: connection as any, // Cast to any to bypass strict type matching
-    concurrency: 2, // Limit concurrency to 2 jobs at a time
+    concurrency: 1, // Limit concurrency to 1 jobs at a time
   }
 );
 
@@ -130,5 +147,18 @@ pipelineWorker.on('completed', (job) => {
 pipelineWorker.on('failed', (job, err) => {
   console.error(`Job ${job?.id} has failed with ${err.message}`);
 });
+
+// Graceful Shutdown
+const shutdown = async (signal: string) => {
+  console.log(`Received ${signal}, closing worker gracefully...`);
+  await pipelineWorker.close();
+  await connection.quit();
+  await mongoose.connection.close();
+  console.log('Worker closed. Exiting process.');
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 export default pipelineWorker;
