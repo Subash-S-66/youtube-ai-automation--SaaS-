@@ -11,6 +11,8 @@ export interface IUser extends Document {
   password?: string;
   role: string;
   plan: 'free' | 'pro';
+  subscriptionStatus: 'active' | 'inactive';
+  stripeCustomerId?: string;
   uploadLimitPerDay: number;
   uploadsUsedToday: number;
   lastUploadReset: Date;
@@ -51,6 +53,14 @@ const UserSchema = new Schema<IUser>(
       type: String,
       enum: ['free', 'pro'],
       default: 'free',
+    },
+    subscriptionStatus: {
+      type: String,
+      enum: ['active', 'inactive'],
+      default: 'inactive',
+    },
+    stripeCustomerId: {
+      type: String,
     },
     uploadLimitPerDay: {
       type: Number,

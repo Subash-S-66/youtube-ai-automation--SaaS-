@@ -6,6 +6,7 @@ import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
 import { promptService } from '../../services/promptService';
 import { pipelineService } from '../../services/pipelineService';
+import { paymentService } from '../../services/paymentService';
 
 export default function Dashboard() {
   const router = useRouter();
@@ -66,6 +67,17 @@ export default function Dashboard() {
     authService.logout();
   };
 
+  const handleUpgrade = async () => {
+    try {
+      const response = await paymentService.createCheckoutSession();
+      if (response.success && response.url) {
+        window.location.href = response.url;
+      }
+    } catch (err: any) {
+      setMessage({ text: err.response?.data?.message || 'Failed to start checkout', type: 'error' });
+    }
+  };
+
   const handleGenerateAndRun = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.isYoutubeConnected) {
@@ -124,9 +136,19 @@ export default function Dashboard() {
             <div className="font-bold text-xl text-indigo-600">VideoAutomation</div>
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-500">{user?.email}</span>
-              <span className="text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full uppercase font-medium tracking-wide">
+              <span className={`text-xs px-2 py-1 rounded-full uppercase font-medium tracking-wide ${user?.plan === 'pro' ? 'bg-yellow-100 text-yellow-800' : 'bg-indigo-100 text-indigo-800'}`}>
                 {user?.plan} PLAN
               </span>
+
+              {user?.plan === 'free' && (
+                <button
+                  onClick={handleUpgrade}
+                  className="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded transition"
+                >
+                  Upgrade to Pro
+                </button>
+              )}
+
               <button
                 onClick={handleLogout}
                 className="text-sm text-red-600 hover:text-red-800"

@@ -5,6 +5,7 @@ import authRoutes from './routes/authRoutes';
 import youtubeRoutes from './routes/youtubeRoutes';
 import promptRoutes from './routes/promptRoutes';
 import pipelineRoutes from './routes/pipelineRoutes';
+import paymentRoutes from './routes/paymentRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 const app: Application = express();
@@ -15,6 +16,9 @@ app.use(helmet());
 // CORS Middleware
 app.use(cors());
 
+// Webhook payload needs to remain raw for Stripe Signature verification
+app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
+
 // Body parser
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -24,6 +28,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/youtube', youtubeRoutes);
 app.use('/api/prompt', promptRoutes);
 app.use('/api/pipeline', pipelineRoutes);
+app.use('/api/payment', paymentRoutes);
 
 // Base route
 app.get('/', (req: Request, res: Response) => {
