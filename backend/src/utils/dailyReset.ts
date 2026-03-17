@@ -4,13 +4,13 @@ export const resetDailyUploads = (user: IUser): boolean => {
   const now = new Date();
   const lastReset = new Date(user.lastUploadReset);
 
-  // Check if dates are on the same day (ignoring time)
-  const isSameDay =
-    now.getFullYear() === lastReset.getFullYear() &&
-    now.getMonth() === lastReset.getMonth() &&
-    now.getDate() === lastReset.getDate();
+  // Compare using strict UTC date (YYYY-MM-DD)
+  const isSameDayUTC =
+    now.getUTCFullYear() === lastReset.getUTCFullYear() &&
+    now.getUTCMonth() === lastReset.getUTCMonth() &&
+    now.getUTCDate() === lastReset.getUTCDate();
 
-  if (!isSameDay) {
+  if (!isSameDayUTC) {
     user.uploadsUsedToday = 0;
     user.lastUploadReset = now;
     return true; // Indicates the user was modified

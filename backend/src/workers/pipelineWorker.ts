@@ -103,13 +103,13 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         });
 
         pythonProcess.on('close', async (code) => {
-          // Check for pipeline success or youtube rejected to increment upload count
-          if (combinedStdoutStderr.includes('PIPELINE_STATUS:SUCCESS') ||
-              combinedStdoutStderr.includes('PIPELINE_STATUS:YOUTUBE_REJECTED')) {
+          // Marker Evaluation Priority: YOUTUBE_REJECTED > SUCCESS > FAILED
+          const hasRejected = combinedStdoutStderr.includes('PIPELINE_STATUS:YOUTUBE_REJECTED');
+          const hasSuccess = combinedStdoutStderr.includes('PIPELINE_STATUS:SUCCESS');
+          // hasFailed is implicit if neither is found, or explicit marker FAILED is present
+
+          if (hasRejected || hasSuccess) {
               await incrementUploadCount(userId).catch(console.error);
-          } else {
-              // Includes PIPELINE_STATUS:FAILED or missing marker (treat as FAILED)
-              // Do not increment
           }
 
           if (code === 0) {

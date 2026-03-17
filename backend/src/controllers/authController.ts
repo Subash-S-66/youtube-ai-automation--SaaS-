@@ -60,6 +60,28 @@ export const register = asyncHandler(
   }
 );
 
+// @desc    Get current logged in user
+// @route   GET /api/auth/me
+// @access  Private
+export const getMe = asyncHandler(async (req: Request, res: Response) => {
+  const user = await User.findById(req.user?.id).select('-password');
+
+  if (user) {
+    res.json({
+      success: true,
+      data: {
+        _id: user.id,
+        email: user.email,
+        role: user.role,
+        plan: user.plan,
+        isYoutubeConnected: user.isYoutubeConnected,
+      },
+    });
+  } else {
+    throw new AppError('User not found', 404);
+  }
+});
+
 // @desc    Authenticate a user
 // @route   POST /api/auth/login
 // @access  Public

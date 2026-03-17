@@ -8,6 +8,22 @@ import Job from '../models/Job';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { canUserUpload } from '../services/uploadLimitService';
 
+// @desc    Get user's jobs
+// @route   GET /api/pipeline/jobs
+// @access  Private
+export const getJobs = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user || !req.user.id) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const jobs = await Job.find({ userId: req.user.id }).sort({ createdAt: -1 });
+
+  res.status(200).json({
+    success: true,
+    data: jobs,
+  });
+});
+
 // @desc    Add generation pipeline job to queue
 // @route   POST /api/pipeline/run
 // @access  Private
