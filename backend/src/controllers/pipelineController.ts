@@ -4,10 +4,10 @@ import { AppError } from '../middleware/errorHandler';
 import { RunPipelineInput } from '../utils/validators/pipelineValidators';
 import Prompt from '../models/Prompt';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
-import { runPipeline } from '../services/pipelineService';
 import Job from '../models/Job';
+import { pipelineQueue } from '../queues/pipelineQueue';
 
-// @desc    Run the generation pipeline
+// @desc    Add generation pipeline job to queue
 // @route   POST /api/pipeline/run
 // @access  Private
 export const startPipeline = asyncHandler(
@@ -20,8 +20,12 @@ export const startPipeline = asyncHandler(
 
     const userId = req.user.id;
 
-    // Check for a running job here to prevent unneeded DB queries
-    const existingJob = await Job.findOne({ userId, status: 'running' });
+    // Check for a running or pending job here to prevent multiple queued tasks
+    const existingJob = await Job.findOne({
+      userId,
+      status: { $in: ['pending', 'running'] }
+    });
+
     if (existingJob) {
       throw new AppError('A process is already running', 400);
     }
@@ -36,7 +40,7 @@ export const startPipeline = asyncHandler(
         throw new AppError('Prompt does not belong to user', 403);
     }
 
-    // Verify YouTube token exists
+    // Verify YouTube token exists before queueing
     let youtubeToken = '';
     try {
         youtubeToken = await getValidYouTubeToken(userId);
@@ -48,13 +52,26 @@ export const startPipeline = asyncHandler(
         throw new AppError('YouTube is not connected or token is invalid. Please connect your account first.', 400);
     }
 
-    // Call Pipeline Service to trigger process asynchronously
-    const jobId = await runPipeline(userId, promptId, prompt.gemini_prompt, settings, youtubeToken);
+    // Create a new job document
+    const job = await Job.create({
+      userId,
+      promptId,
+      status: 'pending',
+      logs: 'Job added to queue...\n',
+    });
+
+    // Add job to BullMQ
+    await pipelineQueue.add('runPipeline', {
+      userId,
+      promptId,
+      jobId: job._id.toString(),
+      settings,
+    });
 
     res.status(200).json({
       success: true,
-      jobId: jobId,
-      message: 'Pipeline started',
+      jobId: job._id.toString(),
+      message: 'Job added to queue',
     });
   }
 );
