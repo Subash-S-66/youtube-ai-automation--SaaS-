@@ -4,10 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon src/server.ts",
+    "dev": "ts-node-dev src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "worker": "ts-node src/workers/pipelineWorker.ts"
+    "worker": "ts-node src/workers/pipelineWorker.ts",
+    "start:worker": "node dist/workers/pipelineWorker.js"
   },
   "keywords": [],
   "author": "",
@@ -40,6 +41,7 @@
     "@types/nodemailer": "^7.0.11",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
   }
 }

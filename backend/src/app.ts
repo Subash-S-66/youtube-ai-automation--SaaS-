@@ -10,6 +10,9 @@ import { errorHandler, AppError } from './middleware/errorHandler';
 
 const app: Application = express();
 
+// Trust proxy for production hosting (e.g. Render, Railway, Azure)
+app.set('trust proxy', 1);
+
 // Security Middleware
 app.use(helmet());
 
