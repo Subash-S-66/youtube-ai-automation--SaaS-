@@ -6,10 +6,12 @@ import mongoose from 'mongoose';
 import connectDB from '../config/db';
 import { connection } from '../config/redis';
 import JobModel from '../models/Job';
+import User from '../models/User';
 import Prompt from '../models/Prompt';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import { PipelineJobPayload } from '../queues/pipelineQueue';
 import { incrementUploadCount } from '../services/uploadLimitService';
+import { notifyUser } from '../services/notificationService';
 
 // Load env vars
 dotenv.config();
@@ -112,13 +114,23 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
               await incrementUploadCount(userId).catch(console.error);
           }
 
+          const user = await User.findById(userId);
+
           if (code === 0) {
             currentLogs = appendLogSafe(currentLogs, `\nProcess exited successfully.`);
             await JobModel.findByIdAndUpdate(jobId, { status: 'success', logs: currentLogs }).catch(console.error);
+
+            if (user) {
+              await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.');
+            }
             resolve();
           } else {
             currentLogs = appendLogSafe(currentLogs, `\nProcess failed with code ${code}.`);
             await JobModel.findByIdAndUpdate(jobId, { status: 'failed', logs: currentLogs }).catch(console.error);
+
+            if (user) {
+              await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed. Please try again.');
+            }
             reject(new Error(`Process failed with code ${code}`));
           }
         });

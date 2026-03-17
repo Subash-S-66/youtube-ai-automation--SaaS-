@@ -1,5 +1,6 @@
 import User from '../models/User';
 import { getGoogleOAuthClient } from './youtubeOAuthService';
+import { notifyUser } from './notificationService';
 
 export const getValidYouTubeToken = async (userId: string): Promise<string> => {
   const user = await User.findById(userId);
@@ -62,6 +63,9 @@ export const getValidYouTubeToken = async (userId: string): Promise<string> => {
     user.isYoutubeConnected = false;
     user.set('youtubeTokens', undefined);
     await user.save();
+
+    // Notify user of token expiry
+    await notifyUser(user, 'Action Required: Reconnect YouTube', '⚠️ Your YouTube connection expired. Please reconnect.');
 
     throw new Error('YouTube authentication expired. Please reconnect your account.');
   }
