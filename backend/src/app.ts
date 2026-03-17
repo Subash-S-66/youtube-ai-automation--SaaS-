@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import authRoutes from './routes/authRoutes';
 import youtubeRoutes from './routes/youtubeRoutes';
+import promptRoutes from './routes/promptRoutes';
+import pipelineRoutes from './routes/pipelineRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 const app: Application = express();
@@ -20,6 +22,8 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/youtube', youtubeRoutes);
+app.use('/api/prompt', promptRoutes);
+app.use('/api/pipeline', pipelineRoutes);
 
 // Base route
 app.get('/', (req: Request, res: Response) => {
