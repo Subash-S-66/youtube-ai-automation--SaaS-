@@ -1,0 +1,77 @@
+# Environment variables
+.env
+config/.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Credentials and secrets
+client_secret.json
+config/client_secret.json
+token.json
+credentials.json
+
+# Generated outputs and media
+output/
+data/output/
+*.mp4
+*.mp3
+*.wav
+*.mkv
+*.avi
+*.mov
+*.webm
+*.aac
+*.flac
+*.ogg
+*.m4a
+
+# Clips and assets (large media files)
+assets/clips/
+output/clips/
+data/assets/clips/
+
+# Cache files
+.cache/
+*.cache
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tools
+tools/ffmpeg/

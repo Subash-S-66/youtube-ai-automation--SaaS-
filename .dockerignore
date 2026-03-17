@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+config/.env
+data/output
+data/assets/clips
+data/assets/used_clips.json
+test_*.mp3
