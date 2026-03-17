@@ -1,22 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Play, Activity, Youtube, ListVideo, Clock, FileVideo, ShieldAlert, Sparkles, RefreshCw } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
 import { promptService } from '../../services/promptService';
 import { pipelineService } from '../../services/pipelineService';
 import { paymentService } from '../../services/paymentService';
+import DashboardLayout from '../../components/layout/DashboardLayout';
 
 export default function Dashboard() {
-  const router = useRouter();
-
-  // App State
   const [user, setUser] = useState<any>(null);
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Form State
   const [prompt, setPrompt] = useState('');
   const [duration, setDuration] = useState<number>(60);
   const [contentType, setContentType] = useState<'clips' | 'images' | 'mixed'>('mixed');
@@ -24,7 +22,6 @@ export default function Dashboard() {
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
 
-  // Initial Data Fetch
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -33,17 +30,14 @@ export default function Dashboard() {
         const jobsData = await pipelineService.getJobs();
         setJobs(jobsData.data);
       } catch (err) {
-        // Not authenticated or error
         authService.logout();
       } finally {
         setLoading(false);
       }
     };
-
     fetchData();
   }, []);
 
-  // Poll for jobs periodically
   useEffect(() => {
     let interval: NodeJS.Timeout;
     if (user) {
@@ -52,21 +46,14 @@ export default function Dashboard() {
                 const jobsData = await pipelineService.getJobs();
                 setJobs(jobsData.data);
             } catch (err) {
-                console.error("Failed to refresh jobs");
+                // Silently ignore polling errors
             }
         }, 5000);
     }
     return () => clearInterval(interval);
   }, [user]);
 
-  const handleConnectYouTube = () => {
-    window.location.href = youtubeService.getAuthUrl();
-  };
-
-  const handleLogout = () => {
-    authService.logout();
-  };
-
+  const handleConnectYouTube = () => window.location.href = youtubeService.getAuthUrl();
   const handleUpgrade = async () => {
     try {
       const response = await paymentService.createCheckoutSession();
@@ -84,239 +71,234 @@ export default function Dashboard() {
       setMessage({ text: 'Please connect YouTube first', type: 'error' });
       return;
     }
-
     setGenerating(true);
     setMessage(null);
-
     try {
-      // Step 1: Generate Prompt
       const promptRes = await promptService.generatePrompt(prompt);
       const promptId = promptRes.data.id;
-
-      // Step 2: Run Pipeline
-      const pipelineRes = await pipelineService.runPipeline(promptId, {
-        duration,
-        contentType,
-        videoCount
-      });
+      const pipelineRes = await pipelineService.runPipeline(promptId, { duration, contentType, videoCount });
 
       if (pipelineRes.warning) {
           setMessage({ text: pipelineRes.warning, type: 'warning' });
       } else {
           setMessage({ text: 'Pipeline started successfully!', type: 'success' });
       }
-
-      // Clear form
       setPrompt('');
-
-      // Refresh jobs instantly
       const jobsData = await pipelineService.getJobs();
       setJobs(jobsData.data);
-
     } catch (err: any) {
-      setMessage({
-        text: err.response?.data?.message || 'Failed to generate video',
-        type: 'error'
-      });
+      setMessage({ text: err.response?.data?.message || 'Failed to generate video', type: 'error' });
     } finally {
       setGenerating(false);
     }
   };
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+    return (
+      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
+        <RefreshCw className="h-8 w-8 text-green-500 animate-spin" />
+      </div>
+    );
   }
 
+  const getStatusBadge = (status: string) => {
+    const colors: any = {
+      pending: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
+      running: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+      success: 'bg-green-500/10 text-green-500 border-green-500/20',
+      failed: 'bg-red-500/10 text-red-500 border-red-500/20',
+    };
+    return (
+      <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${colors[status] || colors.pending}`}>
+        {status}
+      </span>
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-gray-100 pb-12">
-      {/* Navigation */}
-      <nav className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16 items-center">
-            <div className="font-bold text-xl text-indigo-600">VideoAutomation</div>
-            <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-500">{user?.email}</span>
-              <span className={`text-xs px-2 py-1 rounded-full uppercase font-medium tracking-wide ${user?.plan === 'pro' ? 'bg-yellow-100 text-yellow-800' : 'bg-indigo-100 text-indigo-800'}`}>
-                {user?.plan} PLAN
-              </span>
+    <DashboardLayout user={user}>
 
-              {user?.plan === 'free' && (
-                <button
-                  onClick={handleUpgrade}
-                  className="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded transition"
-                >
-                  Upgrade to Pro
-                </button>
-              )}
+      {/* Top Warning/Message Area */}
+      <AnimatePresence>
+        {message && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className={`p-4 rounded-xl border flex items-start space-x-3 ${
+              message.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+              message.type === 'warning' ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' :
+              'bg-green-500/10 border-green-500/20 text-green-400'
+            }`}
+          >
+            <ShieldAlert className="h-5 w-5 flex-shrink-0 mt-0.5" />
+            <span className="text-sm font-medium">{message.text}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-              <button
-                onClick={handleLogout}
-                className="text-sm text-red-600 hover:text-red-800"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 space-y-8">
+        {/* Left Column: Form & Connect */}
+        <div className="lg:col-span-2 space-y-6">
 
-        {/* YouTube Connection Status */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Integrations</h2>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className={`h-3 w-3 rounded-full ${user?.isYoutubeConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-              <span className="text-sm text-gray-700 font-medium">
-                YouTube {user?.isYoutubeConnected ? 'Connected' : 'Not Connected'}
-              </span>
-            </div>
-            {!user?.isYoutubeConnected && (
-              <button
-                onClick={handleConnectYouTube}
-                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-sm font-medium transition"
-              >
-                Connect YouTube
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Generate Videos Form */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Generate New Video</h2>
-
-          {message && (
-            <div className={`mb-4 p-4 rounded text-sm ${
-              message.type === 'error' ? 'bg-red-50 text-red-700' :
-              message.type === 'warning' ? 'bg-yellow-50 text-yellow-800' :
-              'bg-green-50 text-green-700'
-            }`}>
-              {message.text}
-            </div>
-          )}
-
-          <form onSubmit={handleGenerateAndRun} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Prompt Idea</label>
-              <textarea
-                required
-                rows={3}
-                className="mt-1 p-3 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                placeholder="A motivational story about a samurai facing his greatest fear..."
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-              />
+          {/* Generation Card */}
+          <motion.div whileHover={{ scale: 1.005 }} className="bg-[#111827] border border-slate-800 rounded-2xl p-6 shadow-xl">
+            <div className="flex items-center mb-6">
+              <div className="h-10 w-10 bg-green-500/10 rounded-lg flex items-center justify-center mr-4 border border-green-500/20">
+                 <Sparkles className="h-5 w-5 text-green-500" />
+              </div>
+              <h2 className="text-xl font-bold text-white">Generate New Script</h2>
             </div>
 
-            <div className="grid grid-cols-1 gap-y-6 gap-x-4 sm:grid-cols-3">
+            <form onSubmit={handleGenerateAndRun} className="space-y-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700">Duration (seconds)</label>
-                <input
-                  type="number"
+                <label className="block text-sm font-medium text-slate-300 mb-2">Prompt Idea</label>
+                <textarea
                   required
-                  min="10"
-                  max="60"
-                  className="mt-1 p-2 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                  value={duration}
-                  onChange={(e) => setDuration(Number(e.target.value))}
+                  rows={4}
+                  className="w-full bg-[#0f172a] border border-slate-700 rounded-xl p-4 text-slate-300 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 transition-colors resize-none"
+                  placeholder="Describe your video idea here..."
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Content Type</label>
-                <select
-                  className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md border"
-                  value={contentType}
-                  onChange={(e) => setContentType(e.target.value as any)}
-                >
-                  <option value="clips">Clips</option>
-                  <option value="images">Images</option>
-                  <option value="mixed">Mixed</option>
-                </select>
-              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800">
+                  <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
+                    <Clock className="h-3 w-3 mr-2" /> Duration
+                  </label>
+                  <input type="range" min="10" max="60" className="w-full accent-green-500" value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
+                  <div className="text-right text-sm text-green-400 font-medium mt-1">{duration}s</div>
+                </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Video Count</label>
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  className="mt-1 p-2 block w-full border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                  value={videoCount}
-                  onChange={(e) => setVideoCount(Number(e.target.value))}
-                />
-              </div>
-            </div>
+                <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800">
+                  <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
+                    <FileVideo className="h-3 w-3 mr-2" /> Format
+                  </label>
+                  <select
+                    className="w-full bg-transparent text-slate-300 text-sm focus:outline-none cursor-pointer"
+                    value={contentType}
+                    onChange={(e) => setContentType(e.target.value as any)}
+                  >
+                    <option value="clips" className="bg-slate-800">Clips</option>
+                    <option value="images" className="bg-slate-800">Images</option>
+                    <option value="mixed" className="bg-slate-800">Mixed</option>
+                  </select>
+                </div>
 
-            <div className="flex justify-end">
-              <button
-                type="submit"
-                disabled={generating || !user?.isYoutubeConnected}
-                className="bg-indigo-600 border border-transparent rounded-md shadow-sm py-2 px-4 inline-flex justify-center text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-              >
-                {generating ? 'Processing...' : 'Generate & Run'}
-              </button>
-            </div>
-          </form>
-        </div>
-
-        {/* Job History */}
-        <div className="bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-medium text-gray-900 mb-4">Job History</h2>
-
-          {jobs.length === 0 ? (
-            <p className="text-sm text-gray-500">No jobs found.</p>
-          ) : (
-            <div className="flex flex-col">
-              <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
-                <div className="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
-                  <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Date
-                          </th>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Status
-                          </th>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            ID
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white divide-y divide-gray-200">
-                        {jobs.map((job) => (
-                          <tr key={job._id}>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {new Date(job.createdAt).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full
-                                ${job.status === 'success' ? 'bg-green-100 text-green-800' :
-                                  job.status === 'failed' ? 'bg-red-100 text-red-800' :
-                                  job.status === 'running' ? 'bg-blue-100 text-blue-800' :
-                                  'bg-gray-100 text-gray-800'}`}>
-                                {job.status}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
-                              {job._id}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800">
+                  <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
+                    <ListVideo className="h-3 w-3 mr-2" /> Count
+                  </label>
+                  <input
+                    type="number" required min="1"
+                    className="w-full bg-transparent text-slate-300 text-sm focus:outline-none border-b border-slate-700 pb-1"
+                    value={videoCount}
+                    onChange={(e) => setVideoCount(Number(e.target.value))}
+                  />
                 </div>
               </div>
-            </div>
-          )}
+
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                type="submit"
+                disabled={generating || !user?.isYoutubeConnected}
+                className="w-full py-3.5 px-4 bg-green-500 hover:bg-green-400 text-[#0f172a] font-bold rounded-xl shadow-[0_0_20px_rgba(34,197,94,0.3)] transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center"
+              >
+                {generating ? (
+                  <RefreshCw className="h-5 w-5 animate-spin mr-2" />
+                ) : (
+                  <Play className="h-5 w-5 mr-2 fill-current" />
+                )}
+                {generating ? 'Processing Pipeline...' : 'Generate & Run Pipeline'}
+              </motion.button>
+            </form>
+          </motion.div>
         </div>
 
+        {/* Right Column: Status & Connections */}
+        <div className="space-y-6">
+
+          <motion.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+             <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                <Youtube className="h-24 w-24" />
+             </div>
+             <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Integrations</h3>
+
+             <div className="flex flex-col space-y-4 relative z-10">
+                <div className="flex items-center justify-between p-4 bg-[#0f172a] rounded-xl border border-slate-800">
+                  <div className="flex items-center">
+                    <div className="relative mr-3">
+                      <Youtube className={`h-6 w-6 ${user?.isYoutubeConnected ? 'text-red-500' : 'text-slate-600'}`} />
+                      <div className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#0f172a] ${user?.isYoutubeConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">YouTube</p>
+                      <p className="text-xs text-slate-500">{user?.isYoutubeConnected ? 'Authorized' : 'Disconnected'}</p>
+                    </div>
+                  </div>
+                  {!user?.isYoutubeConnected && (
+                    <button onClick={handleConnectYouTube} className="text-xs bg-red-500/10 hover:bg-red-500/20 text-red-500 font-semibold px-3 py-1.5 rounded-lg border border-red-500/20 transition-colors">
+                      Connect
+                    </button>
+                  )}
+                </div>
+
+                {user?.plan === 'free' && (
+                  <div className="p-4 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-xl border border-indigo-500/20">
+                    <p className="text-sm font-medium text-indigo-300 mb-3">Upgrade to Pro to unlock unlimited processing and high-priority queues.</p>
+                    <button onClick={handleUpgrade} className="w-full text-xs bg-indigo-500 hover:bg-indigo-400 text-white font-bold py-2 rounded-lg transition-colors shadow-lg shadow-indigo-500/20">
+                      Upgrade to Pro
+                    </button>
+                  </div>
+                )}
+             </div>
+          </motion.div>
+
+        </div>
       </div>
-    </div>
+
+      {/* Jobs Table */}
+      <div className="mt-6 bg-[#111827] border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+        <div className="px-6 py-5 border-b border-slate-800 flex items-center">
+          <Activity className="h-5 w-5 text-blue-500 mr-2" />
+          <h3 className="text-lg font-bold text-white">Recent Jobs</h3>
+        </div>
+        <div className="overflow-x-auto">
+          {jobs.length === 0 ? (
+            <div className="p-8 text-center text-slate-500 text-sm">No jobs executed yet. Generate a script to see history.</div>
+          ) : (
+            <table className="min-w-full divide-y divide-slate-800/50">
+              <thead className="bg-[#0f172a]/50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Job ID</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/50 bg-[#111827]">
+                {jobs.map((job) => (
+                  <motion.tr initial={{ opacity: 0 }} animate={{ opacity: 1 }} key={job._id} className="hover:bg-slate-800/30 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-400">
+                      {new Date(job.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {getStatusBadge(job.status)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-mono">
+                      {job._id}
+                    </td>
+                  </motion.tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+    </DashboardLayout>
   );
 }
