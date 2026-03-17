@@ -2,6 +2,7 @@ import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import authRoutes from './routes/authRoutes';
+import youtubeRoutes from './routes/youtubeRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 const app: Application = express();
@@ -18,6 +19,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/youtube', youtubeRoutes);
 
 // Base route
 app.get('/', (req: Request, res: Response) => {

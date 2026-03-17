@@ -11,11 +11,17 @@ interface DecodedToken {
 export const protect = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   let token = '';
 
+  // Get token from Authorization header (Bearer token)
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    try {
-      // Get token from header
-      token = req.headers.authorization.split(' ')[1] || '';
+    token = req.headers.authorization.split(' ')[1] || '';
+  }
+  // Get token from short-lived state parameter (e.g. for OAuth callback)
+  else if (req.query.state && typeof req.query.state === 'string') {
+    token = req.query.state;
+  }
 
+  if (token) {
+    try {
       const secret = process.env.JWT_SECRET as string;
       if (!secret) {
         throw new Error('JWT_SECRET is not defined');
