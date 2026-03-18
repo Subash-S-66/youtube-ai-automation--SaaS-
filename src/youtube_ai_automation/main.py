@@ -585,7 +585,7 @@ def _build_short_from_optimized_idea(
         script=idea.script,
         audio_path=audio_file,
         subtitle_path=SUBTITLE_PATH,
-        max_words=10,
+        max_words=3,
         highlight_words=_extract_highlight_words(idea.topic, idea.best_hook),
         line_mode=True,
     )
@@ -983,7 +983,7 @@ def _build_video_from_content(
         script=content.script,
         audio_path=audio_file,
         subtitle_path=SUBTITLE_PATH,
-        max_words=10,
+        max_words=3,
         highlight_words=_extract_highlight_words(content.topic, content.hook),
         line_mode=True,
     )

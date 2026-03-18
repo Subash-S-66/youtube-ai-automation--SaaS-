@@ -159,18 +159,19 @@ def _normalize_token(token: str) -> str:
 
 def _inject_highlight_ass(text: str, highlight_words: set[str]) -> str:
     if not highlight_words:
-        return text
+        return text.upper()
     lines = text.split(r"\N")
     out_lines: list[str] = []
     for line in lines:
         out_tokens: list[str] = []
         for token in line.split():
             base = _normalize_token(token)
+            token_upper = token.upper()
             if base and base in highlight_words:
                 # Yellow-gold highlight with bold for emphasis (no scale-up to avoid overflow)
-                out_tokens.append(r"{\c&H00CCFF&\b1}" + token + r"{\rCaption}")
+                out_tokens.append(r"{\c&H00CCFF&\b1}" + token_upper + r"{\rCaption}")
             else:
-                out_tokens.append(token)
+                out_tokens.append(token_upper)
         out_lines.append(" ".join(out_tokens))
     return r"\N".join(out_lines)
 

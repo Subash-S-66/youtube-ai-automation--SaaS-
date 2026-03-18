@@ -157,6 +157,7 @@ def _sanitize_output(payload: dict[str, Any], min_seconds: int, max_seconds: int
     title = _clean_text(str(payload.get("title", "")))
     if not title:
         raise ValueError("Title is missing or empty.")
+    title = title[:60]
 
     description = _clean_text(str(payload.get("description", "")))
     if not description:
@@ -527,31 +528,32 @@ def generate_content(
 
     prompt = dedent(
         f"""
-        You are a news reporter creating a YouTube Short (vertical video, under 60 seconds) about a breaking news story.
-        Your audience is the general public.
-        Tone: neutral, informative, and factual.
-        Use simple, clear language.
+        You are an expert YouTube Shorts content creator focused on virality, retention, and performance.
+        Create a vertical video script (under 60 seconds) that is highly engaging.
+        Tone: captivating, emotional, and curiosity-driven.
+        Use simple, punchy language.
 
-        NEWS HEADLINE: {topic}
+        TOPIC: {topic}
         {story_instruction}
 
         --------------------------------
-        ABSOLUTE RULES - FACTUAL ACCURACY
+        ABSOLUTE RULES - VIRAL OPTIMIZATION
         --------------------------------
-        1.  Stick to the facts of the news headline. Do not add opinions or speculation.
-        2.  The script should be a concise summary of the news story.
-        3.  Every claim must be verifiable.
+        1. Ensure the first 3 seconds (Line 1) are a massive hook. Use curiosity, shock, or a direct question.
+           Examples: "You won’t believe this...", "This happened in real life...", "What if I told you..."
+        2. Extract key keywords from the topic and weave them naturally into the title, description, and hashtags.
+        3. Keep the storytelling fast-paced with an unexpected twist or insight before the end.
 
         --------------------------------
         SCRIPT STRUCTURE (exactly 5 newline-separated lines)
         --------------------------------
         Write 5 clean narration lines with no labels or headings.
-        The lines should flow naturally as a short news report.
-        - Line 1: The headline and most important information (the hook).
-        - Line 2: Additional context or background.
-        - Line 3: Key details or developments.
-        - Line 4: The impact or significance of the news.
-        - Line 5: A concluding statement or a look at what might happen next.
+        The lines must flow seamlessly for narration:
+        - Line 1: The Hook (Curiosity, shock, or question).
+        - Line 2: Build curiosity (context/setup).
+        - Line 3: Main content / details.
+        - Line 4: Twist / unexpected insight.
+        - Line 5: The Call to Action (CTA).
 
         Total script word count: between {min_words} and {max_words} words.
 
@@ -575,9 +577,9 @@ def generate_content(
         --------------------------------
         {{
           "topic": "<the news headline>",
-          "title": "<under 60 chars, informative, based on the headline>",
+          "title": "<under 60 chars, highly emotional/curiosity-driven, injected with keywords>",
           "hook": "<same as script line 1>",
-          "description": "<2-3 SEO sentences summarizing the news story>",
+          "description": "<2-3 SEO sentences injected with topic keywords>",
           "hashtags": ["#shorts", "#news", "#breakingnews", ... 10-15 total],
           "script": "<all 5 lines separated by newlines>",
           "scenes": ["<scene 1>", "<scene 2>", "<scene 3>", "<scene 4>", "<scene 5>"],
