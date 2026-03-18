@@ -1,6 +1,7 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import authRoutes from './routes/authRoutes';
 import youtubeRoutes from './routes/youtubeRoutes';
 import promptRoutes from './routes/promptRoutes';
@@ -35,12 +36,17 @@ app.use(cors({
   credentials: true,
 }));
 
-// Webhook payload needs to remain raw for Stripe Signature verification
-app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
+// Webhook payload needs to remain raw for Stripe Signature verification.
+// We mount the explicit route here BEFORE `express.json()` is applied globally.
+import { webhookHandler } from './controllers/paymentController';
+app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), webhookHandler);
 
 // Body parser
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Cookie parser
+app.use(cookieParser());
 
 // Routes
 app.use('/api/auth', authRoutes);

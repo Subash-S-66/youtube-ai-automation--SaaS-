@@ -19,6 +19,10 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
   else if (req.query.state && typeof req.query.state === 'string') {
     token = req.query.state;
   }
+  // Get token from cookies
+  else if (req.cookies && req.cookies.jwt) {
+    token = req.cookies.jwt;
+  }
 
   if (token) {
     try {

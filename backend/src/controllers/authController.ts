@@ -18,6 +18,16 @@ const generateToken = (id: string): string => {
   });
 };
 
+// Helper to set HTTP-only cookie for JWT
+const setTokenCookie = (res: Response, token: string) => {
+  res.cookie('jwt', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  });
+};
+
 // @desc    Register new user
 // @route   POST /api/auth/register
 // @access  Public
@@ -43,6 +53,9 @@ export const register = asyncHandler(
     });
 
     if (user) {
+      const token = generateToken(user.id);
+      setTokenCookie(res, token);
+
       res.status(201).json({
         success: true,
         message: 'User registered successfully',
@@ -51,7 +64,7 @@ export const register = asyncHandler(
           email: user.email,
           role: user.role,
           plan: user.plan,
-          token: generateToken(user.id),
+          token,
         },
       });
     } else {
@@ -102,6 +115,9 @@ export const login = asyncHandler(
       throw new AppError('Invalid credentials', 401);
     }
 
+    const token = generateToken(user.id);
+    setTokenCookie(res, token);
+
     res.json({
       success: true,
       message: 'User logged in successfully',
@@ -110,7 +126,7 @@ export const login = asyncHandler(
         email: user.email,
         role: user.role,
         plan: user.plan,
-        token: generateToken(user.id),
+        token,
       },
     });
   }

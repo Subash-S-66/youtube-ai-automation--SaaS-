@@ -21,13 +21,59 @@ console.log('Worker is starting and connected to Redis/MongoDB...');
 
 const MAX_LOG_SIZE = 100 * 1024; // Limit log to 100 KB
 
-const appendLogSafe = (currentLogs: string, newText: string): string => {
-  let combined = currentLogs + newText;
-  if (combined.length > MAX_LOG_SIZE) {
-    // Keep the last MAX_LOG_SIZE characters, optionally adding a truncation notice
-    combined = '...[LOGS TRUNCATED]...\n' + combined.substring(combined.length - MAX_LOG_SIZE);
+// Helper to batch log updates
+const logBuffer: Record<string, { text: string; status?: string; timeout: NodeJS.Timeout | null }> = {};
+
+const flushLogs = async (jobId: string) => {
+  const buffer = logBuffer[jobId];
+  if (!buffer || !buffer.text) return;
+
+  const { text, status } = buffer;
+  // Clear buffer
+  buffer.text = '';
+  if (buffer.timeout) clearTimeout(buffer.timeout);
+  buffer.timeout = null;
+
+  try {
+    const dbJob = await JobModel.findById(jobId);
+    if (!dbJob) return;
+
+    let combined = (dbJob.logs || '') + text;
+    if (combined.length > MAX_LOG_SIZE) {
+      combined = '...[LOGS TRUNCATED]...\n' + combined.substring(combined.length - MAX_LOG_SIZE);
+    }
+
+    const updateData: any = { logs: combined };
+    if (status) updateData.status = status;
+
+    await JobModel.findByIdAndUpdate(jobId, updateData);
+  } catch (error) {
+    console.error(`Failed to flush logs for job ${jobId}`, error);
   }
-  return combined;
+};
+
+const appendLogSafe = async (jobId: string, newText: string, status?: string): Promise<void> => {
+  if (!logBuffer[jobId]) {
+    logBuffer[jobId] = { text: '', timeout: null };
+  }
+
+  logBuffer[jobId].text += newText;
+  if (status) {
+    logBuffer[jobId].status = status;
+  }
+
+  // If status is provided (e.g. success/failed/running state change), force flush immediately
+  if (status) {
+    await flushLogs(jobId);
+    return;
+  }
+
+  // Otherwise throttle writes to DB (e.g., every 3 seconds)
+  if (!logBuffer[jobId].timeout) {
+    logBuffer[jobId].timeout = setTimeout(() => {
+      flushLogs(jobId);
+    }, 3000);
+  }
 };
 
 const pipelineWorker = new Worker<PipelineJobPayload>(
@@ -36,15 +82,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     const { userId, promptId, jobId, settings } = job.data;
     console.log(`Processing job ${jobId} for user ${userId}`);
 
-    // Update job status in DB
-    const dbJob = await JobModel.findById(jobId);
-    if (!dbJob) {
-      throw new Error(`Job document ${jobId} not found in MongoDB`);
-    }
-
-    dbJob.status = 'running';
-    dbJob.logs = appendLogSafe(dbJob.logs, 'Starting pipeline execution...\n');
-    await dbJob.save();
+    await appendLogSafe(jobId, 'Starting pipeline execution...\n', 'running');
 
     try {
       // 1. Fetch Prompt to get gemini_prompt
@@ -100,9 +138,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       const triggerSuccess = true; // Simulate successful POST
 
       if (triggerSuccess) {
-         let currentLogs = dbJob.logs;
-         currentLogs = appendLogSafe(currentLogs, `\nSuccessfully dispatched Azure Container App Job: ${AZURE_JOB_NAME}\n`);
-         await JobModel.findByIdAndUpdate(jobId, { status: 'running', logs: currentLogs }).catch(console.error);
+         await appendLogSafe(jobId, `\nSuccessfully dispatched Azure Container App Job: ${AZURE_JOB_NAME}\n`);
 
          // Mock polling to wait for Azure Job completion
          // In production, poll the Azure REST API endpoint until status === "Succeeded" or "Failed"
@@ -123,8 +159,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
          const user = await User.findById(userId);
 
          if (jobStatus === 'Succeeded') {
-            currentLogs = appendLogSafe(currentLogs, `\n[Azure Container App] Job Execution Succeeded.\nPIPELINE_STATUS:SUCCESS`);
-            await JobModel.findByIdAndUpdate(jobId, { status: 'success', logs: currentLogs }).catch(console.error);
+            await appendLogSafe(jobId, `\n[Azure Container App] Job Execution Succeeded.\nPIPELINE_STATUS:SUCCESS`, 'success');
 
             await incrementUploadCount(userId).catch(console.error);
 
@@ -132,8 +167,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
          } else {
-            currentLogs = appendLogSafe(currentLogs, `\n[Azure Container App] Job Execution Failed or Timed Out.\nPIPELINE_STATUS:FAILED`);
-            await JobModel.findByIdAndUpdate(jobId, { status: 'failed', logs: currentLogs }).catch(console.error);
+            await appendLogSafe(jobId, `\n[Azure Container App] Job Execution Failed or Timed Out.\nPIPELINE_STATUS:FAILED`, 'failed');
 
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video generation or upload failed. Please try again.').catch(console.error);
@@ -149,14 +183,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
       // Attempt to record failure in DB if not already captured
       const errorMsg = `\nWorker Error: ${error.message}`;
-      const updatedJob = await JobModel.findById(jobId);
-      if (updatedJob) {
-          const finalLogs = appendLogSafe(updatedJob.logs, errorMsg);
-          await JobModel.findByIdAndUpdate(jobId, {
-            status: 'failed',
-            logs: finalLogs,
-          }).catch(console.error);
-      }
+      await appendLogSafe(jobId, errorMsg, 'failed');
 
       throw error;
     }

@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import { encrypt, decrypt } from '../utils/encryption';
 
 export interface IYoutubeTokens {
   access_token?: string;
@@ -25,11 +26,19 @@ export interface IUser extends Document {
 
 const YoutubeTokensSchema = new Schema<IYoutubeTokens>(
   {
-    access_token: { type: String },
-    refresh_token: { type: String },
+    access_token: {
+      type: String,
+      set: (token: string) => encrypt(token),
+      get: (token: string) => decrypt(token),
+    },
+    refresh_token: {
+      type: String,
+      set: (token: string) => encrypt(token),
+      get: (token: string) => decrypt(token),
+    },
     expiry_date: { type: Number },
   },
-  { _id: false }
+  { _id: false, toJSON: { getters: true }, toObject: { getters: true } }
 );
 
 const UserSchema = new Schema<IUser>(

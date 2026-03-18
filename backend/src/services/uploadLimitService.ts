@@ -45,24 +45,29 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
 };
 
 export const incrementUploadCount = async (userId: string): Promise<void> => {
-  // Use findOneAndUpdate to help ensure atomicity where possible,
-  // but we must check for reset first.
+  const now = new Date();
+  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-  // First fetch the user
-  const user = await User.findById(userId);
-  if (!user) return;
+  // We can do this in a single atomic findOneAndUpdate.
+  // We check if lastUploadReset is LESS than the start of the current UTC day.
+  // If it is, that means we haven't reset today yet, so we reset to 1 and update lastUploadReset.
+  const user = await User.findOneAndUpdate(
+    {
+      _id: userId,
+      lastUploadReset: { $lt: startOfUTCDay }
+    },
+    {
+      $set: { uploadsUsedToday: 1, lastUploadReset: now }
+    },
+    { new: true }
+  );
 
-  // Run the daily reset logic check
-  const wasReset = resetDailyUploads(user);
-
-  if (wasReset) {
-      // If we just reset, we are effectively setting it to 1
-      user.uploadsUsedToday = 1;
-      await user.save();
-  } else {
-      // Otherwise, atomic increment to prevent race conditions during parallel processing
-      await User.findByIdAndUpdate(userId, {
-          $inc: { uploadsUsedToday: 1 }
-      });
+  // If the user wasn't found, it means they ALREADY reset today (lastUploadReset >= startOfUTCDay).
+  // In that case, we can safely just $inc.
+  if (!user) {
+    await User.updateOne(
+      { _id: userId },
+      { $inc: { uploadsUsedToday: 1 } }
+    );
   }
 };
