@@ -6,12 +6,9 @@ export const runPipelineSchema = z.object({
       message: 'promptId is required',
     }),
     settings: z.object({
-      duration: z.number({
-        message: 'duration is required',
-      }),
-      contentType: z.enum(['clips', 'images', 'mixed'], {
-        message: "contentType must be one of: 'clips', 'images', 'mixed'",
-      }),
+      targetDuration: z.number().optional().default(40),
+      duration: z.number().optional(),
+      contentType: z.enum(['clips', 'images', 'mixed']).optional().default('clips'),
       videoCount: z.number({
         message: 'videoCount is required',
       }),
@@ -23,6 +20,7 @@ export const runPipelineSchema = z.object({
       voices: z.array(z.string()).optional(),
       resetStory: z.boolean().optional(),
       userMediaPaths: z.array(z.string()).optional(),
+      lastPrompt: z.string().optional(),
     }, {
       message: 'settings are required',
     }),

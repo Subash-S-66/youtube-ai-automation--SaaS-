@@ -90,12 +90,15 @@ export const startPipeline = asyncHandler(
       if (settings.resetStory) {
         await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
         settings.currentPart = 1;
+        settings.lastPrompt = "";
       } else {
         const progress = await StoryProgress.findOne({ userId, storyId: settings.storyId });
         if (progress) {
           settings.currentPart = progress.currentPart;
+          settings.lastPrompt = progress.lastPrompt;
         } else {
           settings.currentPart = 1;
+          settings.lastPrompt = "";
         }
       }
     }

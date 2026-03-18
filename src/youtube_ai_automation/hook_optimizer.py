@@ -1001,8 +1001,7 @@ def build_optimized_idea(
     openai_model: str = "gpt-4.1-mini",
     anthropic_api_key: str = "",
     anthropic_model: str = "claude-3-5-haiku-latest",
-    min_script_seconds: int = 20,
-    max_script_seconds: int = 35,
+    target_duration: int = 40,
 ) -> OptimizedIdea:
     normalized_provider = provider.strip().lower()
     if normalized_provider in {"", "none", "template"}:
@@ -1018,8 +1017,7 @@ def build_optimized_idea(
         openai_model=openai_model,
         anthropic_api_key=anthropic_api_key,
         anthropic_model=anthropic_model,
-        min_seconds=min_script_seconds,
-        max_seconds=max_script_seconds,
+        target_duration=target_duration,
     )
     scenes, queries, title, description, hashtags = _enrich_with_ai(
         topic=candidate.topic,

@@ -615,7 +615,8 @@ def create_scene_based_video(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     audio_duration = _probe_duration(audio_path)
-    target_duration = max(min_video_length, min(max_video_length, audio_duration))
+    # Ensure video duration strictly matches audio duration up to max limit to prevent gaps
+    target_duration = min(float(max_video_length), audio_duration)
 
     clip_pool = list(videos)
     if shuffle_scenes:

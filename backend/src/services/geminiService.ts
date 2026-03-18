@@ -1,20 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AppError } from '../middleware/errorHandler';
 
-export const generateGeminiPrompt = async (user_prompt: string): Promise<string> => {
-  const apiKey = process.env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-    throw new AppError('Gemini API Key is not configured', 500);
-  }
-
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-
-    // We use gemini-1.5-flash for fast text generation
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: `You are an elite YouTube Shorts content strategist. Your task is to transform the user's raw idea into a highly optimized, viral-ready script prompt.
+const SYSTEM_PROMPT = `You are an elite YouTube Shorts content strategist. Your task is to transform the user's raw idea into a highly optimized, viral-ready script prompt.
 
 First, silently evaluate a confidence score (0-1) on how well the user's input fits into one of these categories: Tech, Story, News, Educational, Viral/List.
 
@@ -32,7 +19,48 @@ ABSOLUTE RULES:
 1. HOOK: The very first line (0-3s) MUST be a strong hook using curiosity, shock, or a compelling question (e.g., "You won't believe...", "What if I told you...").
 2. VARIATION: Generate fresh, creative wording every single time. Never use weak or generic content. Maintain high engagement quality.
 3. CTA: The final line MUST be an engaging CTA (dynamic based on the topic, or "Follow for more" / "Stay tuned" if fallback).
-4. OUTPUT: Provide ONLY the final optimized script prompt text. Do not output JSON, do not include the confidence score, do not include the classification name, and do not include unnecessary explanations. Make it directly usable for the video generation pipeline.`,
+4. OUTPUT: Provide ONLY the final optimized script prompt text. Do not output JSON, do not include the confidence score, do not include the classification name, and do not include unnecessary explanations. Make it directly usable for the video generation pipeline.`;
+
+export const generateGeminiPrompt = async (user_prompt: string): Promise<string> => {
+  const julesUrl = process.env.JULES_API_URL;
+  const julesKey = process.env.JULES_API_KEY;
+
+  if (julesUrl && julesKey) {
+    try {
+      const response = await fetch(julesUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${julesKey}`,
+        },
+        body: JSON.stringify({ prompt: `${SYSTEM_PROMPT}\n\nUSER INPUT: ${user_prompt}` }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const output = data?.output_text || data?.response || data?.text;
+        if (output) return String(output).trim();
+      } else {
+        console.warn(`Jules API failed with status ${response.status}, falling back to Gemini Lite...`);
+      }
+    } catch (e) {
+      console.warn('Jules API request failed, falling back to Gemini Lite...', e);
+    }
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    console.warn('AI API Keys are not configured, falling back to raw user prompt.');
+    return user_prompt;
+  }
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-3.1-flash-lite',
+      systemInstruction: SYSTEM_PROMPT,
+
     });
 
     // Add a random temperature to ensure variation
@@ -45,7 +73,8 @@ ABSOLUTE RULES:
     const responseText = result.response.text();
 
     if (!responseText) {
-      throw new Error('Received empty response from Gemini');
+      console.warn('Received empty response from Gemini, falling back to raw user prompt.');
+      return user_prompt;
     }
 
     // Clean and trim the output
@@ -54,7 +83,7 @@ ABSOLUTE RULES:
     return cleanedOutput;
   } catch (error) {
     console.error('Gemini API Error:', error);
-    // Throw a safe error message without leaking internal details
-    throw new AppError('Failed to generate video prompt. Please try again later.', 500);
+    console.warn('Failed to generate video prompt, falling back to raw user prompt.');
+    return user_prompt;
   }
 };

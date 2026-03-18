@@ -64,42 +64,17 @@ def _clean_text(value: str) -> str:
     return " ".join(str(value).split()).strip()
 
 
-def _word_bounds(min_seconds: int, max_seconds: int) -> tuple[int, int]:
-    min_words = math.floor(min_seconds * BASE_WPS * SPEECH_RATE_MIN)
-    max_words = math.ceil(max_seconds * BASE_WPS * SPEECH_RATE_MAX)
-    return max(20, min_words), max(min_words + 10, max_words)
+def _word_bounds(target_duration: int) -> tuple[int, int]:
+    # Use 2.5 words/sec and allow target ± 5 seconds
+    min_seconds = max(15, target_duration - 5)
+    max_seconds = min(60, target_duration + 5)
+    min_words = math.floor(min_seconds * 2.5)
+    max_words = math.ceil(max_seconds * 2.5)
+    return min_words, max_words
 
 
 def _split_script_lines(script: str) -> list[str]:
     return [line.strip() for line in str(script).splitlines() if line.strip()]
-
-
-def _limit_words(text: str, max_words: int) -> str:
-    words = text.split()
-    if len(words) <= max_words:
-        return text
-    return " ".join(words[:max_words]).rstrip(".,;:!?")
-
-
-def _enforce_script_length(lines: list[str], min_words: int, max_words: int) -> list[str]:
-    words = [word for line in lines for word in line.split()]
-    if len(words) <= max_words:
-        return lines
-
-    # Trim from the end to fit the max word count.
-    remaining = max_words
-    trimmed: list[str] = []
-    for line in lines:
-        line_words = line.split()
-        if remaining <= 0:
-            break
-        if len(line_words) <= remaining:
-            trimmed.append(line)
-            remaining -= len(line_words)
-        else:
-            trimmed.append(" ".join(line_words[:remaining]).rstrip(".,;:!?"))
-            remaining = 0
-    return trimmed
 
 
 def _clean_hashtags(raw: list[str]) -> list[str]:
@@ -147,8 +122,7 @@ def _validate_content_quality(payload: dict[str, Any]) -> list[str]:
     return warnings
 
 
-def _sanitize_output(payload: dict[str, Any], min_seconds: int, max_seconds: int, gemini_api_key: str = "") -> GeneratedContent:
-    min_words, max_words = _word_bounds(min_seconds, max_seconds)
+def _sanitize_output(payload: dict[str, Any], target_duration: int, gemini_api_key: str = "") -> GeneratedContent:
 
     topic = _clean_text(str(payload.get("topic", "")))
     if not topic:
@@ -171,7 +145,6 @@ def _sanitize_output(payload: dict[str, Any], min_seconds: int, max_seconds: int
     if len(lines) != 5:
         raise ValueError("Script must contain 5 non-empty lines for structured Shorts output.")
 
-    lines = _enforce_script_length(lines, min_words=min_words, max_words=max_words)
     script = "\n".join(lines)
 
     raw_hashtags = payload.get("hashtags")
@@ -472,12 +445,12 @@ def generate_content(
     openai_model: str = "gpt-4.1-mini",
     anthropic_api_key: str = "",
     anthropic_model: str = "claude-3.5-sonnet",
-    min_seconds: int = 25,
-    max_seconds: int = 40,
+    target_duration: int = 40,
     content_type: str = "tech",
     story_mode: bool = False,
     current_part: int = 1,
     recap_enabled: bool = False,
+    last_prompt: str = "",
 ) -> GeneratedContent:
     """
     Generate content for a single short video.
@@ -489,15 +462,15 @@ def generate_content(
     if normalized_provider in {"", "none", "template"}:
         raise ValueError("AI provider is required; template/default content is disabled.")
 
-    min_words, max_words = _word_bounds(min_seconds, max_seconds)
+    min_words, max_words = _word_bounds(target_duration)
 
     story_instruction = ""
     if story_mode:
         if current_part > 1:
             if recap_enabled:
-                story_instruction = f"\nThis is PART {current_part} of an ongoing story. Include a brief 1-sentence recap of previous events for continuity, continue the narrative, and ALWAYS end on a massive cliffhanger for the next part."
+                story_instruction = f"\nThis is PART {current_part} of an ongoing story. Here is the AI prompt from the previous part for context:\n{last_prompt}\n\nInclude a brief 1-sentence recap of previous events for continuity, continue the narrative, and ALWAYS end on a massive cliffhanger for the next part."
             else:
-                story_instruction = f"\nThis is PART {current_part} of an ongoing story. Dive straight into continuing the narrative without recapping, and ALWAYS end on a massive cliffhanger for the next part."
+                story_instruction = f"\nThis is PART {current_part} of an ongoing story. Here is the AI prompt from the previous part for context:\n{last_prompt}\n\nDive straight into continuing the narrative without recapping, and ALWAYS end on a massive cliffhanger for the next part."
         else:
             story_instruction = "\nThis is PART 1 of a new multi-part story series. Introduce the story and characters, and ALWAYS end on a massive cliffhanger for the next part."
 
@@ -530,7 +503,10 @@ def generate_content(
         - Line 4: Twist / unexpected insight.
         - Line 5: The Call to Action (CTA).
 
-        Total script word count: between {min_words} and {max_words} words.
+        Total script word count MUST BE exactly between {min_words} and {max_words} words to perfectly match the target video duration of {target_duration} seconds.
+        If too long: trim intelligently (remove low-impact words).
+        If too short: expand slightly (add insight or explanation).
+        NEVER cut the script mid-sentence. Ensure full content delivery and a smooth ending.
 
         --------------------------------
         SCENE DESCRIPTIONS (for stock video search)
@@ -584,7 +560,7 @@ def generate_content(
             for warning in quality_warnings:
                 LOGGER.warning("Content quality issue: %s", warning)
 
-        return _sanitize_output(payload, min_seconds=min_seconds, max_seconds=max_seconds, gemini_api_key=gemini_api_key)
+        return _sanitize_output(payload, target_duration=target_duration, gemini_api_key=gemini_api_key)
     except Exception as exc:
         if normalized_provider in {"gemini", "google"}:
             raise RuntimeError(f"Gemini content generation failed: {exc}") from exc
