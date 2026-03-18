@@ -14,6 +14,7 @@ import { pipelineService } from '../../services/pipelineService';
 import { paymentService } from '../../services/paymentService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { usePersistentSettings } from '../../hooks/usePersistentSettings';
+import { requestNotificationPermission } from '../../lib/notifications';
 import { cn } from '../../lib/utils';
 
 const TOPIC_CATEGORIES = ["World News", "Tech", "Science", "Nature", "Story Mode", "Auto"];
@@ -62,6 +63,9 @@ export default function Dashboard() {
         setUser(userData.data);
         const jobsData = await pipelineService.getJobs();
         setJobs(jobsData.data);
+
+        // Request notification permission once user is loaded
+        requestNotificationPermission();
       } catch (err) {
         authService.logout();
       } finally {
