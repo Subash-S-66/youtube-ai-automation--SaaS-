@@ -23,8 +23,17 @@ export const authService = {
     }
   },
 
-  async verifyEmail(token: string) {
-    const response = await api.get(`/auth/verify-email?token=${token}`);
+  async verifyEmail(token: string, redirect?: string) {
+    let url = `/auth/verify-email?token=${token}`;
+    if (redirect) {
+      url += `&redirect=${encodeURIComponent(redirect)}`;
+    }
+    const response = await api.get(url);
+    return response.data;
+  },
+
+  async resendVerification(email: string) {
+    const response = await api.post('/auth/resend-verification', { email });
     return response.data;
   },
 
