@@ -15,6 +15,12 @@ export const runPipelineSchema = z.object({
       videoCount: z.number({
         message: 'videoCount is required',
       }),
+      storyMode: z.boolean().optional(),
+      storyId: z.string().optional(),
+      currentPart: z.number().optional(),
+      recapEnabled: z.boolean().optional(),
+      ctaEnabled: z.boolean().optional(),
+      voices: z.array(z.string()).optional(),
     }, {
       message: 'settings are required',
     }),

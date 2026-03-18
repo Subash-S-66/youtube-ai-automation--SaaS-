@@ -42,11 +42,13 @@ export default function Dashboard() {
 
   // Story Mode State
   const [storyMode, setStoryMode] = usePersistentSettings<boolean>('clipforge_storyMode', false);
-  const [storyPart, setStoryPart] = usePersistentSettings<number>('clipforge_storyPart', 1);
-  const [addRecap, setAddRecap] = usePersistentSettings<boolean>('clipforge_addRecap', false);
+  const [currentPart, setCurrentPart] = usePersistentSettings<number>('clipforge_currentPart', 1);
+  const [storyId, setStoryId] = usePersistentSettings<string>('clipforge_storyId', '');
+  const [storyContext, setStoryContext] = usePersistentSettings<string>('clipforge_storyContext', '');
+  const [recapEnabled, setRecapEnabled] = usePersistentSettings<boolean>('clipforge_recapEnabled', false);
 
   // Settings
-  const [addEndingCta, setAddEndingCta] = usePersistentSettings<boolean>('clipforge_endingCta', false);
+  const [ctaEnabled, setCtaEnabled] = usePersistentSettings<boolean>('clipforge_ctaEnabled', false);
   const [selectedVoices, setSelectedVoices] = usePersistentSettings<string[]>('clipforge_voices', ['v1']);
   const [randomVoice, setRandomVoice] = usePersistentSettings<boolean>('clipforge_randomVoice', true);
 
@@ -129,7 +131,14 @@ export default function Dashboard() {
     setGenerating(true);
     setMessage(null);
     try {
-      // Construct the final prompt to pass to Gemini
+      // 1. Manage Story ID
+      let currentStoryId = storyId;
+      if (storyMode && currentPart === 1) {
+        currentStoryId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+        setStoryId(currentStoryId);
+      }
+
+      // 2. Construct the final prompt to pass to Gemini
       let finalPrompt = '';
       if (inputMode === 'prompt') {
         finalPrompt = prompt;
@@ -139,14 +148,19 @@ export default function Dashboard() {
       }
 
       if (storyMode) {
-        finalPrompt += ` This is Part ${storyPart} of an ongoing series.`;
-        if (addRecap && storyPart > 1) {
-          finalPrompt += ` Begin with a brief recap of the previous parts.`;
+        finalPrompt += ` This is Part ${currentPart} of an ongoing series.`;
+
+        if (storyContext) {
+          finalPrompt += `\n\nContext from previous parts: ${storyContext}`;
+        }
+
+        if (recapEnabled && currentPart > 1) {
+          finalPrompt += `\nBegin this video with a brief recap of the previous parts.`;
         }
       }
 
-      if (addEndingCta) {
-        finalPrompt += ` Include a strong call-to-action at the end to subscribe and like the video.`;
+      if (ctaEnabled) {
+        finalPrompt += `\nInclude a strong, dynamic call-to-action at the end related to the content to subscribe and like the video.`;
       }
 
       const promptRes = await promptService.generatePrompt(finalPrompt);
@@ -163,7 +177,10 @@ export default function Dashboard() {
         contentType,
         videoCount,
         storyMode,
-        storyPart,
+        storyId: currentStoryId,
+        currentPart,
+        recapEnabled,
+        ctaEnabled,
         voices: finalVoices
       });
 
@@ -173,9 +190,14 @@ export default function Dashboard() {
           setMessage({ text: 'Pipeline started successfully!', type: 'success' });
       }
 
-      // If story mode, automatically increment the part for the next run
+      // If story mode, save context for the next part and increment
       if (storyMode) {
-        setStoryPart(prev => prev + 1);
+        setStoryContext(prevContext => {
+          // ensure we only append the newly generated content, not the prompt with previous context already injected
+          const newContext = promptRes.data?.gemini_prompt || (inputMode === 'prompt' ? prompt : `Video about: ${selectedTopic === 'Custom' ? customTopic : selectedTopic}`);
+          return prevContext ? `${prevContext}\n\n[Part ${currentPart}]: ${newContext}` : `[Part 1]: ${newContext}`;
+        });
+        setCurrentPart(prev => prev + 1);
       }
 
       const jobsData = await pipelineService.getJobs();
@@ -339,19 +361,19 @@ export default function Dashboard() {
                   {storyMode && (
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-blue-500/10">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-400">Current Progress: <strong className="text-blue-400 font-mono text-base">Part {storyPart}</strong></span>
-                        <button type="button" onClick={() => setStoryPart(1)} className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg transition-colors">
+                        <span className="text-sm text-slate-400">Current Progress: <strong className="text-blue-400 font-mono text-base">Part {currentPart}</strong></span>
+                        <button type="button" onClick={() => { setCurrentPart(1); setStoryId(''); setStoryContext(''); }} className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg transition-colors">
                           Reset Story
                         </button>
                       </div>
                       <label className="flex items-center space-x-3 cursor-pointer group">
-                        <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", addRecap ? "bg-blue-500 border-blue-500" : "bg-[#0f172a] border-slate-600 group-hover:border-blue-500", storyPart === 1 && "opacity-50 cursor-not-allowed")}>
-                          {addRecap && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                        <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", recapEnabled ? "bg-blue-500 border-blue-500" : "bg-[#0f172a] border-slate-600 group-hover:border-blue-500", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
+                          {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                         </div>
-                        <span className={cn("text-sm transition-colors", storyPart === 1 ? "text-slate-600" : "text-slate-300 group-hover:text-white")}>
+                        <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-600" : "text-slate-300 group-hover:text-white")}>
                           Add Recap of Previous Parts (Disabled on Part 1)
                         </span>
-                        <input type="checkbox" className="hidden" checked={addRecap} onChange={() => setAddRecap(!addRecap)} disabled={storyPart === 1} />
+                        <input type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} disabled={currentPart === 1} />
                       </label>
                     </motion.div>
                   )}
@@ -399,11 +421,11 @@ export default function Dashboard() {
               {/* Call to Actions & Voices */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <label className="flex items-center p-4 bg-[#0f172a] rounded-xl border border-slate-800 cursor-pointer group hover:border-green-500/30 transition-colors">
-                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", addEndingCta ? "bg-green-500 border-green-500" : "bg-[#111827] border-slate-600")}>
-                     {addEndingCta && <div className="w-2.5 h-2.5 bg-[#111827] rounded-sm" />}
+                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-green-500 border-green-500" : "bg-[#111827] border-slate-600")}>
+                     {ctaEnabled && <div className="w-2.5 h-2.5 bg-[#111827] rounded-sm" />}
                   </div>
-                  <span className="text-sm text-slate-300 group-hover:text-white">Auto-Generate Ending CTA</span>
-                  <input type="checkbox" className="hidden" checked={addEndingCta} onChange={() => setAddEndingCta(!addEndingCta)} />
+                  <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
+                  <input type="checkbox" className="hidden" checked={ctaEnabled} onChange={() => setCtaEnabled(!ctaEnabled)} />
                 </label>
 
                 {/* Voice Selection */}
