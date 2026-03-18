@@ -2,9 +2,11 @@ import { Request, Response } from 'express';
 import User from '../models/User';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
-import { RegisterInput, LoginInput } from '../utils/validators/authValidators';
+import { RegisterInput, LoginInput, ForgotPasswordInput, ResetPasswordInput } from '../utils/validators/authValidators';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
+import { sendEmail } from '../services/emailService';
 
 // Generate JWT
 const generateToken = (id: string): string => {
@@ -46,30 +48,43 @@ export const register = asyncHandler(
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Create verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedVerificationToken = crypto.createHash('sha256').update(verificationToken).digest('hex');
+
+    // Set expiry 1 hour
+    const verificationExpires = new Date(Date.now() + 60 * 60 * 1000);
+
     // Create user
     const user = await User.create({
       email,
       password: hashedPassword,
+      emailVerificationToken: hashedVerificationToken,
+      emailVerificationExpires: verificationExpires,
     });
 
-    if (user) {
-      const token = generateToken(user.id);
-      setTokenCookie(res, token);
-
-      res.status(201).json({
-        success: true,
-        message: 'User registered successfully',
-        data: {
-          _id: user.id,
-          email: user.email,
-          role: user.role,
-          plan: user.plan,
-          token,
-        },
-      });
-    } else {
+    if (!user) {
       throw new AppError('Invalid user data', 400);
     }
+
+    // Send email
+    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
+    const emailMessage = `Click to verify your email: \n\n ${verificationUrl}`;
+
+    // We send email without blocking the response
+    sendEmail(user.email, 'Verify your email', emailMessage).catch(console.error);
+
+    // Don't generate JWT or set cookie yet, as they must verify email first
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully. Please check your email to verify your account.',
+      data: {
+        _id: user.id,
+        email: user.email,
+        role: user.role,
+        plan: user.plan,
+      },
+    });
   }
 );
 
@@ -115,6 +130,10 @@ export const login = asyncHandler(
       throw new AppError('Invalid credentials', 401);
     }
 
+    if (!user.isEmailVerified) {
+      throw new AppError('Please verify your email', 403);
+    }
+
     const token = generateToken(user.id);
     setTokenCookie(res, token);
 
@@ -128,6 +147,115 @@ export const login = asyncHandler(
         plan: user.plan,
         token,
       },
+    });
+  }
+);
+
+// @desc    Verify user email
+// @route   GET /api/auth/verify-email
+// @access  Public
+export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
+  const { token } = req.query;
+
+  if (!token || typeof token !== 'string') {
+    throw new AppError('Invalid token', 400);
+  }
+
+  // Hash the incoming token
+  const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+
+  // Find user with this token and check if it's expired
+  const user = await User.findOne({
+    emailVerificationToken: hashedToken,
+    emailVerificationExpires: { $gt: Date.now() },
+  });
+
+  if (!user) {
+    throw new AppError('Invalid or expired token', 400);
+  }
+
+  // Update user
+  user.isEmailVerified = true;
+  user.emailVerificationToken = undefined;
+  user.emailVerificationExpires = undefined;
+
+  await user.save();
+
+  res.json({
+    success: true,
+    message: 'Email verified successfully',
+  });
+});
+
+// @desc    Request password reset
+// @route   POST /api/auth/forgot-password
+// @access  Public
+export const forgotPassword = asyncHandler(
+  async (req: Request<unknown, unknown, ForgotPasswordInput>, res: Response) => {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      // Return success to avoid email enumeration
+      res.json({
+        success: true,
+        message: 'If the email exists, a password reset link has been sent.',
+      });
+      return;
+    }
+
+    // Generate token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const hashedResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+    // Expiry 30 minutes
+    user.passwordResetToken = hashedResetToken;
+    user.passwordResetExpires = new Date(Date.now() + 30 * 60 * 1000);
+
+    await user.save();
+
+    // Send email
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+    const message = `Click to reset your password: \n\n ${resetUrl}`;
+
+    sendEmail(user.email, 'Reset your password', message).catch(console.error);
+
+    res.json({
+      success: true,
+      message: 'If the email exists, a password reset link has been sent.',
+    });
+  }
+);
+
+// @desc    Reset password
+// @route   POST /api/auth/reset-password
+// @access  Public
+export const resetPassword = asyncHandler(
+  async (req: Request<unknown, unknown, ResetPasswordInput>, res: Response) => {
+    const { token, newPassword } = req.body;
+
+    const hashedResetToken = crypto.createHash('sha256').update(token).digest('hex');
+
+    const user = await User.findOne({
+      passwordResetToken: hashedResetToken,
+      passwordResetExpires: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      throw new AppError('Invalid or expired token', 400);
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully',
     });
   }
 );

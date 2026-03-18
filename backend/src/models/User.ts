@@ -20,6 +20,11 @@ export interface IUser extends Document {
   youtubeTokens?: IYoutubeTokens;
   isYoutubeConnected: boolean;
   telegramChatId?: string;
+  isEmailVerified: boolean;
+  emailVerificationToken?: string | undefined;
+  emailVerificationExpires?: Date | undefined;
+  passwordResetToken?: string | undefined;
+  passwordResetExpires?: Date | undefined;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -92,6 +97,22 @@ const UserSchema = new Schema<IUser>(
     },
     telegramChatId: {
       type: String,
+    },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerificationToken: {
+      type: String,
+    },
+    emailVerificationExpires: {
+      type: Date,
+    },
+    passwordResetToken: {
+      type: String,
+    },
+    passwordResetExpires: {
+      type: Date,
     },
   },
   {

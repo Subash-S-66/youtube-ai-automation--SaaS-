@@ -22,4 +22,19 @@ export const authService = {
       window.location.href = '/login';
     }
   },
+
+  async verifyEmail(token: string) {
+    const response = await api.get(`/auth/verify-email?token=${token}`);
+    return response.data;
+  },
+
+  async forgotPassword(email: string) {
+    const response = await api.post('/auth/forgot-password', { email });
+    return response.data;
+  },
+
+  async resetPassword(data: any) {
+    const response = await api.post('/auth/reset-password', data);
+    return response.data;
+  },
 };
