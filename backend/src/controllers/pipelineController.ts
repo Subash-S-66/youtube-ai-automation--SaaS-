@@ -5,6 +5,7 @@ import { RunPipelineInput } from '../utils/validators/pipelineValidators';
 import Prompt from '../models/Prompt';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import Job from '../models/Job';
+import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { canUserUpload } from '../services/uploadLimitService';
 
@@ -75,6 +76,16 @@ export const startPipeline = asyncHandler(
         throw new AppError('YouTube is not connected or token is invalid. Please connect your account first.', 400);
     }
 
+    // Increment uploadsOnHold for the user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $inc: { uploadsOnHold: 1 } },
+      { new: true }
+    );
+
+    // Re-check remaining uploads to return accurate numbers
+    const finalLimitCheck = await canUserUpload(userId);
+
     // Create a new job document
     const job = await Job.create({
       userId,
@@ -95,6 +106,9 @@ export const startPipeline = asyncHandler(
       success: true,
       jobId: job._id.toString(),
       message: 'Job added to queue',
+      plan: finalLimitCheck.plan,
+      remainingUploads: finalLimitCheck.remainingUploads,
+      uploadsOnHold: finalLimitCheck.uploadsOnHold,
     };
 
     // Include warning if high volume is requested

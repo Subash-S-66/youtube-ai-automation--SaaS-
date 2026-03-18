@@ -6,6 +6,7 @@ import { checkAndUpdateUserPlan } from '../utils/subscriptionHelper';
 interface UploadCheckResult {
   allowed: boolean;
   remainingUploads: number;
+  uploadsOnHold: number;
   plan: string;
   message?: string;
 }
@@ -29,12 +30,16 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
     await user!.save();
   }
 
-  const remainingUploads = currentLimit - user!.uploadsUsedToday;
+  const uploadsUsedToday = user!.uploadsUsedToday || 0;
+  const uploadsOnHold = user!.uploadsOnHold || 0;
+
+  const remainingUploads = currentLimit - (uploadsUsedToday + uploadsOnHold);
 
   if (remainingUploads <= 0) {
     return {
       allowed: false,
       remainingUploads: 0,
+      uploadsOnHold,
       plan: user!.plan,
       message: 'Daily upload limit reached',
     };
@@ -43,6 +48,7 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
   return {
     allowed: true,
     remainingUploads,
+    uploadsOnHold,
     plan: user!.plan,
   };
 };

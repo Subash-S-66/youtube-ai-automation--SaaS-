@@ -19,6 +19,7 @@ export interface IUser extends Document {
   stripeCustomerId?: string;
   uploadLimitPerDay: number;
   uploadsUsedToday: number;
+  uploadsOnHold: number;
   lastUploadReset: Date;
   youtubeTokens?: IYoutubeTokens;
   isYoutubeConnected: boolean;
@@ -88,6 +89,10 @@ const UserSchema = new Schema<IUser>(
       default: 3,
     },
     uploadsUsedToday: {
+      type: Number,
+      default: 0,
+    },
+    uploadsOnHold: {
       type: Number,
       default: 0,
     },

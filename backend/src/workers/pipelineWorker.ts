@@ -186,6 +186,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       await appendLogSafe(jobId, errorMsg, 'failed');
 
       throw error;
+    } finally {
+      // Decrement uploadsOnHold safely when the job finishes regardless of success or failure
+      await User.findOneAndUpdate(
+        { _id: userId, uploadsOnHold: { $gt: 0 } },
+        { $inc: { uploadsOnHold: -1 } }
+      ).catch((err) => console.error(`Failed to decrement uploadsOnHold for user ${userId}:`, err));
     }
   },
   {
