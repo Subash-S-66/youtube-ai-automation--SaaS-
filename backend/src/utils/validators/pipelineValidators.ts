@@ -22,6 +22,7 @@ export const runPipelineSchema = z.object({
       ctaEnabled: z.boolean().optional(),
       voices: z.array(z.string()).optional(),
       resetStory: z.boolean().optional(),
+      userMediaPaths: z.array(z.string()).optional(),
     }, {
       message: 'settings are required',
     }),

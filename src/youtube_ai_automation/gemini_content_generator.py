@@ -16,6 +16,7 @@ def generate_gemini_content(
     content_type: str = "tech",
     story_mode: bool = False,
     current_part: int = 1,
+    recap_enabled: bool = False,
 ) -> GeneratedContent:
     """
     Force content generation through Gemini so script + scenes are created
@@ -31,5 +32,6 @@ def generate_gemini_content(
         content_type=content_type,
         story_mode=story_mode,
         current_part=current_part,
+        recap_enabled=recap_enabled,
     )
 

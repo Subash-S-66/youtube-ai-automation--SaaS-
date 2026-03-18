@@ -171,35 +171,6 @@ def _sanitize_output(payload: dict[str, Any], min_seconds: int, max_seconds: int
     if len(lines) != 5:
         raise ValueError("Script must contain 5 non-empty lines for structured Shorts output.")
 
-    # Dynamic CTA Generation via Jules or Gemini
-    cta_prompt = f"Generate a short, punchy call-to-action (CTA) for a YouTube Short about this topic: '{topic}'. Do not include quotation marks or extra text, just the CTA sentence."
-
-    # Try Jules first
-    cta = None
-    jules_url = os.getenv("JULES_API_URL")
-    jules_key = os.getenv("JULES_API_KEY")
-    if jules_url and jules_key:
-        cta = _call_jules(cta_prompt, jules_url, jules_key)
-
-    # Fallback to Gemini
-    if not cta:
-        if gemini_api_key:
-            try:
-                cta = _call_model(cta_prompt, "gemini", gemini_api_key, GEMINI_FALLBACK_MODEL, "", "", "", "")
-            except Exception as e:
-                LOGGER.warning(f"Failed to generate dynamic CTA via Gemini: {e}")
-
-    # Ultimate Fallback
-    if not cta:
-        cta = "Subscribe for more content like this!"
-
-    cta = cta.strip().strip('"').strip("'")
-
-    # Merge line 4 + line 5 content so CTA can stand alone.
-    merged = " ".join([lines[3].strip(), lines[4].strip()]).strip()
-    lines[3] = merged
-    lines[4] = cta
-
     lines = _enforce_script_length(lines, min_words=min_words, max_words=max_words)
     script = "\n".join(lines)
 
@@ -506,6 +477,7 @@ def generate_content(
     content_type: str = "tech",
     story_mode: bool = False,
     current_part: int = 1,
+    recap_enabled: bool = False,
 ) -> GeneratedContent:
     """
     Generate content for a single short video.
@@ -522,7 +494,10 @@ def generate_content(
     story_instruction = ""
     if story_mode:
         if current_part > 1:
-            story_instruction = f"\nThis is PART {current_part} of an ongoing story. Include a 1-sentence recap of previous events for continuity, continue the narrative, and ALWAYS end on a massive cliffhanger for the next part."
+            if recap_enabled:
+                story_instruction = f"\nThis is PART {current_part} of an ongoing story. Include a brief 1-sentence recap of previous events for continuity, continue the narrative, and ALWAYS end on a massive cliffhanger for the next part."
+            else:
+                story_instruction = f"\nThis is PART {current_part} of an ongoing story. Dive straight into continuing the narrative without recapping, and ALWAYS end on a massive cliffhanger for the next part."
         else:
             story_instruction = "\nThis is PART 1 of a new multi-part story series. Introduce the story and characters, and ALWAYS end on a massive cliffhanger for the next part."
 
