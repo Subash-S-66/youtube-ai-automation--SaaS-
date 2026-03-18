@@ -5,6 +5,7 @@ export interface IJob extends Document {
   promptId: mongoose.Types.ObjectId;
   status: 'pending' | 'running' | 'success' | 'failed';
   logs: string;
+  acceptedYouTubeLimitWarning: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -29,6 +30,10 @@ const JobSchema = new Schema<IJob>(
     logs: {
       type: String,
       default: '',
+    },
+    acceptedYouTubeLimitWarning: {
+      type: Boolean,
+      default: false,
     },
   },
   {

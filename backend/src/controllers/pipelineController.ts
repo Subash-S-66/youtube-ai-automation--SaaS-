@@ -30,7 +30,7 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
 // @access  Private
 export const startPipeline = asyncHandler(
   async (req: Request<unknown, unknown, RunPipelineInput>, res: Response) => {
-    const { promptId, settings } = req.body;
+    const { promptId, settings, acceptedYouTubeLimitWarning } = req.body;
 
     if (!req.user || !req.user.id) {
       throw new AppError('Not authorized', 401);
@@ -76,6 +76,14 @@ export const startPipeline = asyncHandler(
         throw new AppError('YouTube is not connected or token is invalid. Please connect your account first.', 400);
     }
 
+    if (settings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
+      return res.status(400).json({
+        success: false,
+        message: 'YouTube allows ~10 uploads per 24 hours. This may fail.',
+        warning: 'YouTube allows ~10 uploads per 24 hours. This may fail.',
+      });
+    }
+
     // Increment uploadsOnHold for the user
     const updatedUser = await User.findByIdAndUpdate(
       userId,
@@ -92,6 +100,7 @@ export const startPipeline = asyncHandler(
       promptId,
       status: 'pending',
       logs: 'Job added to queue...\n',
+      acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
     });
 
     // Add job to BullMQ
@@ -113,7 +122,7 @@ export const startPipeline = asyncHandler(
 
     // Include warning if high volume is requested
     if (settings.videoCount > 10) {
-      responsePayload.warning = 'YouTube allows ~10 uploads per 10 hours. This may affect uploads.';
+      responsePayload.warning = 'YouTube allows ~10 uploads per 24 hours. This may fail.';
     }
 
     res.status(200).json(responsePayload);
