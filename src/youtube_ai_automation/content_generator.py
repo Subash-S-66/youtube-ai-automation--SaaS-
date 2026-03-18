@@ -522,16 +522,16 @@ def generate_content(
     story_instruction = ""
     if story_mode:
         if current_part > 1:
-            story_instruction = f"\nThis is PART {current_part} of an ongoing story. Summarize the previous events briefly, then continue the story from where it left off."
+            story_instruction = f"\nThis is PART {current_part} of an ongoing story. Include a 1-sentence recap of previous events for continuity, continue the narrative, and ALWAYS end on a massive cliffhanger for the next part."
         else:
-            story_instruction = "\nThis is PART 1 of a new multi-part story series. Introduce the story and characters, but leave a cliffhanger at the end."
+            story_instruction = "\nThis is PART 1 of a new multi-part story series. Introduce the story and characters, and ALWAYS end on a massive cliffhanger for the next part."
 
     prompt = dedent(
         f"""
         You are an expert YouTube Shorts content creator focused on virality, retention, and performance.
         Create a vertical video script (under 60 seconds) that is highly engaging.
-        Tone: captivating, emotional, and curiosity-driven.
-        Use simple, punchy language.
+        Tone: Match tone to content type (e.g. suspenseful for true crime, energetic for tech, factual yet gripping for news).
+        Use simple, punchy language. Use ellipses (...) and em-dashes (—) to force natural pauses for impact.
 
         TOPIC: {topic}
         {story_instruction}
@@ -560,17 +560,17 @@ def generate_content(
         --------------------------------
         SCENE DESCRIPTIONS (for stock video search)
         --------------------------------
-        Generate exactly 5 scenes, one per script line. Each scene is a short visual description
-        that will be used to search for stock footage. Make them specific and visual, and relevant to the news story.
+        Generate exactly 5 scenes, one per script line. Each scene must be a strictly 1-2 word noun phrase
+        that will be used to search for stock footage. To avoid random or irrelevant clips, ensure the words precisely match the scene meaning.
 
-        GOOD scene examples:
-            "politician speaking at a podium"
-            "rescue workers at a natural disaster site"
-            "protestors marching in a street"
-            "stock market data on a screen"
+        GOOD search queries:
+            "politician podium"
+            "rescue workers"
+            "street protest"
+            "stock market"
 
-        BAD scene examples (too vague):
-            "news" / "world" / "important event"
+        BAD search queries (too vague or long):
+            "news" / "world" / "important event" / "a man walking down the street"
 
         --------------------------------
         OUTPUT FORMAT - strict JSON, no markdown, no commentary
