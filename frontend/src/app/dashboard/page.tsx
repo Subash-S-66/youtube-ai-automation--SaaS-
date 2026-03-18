@@ -211,25 +211,12 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-green-500 animate-spin" />
+      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
+        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
       </div>
     );
   }
 
-  const getStatusBadge = (status: string) => {
-    const colors: any = {
-      pending: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
-      running: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
-      success: 'bg-green-500/10 text-green-500 border-green-500/20',
-      failed: 'bg-red-500/10 text-red-500 border-red-500/20',
-    };
-    return (
-      <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${colors[status] || colors.pending}`}>
-        {status}
-      </span>
-    );
-  };
 
   return (
     <DashboardLayout user={user}>
@@ -243,7 +230,7 @@ export default function Dashboard() {
             className={`p-4 rounded-xl border flex items-start space-x-3 ${
               message.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
               message.type === 'warning' ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' :
-              'bg-green-500/10 border-green-500/20 text-green-400'
+              'bg-[#00D4FF]/10 border-[#00D4FF]/20 text-[#00D4FF]'
             }`}
           >
             <ShieldAlert className="h-5 w-5 flex-shrink-0 mt-0.5" />
@@ -257,23 +244,23 @@ export default function Dashboard() {
         {/* Left Column: Form */}
         <div className="xl:col-span-2 space-y-6">
 
-          <motion.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
-            <div className="flex items-center justify-between mb-6 border-b border-slate-800 pb-4">
+          <motion.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+            <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-4">
               <div className="flex items-center">
-                <div className="h-10 w-10 bg-green-500/10 rounded-lg flex items-center justify-center mr-4 border border-green-500/20">
-                  <Sparkles className="h-5 w-5 text-green-500" />
+                <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
+                  <Sparkles className="h-5 w-5 text-[#00D4FF]" />
                 </div>
-                <h2 className="text-xl font-bold text-white">Generation Engine</h2>
+                <h2 className="text-xl font-bold text-white tracking-tight">Generation Engine</h2>
               </div>
 
               {/* Input Mode Toggle */}
-              <div className="flex bg-[#0f172a] p-1 rounded-xl border border-slate-800">
+              <div className="flex bg-[#0B0F1A] p-1 rounded-xl border border-[#1A2235]">
                 <button
                   type="button"
                   onClick={() => setInputMode('prompt')}
                   className={cn(
                     "flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
-                    inputMode === 'prompt' ? "bg-slate-800 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+                    inputMode === 'prompt' ? "bg-[#1A2235] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
                   )}
                 >
                   <PenLine className="h-4 w-4 mr-2" /> Prompt
@@ -283,7 +270,7 @@ export default function Dashboard() {
                   onClick={() => setInputMode('topic')}
                   className={cn(
                     "flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
-                    inputMode === 'topic' ? "bg-slate-800 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+                    inputMode === 'topic' ? "bg-[#1A2235] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
                   )}
                 >
                   <List className="h-4 w-4 mr-2" /> Topic
@@ -303,7 +290,7 @@ export default function Dashboard() {
                     <label className="block text-sm font-medium text-slate-300 mb-2">Prompt Idea</label>
                     <textarea
                       rows={3}
-                      className="w-full bg-[#0f172a] border border-slate-700 rounded-xl p-4 text-slate-300 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 transition-colors resize-none"
+                      className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-4 text-slate-200 placeholder-slate-600 focus:outline-none border-glow-primary transition-colors resize-none shadow-inner"
                       placeholder="Describe your video idea here in detail..."
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
@@ -318,14 +305,14 @@ export default function Dashboard() {
                     <div>
                       <label className="block text-sm font-medium text-slate-300 mb-2">Category</label>
                       <select
-                        className="w-full bg-[#0f172a] border border-slate-700 rounded-xl p-3.5 text-slate-300 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500"
+                        className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-3.5 text-slate-200 focus:outline-none border-glow-primary transition-colors"
                         value={selectedTopic}
                         onChange={(e) => setSelectedTopic(e.target.value)}
                       >
                         {TOPIC_CATEGORIES.map(topic => (
-                          <option key={topic} value={topic} className="bg-slate-800">{topic}</option>
+                          <option key={topic} value={topic} className="bg-[#111827]">{topic}</option>
                         ))}
-                        <option value="Custom" className="bg-slate-800">Custom Topic...</option>
+                        <option value="Custom" className="bg-[#111827]">Custom Topic...</option>
                       </select>
                     </div>
                     {selectedTopic === 'Custom' && (
@@ -333,7 +320,7 @@ export default function Dashboard() {
                         <label className="block text-sm font-medium text-slate-300 mb-2">Custom Topic</label>
                         <input
                           type="text"
-                          className="w-full bg-[#0f172a] border border-slate-700 rounded-xl p-3.5 text-slate-300 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 transition-colors"
+                          className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-3.5 text-slate-200 placeholder-slate-600 focus:outline-none border-glow-primary transition-colors shadow-inner"
                           placeholder="E.g. AI advancements in 2024"
                           value={customTopic}
                           onChange={(e) => setCustomTopic(e.target.value)}
@@ -345,29 +332,29 @@ export default function Dashboard() {
               </AnimatePresence>
 
               {/* Story Mode Options */}
-              <div className="p-5 bg-gradient-to-r from-blue-500/5 to-purple-500/5 rounded-xl border border-blue-500/20">
+              <div className="p-5 bg-gradient-to-r from-[#7C5CFF]/10 to-[#00D4FF]/10 rounded-xl border border-[#7C5CFF]/30">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center">
-                    <BookOpen className="h-5 w-5 text-blue-400 mr-2" />
+                    <BookOpen className="h-5 w-5 text-[#00D4FF] mr-2" />
                     <h3 className="text-sm font-semibold text-white">Story Mode</h3>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" className="sr-only peer" checked={storyMode} onChange={() => setStoryMode(!storyMode)} />
-                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                    <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
 
                 <AnimatePresence>
                   {storyMode && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-blue-500/10">
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-400">Current Progress: <strong className="text-blue-400 font-mono text-base">Part {currentPart}</strong></span>
-                        <button type="button" onClick={() => { setCurrentPart(1); setStoryId(''); setStoryContext(''); }} className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg transition-colors">
+                        <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
+                        <button type="button" onClick={() => { setCurrentPart(1); setStoryId(''); setStoryContext(''); }} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
                           Reset Story
                         </button>
                       </div>
                       <label className="flex items-center space-x-3 cursor-pointer group">
-                        <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", recapEnabled ? "bg-blue-500 border-blue-500" : "bg-[#0f172a] border-slate-600 group-hover:border-blue-500", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
+                        <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#0B0F1A] border-[#1A2235] group-hover:border-[#7C5CFF]", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
                           {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                         </div>
                         <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-600" : "text-slate-300 group-hover:text-white")}>
@@ -382,36 +369,36 @@ export default function Dashboard() {
 
               {/* General Settings */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800">
+                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235]">
                   <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
-                    <Clock className="h-3 w-3 mr-2" /> Duration
+                    <Clock className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Duration
                   </label>
-                  <input type="range" min="10" max="60" className="w-full accent-green-500" value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
-                  <div className="text-right text-sm text-green-400 font-medium mt-1">{duration}s</div>
+                  <input type="range" min="10" max="60" className="w-full accent-[#00D4FF]" value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
+                  <div className="text-right text-sm text-[#00D4FF] font-medium mt-1">{duration}s</div>
                 </div>
 
-                <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800">
+                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235]">
                   <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
-                    <FileVideo className="h-3 w-3 mr-2" /> Format
+                    <FileVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Format
                   </label>
                   <select
                     className="w-full bg-transparent text-slate-300 text-sm focus:outline-none cursor-pointer"
                     value={contentType}
                     onChange={(e) => setContentType(e.target.value as any)}
                   >
-                    <option value="clips" className="bg-slate-800">Clips</option>
-                    <option value="images" className="bg-slate-800">Images</option>
-                    <option value="mixed" className="bg-slate-800">Mixed</option>
+                    <option value="clips" className="bg-[#111827]">Clips</option>
+                    <option value="images" className="bg-[#111827]">Images</option>
+                    <option value="mixed" className="bg-[#111827]">Mixed</option>
                   </select>
                 </div>
 
-                <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800">
+                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235]">
                   <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
-                    <ListVideo className="h-3 w-3 mr-2" /> Count
+                    <ListVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Count
                   </label>
                   <input
                     type="number" required min="1"
-                    className="w-full bg-transparent text-slate-300 text-sm focus:outline-none border-b border-slate-700 pb-1"
+                    className="w-full bg-transparent text-slate-300 text-sm focus:outline-none border-b border-[#1A2235] pb-1 focus:border-[#00D4FF] transition-colors"
                     value={videoCount}
                     onChange={(e) => setVideoCount(Number(e.target.value))}
                   />
@@ -420,23 +407,23 @@ export default function Dashboard() {
 
               {/* Call to Actions & Voices */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <label className="flex items-center p-4 bg-[#0f172a] rounded-xl border border-slate-800 cursor-pointer group hover:border-green-500/30 transition-colors">
-                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-green-500 border-green-500" : "bg-[#111827] border-slate-600")}>
-                     {ctaEnabled && <div className="w-2.5 h-2.5 bg-[#111827] rounded-sm" />}
+                <label className="flex items-center p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235] cursor-pointer group hover:border-[#7C5CFF]/50 transition-colors">
+                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
+                     {ctaEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                   </div>
                   <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
                   <input type="checkbox" className="hidden" checked={ctaEnabled} onChange={() => setCtaEnabled(!ctaEnabled)} />
                 </label>
 
                 {/* Voice Selection */}
-                <div className="bg-[#0f172a] p-4 rounded-xl border border-slate-800 flex flex-col">
+                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235] flex flex-col">
                   <div className="flex items-center justify-between mb-3">
                     <label className="flex items-center text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      <Mic className="h-3 w-3 mr-2" /> Voice Selection
+                      <Mic className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Voice Selection
                     </label>
                     <label className="flex items-center space-x-2 cursor-pointer group">
-                      <div className={cn("w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors", randomVoice ? "bg-green-500 border-green-500" : "bg-[#111827] border-slate-600")}>
-                        {randomVoice && <div className="w-1.5 h-1.5 bg-[#111827] rounded-sm" />}
+                      <div className={cn("w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors", randomVoice ? "bg-[#00D4FF] border-[#00D4FF]" : "bg-[#111827] border-[#1A2235]")}>
+                        {randomVoice && <div className="w-1.5 h-1.5 bg-[#0B0F1A] rounded-sm" />}
                       </div>
                       <span className="text-xs text-slate-400 group-hover:text-white">Random</span>
                       <input type="checkbox" className="hidden" checked={randomVoice} onChange={(e) => {
@@ -448,9 +435,9 @@ export default function Dashboard() {
 
                   <div className="space-y-2 max-h-[120px] overflow-y-auto pr-2">
                     {AVAILABLE_VOICES.map(voice => (
-                      <div key={voice.id} onClick={() => handleVoiceToggle(voice.id)} className={cn("flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors border", selectedVoices.includes(voice.id) && !randomVoice ? "bg-slate-800/80 border-green-500/30" : "bg-[#111827] border-transparent hover:bg-slate-800/40")}>
-                        <span className={cn("text-sm", selectedVoices.includes(voice.id) && !randomVoice ? "text-green-400" : "text-slate-400")}>{voice.name}</span>
-                        <button type="button" onClick={(e) => playVoicePreview(e, voice.name)} className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors">
+                      <div key={voice.id} onClick={() => handleVoiceToggle(voice.id)} className={cn("flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors border", selectedVoices.includes(voice.id) && !randomVoice ? "bg-[#1A2235] border-[#7C5CFF]/50 shadow-[0_0_10px_rgba(124,92,255,0.2)]" : "bg-[#111827] border-transparent hover:bg-[#1A2235]/60")}>
+                        <span className={cn("text-sm", selectedVoices.includes(voice.id) && !randomVoice ? "text-white" : "text-slate-400")}>{voice.name}</span>
+                        <button type="button" onClick={(e) => playVoicePreview(e, voice.name)} className="p-1.5 rounded bg-[#1A2235] hover:bg-[#7C5CFF] text-slate-400 hover:text-white transition-colors">
                           <Volume2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
@@ -464,12 +451,12 @@ export default function Dashboard() {
                 whileTap={{ scale: 0.99 }}
                 type="submit"
                 disabled={generating || !user?.isYoutubeConnected}
-                className="w-full py-4 px-4 bg-gradient-to-r from-green-500 to-emerald-400 hover:from-green-400 hover:to-emerald-300 text-[#0f172a] font-extrabold rounded-xl shadow-[0_0_30px_rgba(34,197,94,0.2)] hover:shadow-[0_0_30px_rgba(34,197,94,0.4)] transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-lg tracking-wide"
+                className="w-full py-4 px-4 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-lg tracking-wide border border-white/20"
               >
                 {generating ? (
                   <RefreshCw className="h-6 w-6 animate-spin mr-3" />
                 ) : (
-                  <Play className="h-6 w-6 mr-3 fill-current" />
+                  <Play className="h-6 w-6 mr-3 fill-white" />
                 )}
                 {generating ? 'Processing Pipeline...' : 'Generate & Run Pipeline'}
               </motion.button>
@@ -479,18 +466,18 @@ export default function Dashboard() {
 
         {/* Right Column: Status & Connections */}
         <div className="space-y-6">
-          <motion.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <motion.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
              <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
                 <Youtube className="h-24 w-24" />
              </div>
              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Integrations</h3>
 
              <div className="flex flex-col space-y-4 relative z-10">
-                <div className="flex items-center justify-between p-4 bg-[#0f172a] rounded-xl border border-slate-800">
+                <div className="flex items-center justify-between p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
                   <div className="flex items-center">
                     <div className="relative mr-3">
-                      <Youtube className={`h-6 w-6 ${user?.isYoutubeConnected ? 'text-red-500' : 'text-slate-600'}`} />
-                      <div className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#0f172a] ${user?.isYoutubeConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                      <Youtube className={`h-6 w-6 ${user?.isYoutubeConnected ? 'text-[#FF4FD8]' : 'text-slate-600'}`} />
+                      <div className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#0B0F1A] ${user?.isYoutubeConnected ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.8)]' : 'bg-red-500'}`}></div>
                     </div>
                     <div>
                       <p className="text-sm font-bold text-white">YouTube</p>
@@ -498,16 +485,16 @@ export default function Dashboard() {
                     </div>
                   </div>
                   {!user?.isYoutubeConnected && (
-                    <button onClick={handleConnectYouTube} className="text-xs bg-red-500/10 hover:bg-red-500/20 text-red-500 font-semibold px-3 py-1.5 rounded-lg border border-red-500/20 transition-colors">
+                    <button onClick={handleConnectYouTube} className="text-xs bg-white/5 hover:bg-white/10 text-white font-semibold px-3 py-1.5 rounded-lg border border-white/10 transition-colors">
                       Connect
                     </button>
                   )}
                 </div>
 
                 {user?.plan === 'free' && (
-                  <div className="p-4 bg-gradient-to-br from-indigo-500/10 to-purple-500/10 rounded-xl border border-indigo-500/20 group">
-                    <p className="text-sm font-medium text-indigo-300 mb-3 group-hover:text-indigo-200 transition-colors">Upgrade to Pro to unlock unlimited processing and priority queues.</p>
-                    <button onClick={handleUpgrade} className="w-full text-xs bg-indigo-500 hover:bg-indigo-400 text-white font-bold py-2.5 rounded-lg transition-colors shadow-lg shadow-indigo-500/20">
+                  <div className="p-4 bg-[#1A2235]/50 rounded-xl border border-[#7C5CFF]/30 group">
+                    <p className="text-sm font-medium text-slate-300 mb-3 group-hover:text-white transition-colors">Upgrade to Pro to unlock unlimited processing and priority queues.</p>
+                    <button onClick={handleUpgrade} className="w-full text-xs bg-gradient-primary text-white font-bold py-2.5 rounded-lg transition-transform hover:scale-[1.02] shadow-glow-primary">
                       Upgrade to Pro
                     </button>
                   </div>

@@ -55,8 +55,8 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-green-500 animate-spin" />
+      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
+        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
       </div>
     );
   }
@@ -73,7 +73,7 @@ export default function SettingsPage() {
             className={`p-4 rounded-xl border flex items-start space-x-3 mb-6 ${
               message.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
               message.type === 'warning' ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' :
-              'bg-green-500/10 border-green-500/20 text-green-400'
+              'bg-[#00D4FF]/10 border-[#00D4FF]/20 text-[#00D4FF]'
             }`}
           >
             {message.type === 'success' ? <CheckCircle2 className="h-5 w-5 flex-shrink-0 mt-0.5" /> : <ShieldAlert className="h-5 w-5 flex-shrink-0 mt-0.5" />}
@@ -82,13 +82,14 @@ export default function SettingsPage() {
         )}
       </AnimatePresence>
 
-      <div className="bg-[#111827] border border-slate-800 rounded-2xl shadow-xl overflow-hidden mb-6">
-        <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between">
+      <div className="bg-[#111827] border border-[#1A2235] rounded-2xl shadow-xl overflow-hidden mb-6 relative">
+        <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-primary opacity-50"></div>
+        <div className="px-6 py-5 border-b border-[#1A2235] flex items-center justify-between">
           <div className="flex items-center">
-            <div className="h-10 w-10 bg-slate-500/10 rounded-lg flex items-center justify-center mr-4 border border-slate-500/20">
-              <Settings className="h-5 w-5 text-slate-400" />
+            <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
+              <Settings className="h-5 w-5 text-[#7C5CFF]" />
             </div>
-            <h2 className="text-xl font-bold text-white">Account Settings</h2>
+            <h2 className="text-xl font-bold text-white tracking-tight">Account Settings</h2>
           </div>
         </div>
 
@@ -99,7 +100,7 @@ export default function SettingsPage() {
             <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-6 flex items-center">
               <Youtube className="h-4 w-4 mr-2" /> Content Integrations
             </h3>
-            <div className="flex items-center justify-between p-5 bg-[#0f172a] rounded-xl border border-slate-800">
+            <div className="flex items-center justify-between p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
               <div>
                 <p className="text-base font-bold text-white mb-1">YouTube Access</p>
                 <p className="text-sm text-slate-500 max-w-xl">
@@ -121,7 +122,7 @@ export default function SettingsPage() {
                 ) : (
                   <button
                     onClick={handleConnectYouTube}
-                    className="flex items-center text-sm bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors"
+                    className="flex items-center text-sm bg-[#FF4FD8] hover:bg-[#d93cbd] text-white font-bold px-4 py-2 rounded-lg transition-transform hover:scale-[1.02] shadow-glow-accent"
                   >
                     <Youtube className="h-4 w-4 mr-2" />
                     Connect Channel
@@ -137,21 +138,21 @@ export default function SettingsPage() {
               <BellRing className="h-4 w-4 mr-2" /> Communications
             </h3>
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-5 bg-[#0f172a] rounded-xl border border-slate-800">
+              <div className="flex items-center justify-between p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
                 <div>
                   <p className="text-base font-bold text-white mb-1 flex items-center"><Mail className="h-4 w-4 mr-2 text-slate-400" /> Account Email</p>
                   <p className="text-sm text-slate-500">System notifications and billing receipts are sent here.</p>
                 </div>
-                <div className="text-sm text-slate-300 bg-slate-800 px-4 py-2 rounded-lg font-medium">
+                <div className="text-sm text-slate-300 bg-[#111827] border border-[#1A2235] px-4 py-2 rounded-lg font-medium">
                   {user?.email}
                 </div>
               </div>
-              <div className="flex items-center justify-between p-5 bg-[#0f172a] rounded-xl border border-slate-800 opacity-60 pointer-events-none">
+              <div className="flex items-center justify-between p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235] opacity-60 pointer-events-none">
                 <div>
                   <p className="text-base font-bold text-white mb-1 flex items-center">Telegram Connect</p>
                   <p className="text-sm text-slate-500">Receive instant pipeline updates via Telegram Bot.</p>
                 </div>
-                <button className="text-sm bg-blue-500 hover:bg-blue-600 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+                <button className="text-sm bg-[#00D4FF] hover:bg-[#00b3d6] text-[#0B0F1A] font-bold px-4 py-2 rounded-lg transition-colors">
                   Setup Bot
                 </button>
               </div>

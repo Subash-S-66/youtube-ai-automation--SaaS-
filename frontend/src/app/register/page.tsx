@@ -29,11 +29,20 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0f172a] flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans selection:bg-green-500/30">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md flex justify-center items-center">
-        <Sparkles className="h-8 w-8 text-green-500 mr-3" />
+    <div className="min-h-screen bg-[#0B0F1A] flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans selection:bg-[#7C5CFF]/30 relative overflow-hidden">
+      {/* Background Glows */}
+      <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
+        <div className="absolute top-[-10%] right-[20%] w-[40%] h-[40%] bg-[#7C5CFF] opacity-[0.05] blur-[120px] rounded-full"></div>
+        <div className="absolute bottom-[-10%] left-[20%] w-[40%] h-[40%] bg-[#FF4FD8] opacity-[0.05] blur-[120px] rounded-full"></div>
+      </div>
+
+      <div className="sm:mx-auto sm:w-full sm:max-w-md flex justify-center items-center relative z-10">
+        <div className="relative mr-3">
+          <Sparkles className="h-8 w-8 text-[#7C5CFF]" />
+          <div className="absolute inset-0 bg-[#7C5CFF] blur-xl opacity-50 rounded-full"></div>
+        </div>
         <h2 className="text-center text-4xl font-extrabold text-white tracking-tight">
-          Clip<span className="text-green-500">Forge</span>
+          Clip<span className="text-gradient-primary">Forge</span>
         </h2>
       </div>
 
@@ -41,9 +50,11 @@ export default function Register() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
-        className="mt-8 sm:mx-auto sm:w-full sm:max-w-md"
+        className="mt-8 sm:mx-auto sm:w-full sm:max-w-md relative z-10"
       >
-        <div className="bg-[#111827] py-10 px-4 shadow-2xl sm:rounded-2xl sm:px-10 border border-slate-800/50 backdrop-blur-xl">
+        <div className="bg-[#111827]/80 py-10 px-4 shadow-[0_0_50px_rgba(0,0,0,0.5)] sm:rounded-2xl sm:px-10 border border-[#1A2235] backdrop-blur-xl relative">
+          <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-primary opacity-50"></div>
+
           <form className="space-y-6" onSubmit={handleRegister}>
             <div>
               <label className="block text-sm font-medium text-slate-300">Email address</label>
@@ -54,7 +65,7 @@ export default function Register() {
                 <input
                   type="email"
                   required
-                  className="block w-full pl-10 bg-[#0f172a] border border-slate-700 rounded-lg py-3 text-slate-300 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 transition-colors sm:text-sm"
+                  className="block w-full pl-10 bg-[#0B0F1A] border border-[#1A2235] rounded-xl py-3 text-slate-200 focus:outline-none border-glow-primary transition-colors sm:text-sm shadow-inner"
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -71,7 +82,7 @@ export default function Register() {
                 <input
                   type="password"
                   required
-                  className="block w-full pl-10 bg-[#0f172a] border border-slate-700 rounded-lg py-3 text-slate-300 focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500 transition-colors sm:text-sm"
+                  className="block w-full pl-10 bg-[#0B0F1A] border border-[#1A2235] rounded-xl py-3 text-slate-200 focus:outline-none border-glow-primary transition-colors sm:text-sm shadow-inner"
                   placeholder="Min 6 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -91,10 +102,10 @@ export default function Register() {
                 whileTap={{ scale: 0.98 }}
                 type="submit"
                 disabled={isLoading}
-                className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-bold text-[#0f172a] bg-green-500 hover:bg-green-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#111827] focus:ring-green-500 transition-all disabled:opacity-50"
+                className="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-full shadow-glow-primary hover:shadow-glow-primary-hover text-sm font-bold text-white bg-gradient-primary transition-all disabled:opacity-50"
               >
                 {isLoading ? (
-                  <span className="w-5 h-5 border-2 border-slate-800 border-t-transparent rounded-full animate-spin"></span>
+                  <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
                 ) : (
                   <>
                     Create Account
@@ -107,7 +118,7 @@ export default function Register() {
 
           <div className="mt-8 text-center text-sm text-slate-400">
              Already have an account?{' '}
-             <a href="/login" className="font-semibold text-green-500 hover:text-green-400 transition-colors">
+             <a href="/login" className="font-semibold text-[#00D4FF] hover:text-[#7C5CFF] transition-colors">
                Sign in instead
              </a>
           </div>

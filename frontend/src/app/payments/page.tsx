@@ -43,8 +43,8 @@ export default function PaymentsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-green-500 animate-spin" />
+      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
+        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
       </div>
     );
   }
@@ -54,20 +54,21 @@ export default function PaymentsPage() {
   return (
     <DashboardLayout user={user}>
 
-      <div className="bg-[#111827] border border-slate-800 rounded-2xl shadow-xl overflow-hidden mb-6">
-        <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between">
+      <div className="bg-[#111827] border border-[#1A2235] rounded-2xl shadow-xl overflow-hidden mb-6 relative">
+        <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-primary opacity-50"></div>
+        <div className="px-6 py-5 border-b border-[#1A2235] flex items-center justify-between">
           <div className="flex items-center">
-            <div className="h-10 w-10 bg-indigo-500/10 rounded-lg flex items-center justify-center mr-4 border border-indigo-500/20">
-              <CreditCard className="h-5 w-5 text-indigo-400" />
+            <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
+              <CreditCard className="h-5 w-5 text-[#7C5CFF]" />
             </div>
-            <h2 className="text-xl font-bold text-white">Billing & Usage</h2>
+            <h2 className="text-xl font-bold text-white tracking-tight">Billing & Usage</h2>
           </div>
         </div>
 
         <div className="p-6 md:p-8">
           {message && (
             <div className={`mb-6 p-4 rounded-xl border flex items-start space-x-3 text-sm font-medium ${
-              message.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-green-500/10 border-green-500/20 text-green-400'
+              message.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-[#00D4FF]/10 border-[#00D4FF]/20 text-[#00D4FF]'
             }`}>
               {message.text}
             </div>
@@ -76,7 +77,7 @@ export default function PaymentsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
             {/* Current Plan Overview */}
-            <div className="bg-[#0f172a] rounded-2xl p-6 border border-slate-800">
+            <div className="bg-[#0B0F1A] rounded-2xl p-6 border border-[#1A2235]">
               <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Current Plan</h3>
               <div className="flex items-end mb-2">
                 <span className="text-4xl font-extrabold text-white capitalize">{user?.plan}</span>
@@ -93,9 +94,9 @@ export default function PaymentsPage() {
                     <span className="text-slate-300">Uploads</span>
                     <span className="text-white font-mono">{user?.uploadsUsedToday} / {user?.uploadLimitPerDay}</span>
                   </div>
-                  <div className="w-full bg-slate-800 rounded-full h-2">
+                  <div className="w-full bg-[#111827] rounded-full h-2 border border-[#1A2235]">
                     <div
-                      className={`h-2 rounded-full ${isPro ? 'bg-green-500' : 'bg-indigo-500'}`}
+                      className={`h-2 rounded-full ${isPro ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.6)]' : 'bg-[#7C5CFF]'}`}
                       style={{ width: `${Math.min((user?.uploadsUsedToday / user?.uploadLimitPerDay) * 100, 100)}%` }}
                     ></div>
                   </div>
@@ -105,20 +106,21 @@ export default function PaymentsPage() {
 
             {/* Upgrade Prompt */}
             {!isPro && (
-              <div className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 rounded-2xl p-6 border border-indigo-500/30 flex flex-col justify-center">
-                <div className="flex items-center mb-4">
-                  <Zap className="h-6 w-6 text-indigo-400 mr-2" />
+              <div className="bg-[#1A2235]/40 rounded-2xl p-6 border border-[#7C5CFF]/30 flex flex-col justify-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-primary opacity-5 pointer-events-none"></div>
+                <div className="flex items-center mb-4 relative z-10">
+                  <Zap className="h-6 w-6 text-[#FF4FD8] mr-2" />
                   <h3 className="text-lg font-bold text-white">Upgrade to Pro</h3>
                 </div>
-                <ul className="space-y-3 mb-8">
-                  <li className="flex items-center text-sm text-indigo-200">
-                    <CheckCircle2 className="h-4 w-4 mr-3 text-indigo-400" /> 100 Daily Uploads
+                <ul className="space-y-3 mb-8 relative z-10">
+                  <li className="flex items-center text-sm text-slate-300">
+                    <CheckCircle2 className="h-4 w-4 mr-3 text-[#00D4FF]" /> 100 Daily Uploads
                   </li>
-                  <li className="flex items-center text-sm text-indigo-200">
-                    <CheckCircle2 className="h-4 w-4 mr-3 text-indigo-400" /> Priority Processing Queue
+                  <li className="flex items-center text-sm text-slate-300">
+                    <CheckCircle2 className="h-4 w-4 mr-3 text-[#00D4FF]" /> Priority Processing Queue
                   </li>
-                  <li className="flex items-center text-sm text-indigo-200">
-                    <CheckCircle2 className="h-4 w-4 mr-3 text-indigo-400" /> Custom Voice Selection
+                  <li className="flex items-center text-sm text-slate-300">
+                    <CheckCircle2 className="h-4 w-4 mr-3 text-[#00D4FF]" /> Custom Voice Selection
                   </li>
                 </ul>
                 <motion.button
@@ -126,7 +128,7 @@ export default function PaymentsPage() {
                   whileTap={{ scale: 0.98 }}
                   onClick={handleUpgrade}
                   disabled={processing}
-                  className="w-full py-3 px-4 bg-indigo-500 hover:bg-indigo-400 text-white font-bold rounded-xl shadow-[0_0_20px_rgba(99,102,241,0.3)] transition-all disabled:opacity-50 flex items-center justify-center"
+                  className="w-full py-3 px-4 bg-gradient-primary text-white font-bold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 flex items-center justify-center relative z-10"
                 >
                   {processing ? <RefreshCw className="h-5 w-5 animate-spin mr-2" /> : null}
                   {processing ? 'Processing...' : 'Upgrade Now - $29/mo'}
@@ -135,12 +137,13 @@ export default function PaymentsPage() {
             )}
 
             {isPro && (
-              <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-2xl p-6 border border-green-500/20 flex flex-col justify-center items-center text-center">
-                <div className="h-16 w-16 bg-green-500/20 rounded-full flex items-center justify-center mb-4">
-                  <CheckCircle2 className="h-8 w-8 text-green-500" />
+              <div className="bg-[#1A2235]/40 rounded-2xl p-6 border border-[#00D4FF]/30 flex flex-col justify-center items-center text-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 pointer-events-none"></div>
+                <div className="h-16 w-16 bg-[#00D4FF]/20 rounded-full flex items-center justify-center mb-4 relative z-10 shadow-[0_0_15px_rgba(0,212,255,0.4)]">
+                  <CheckCircle2 className="h-8 w-8 text-[#00D4FF]" />
                 </div>
-                <h3 className="text-xl font-bold text-white mb-2">You are a Pro Member</h3>
-                <p className="text-sm text-green-200">Thank you for your support. Your account is fully upgraded with priority features.</p>
+                <h3 className="text-xl font-bold text-white mb-2 relative z-10">You are a Pro Member</h3>
+                <p className="text-sm text-[#00D4FF]/80 relative z-10">Thank you for your support. Your account is fully upgraded with priority features.</p>
               </div>
             )}
           </div>
