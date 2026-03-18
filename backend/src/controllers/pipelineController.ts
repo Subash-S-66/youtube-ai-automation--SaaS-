@@ -7,7 +7,7 @@ import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import Job from '../models/Job';
 import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
-import { canUserUpload } from '../services/uploadLimitService';
+import { getUploadLimits } from '../services/uploadLimitService';
 
 // @desc    Get user's jobs
 // @route   GET /api/pipeline/jobs
@@ -39,9 +39,9 @@ export const startPipeline = asyncHandler(
     const userId = req.user.id;
 
     // Check Upload Limits
-    const limitCheck = await canUserUpload(userId);
-    if (!limitCheck.allowed) {
-      throw new AppError(limitCheck.message || 'Daily upload limit reached', 403);
+    const limitCheck = await getUploadLimits(userId);
+    if (!limitCheck.canUpload) {
+      throw new AppError('Daily upload limit reached', 403);
     }
 
     // Check for a running or pending job here to prevent multiple queued tasks
@@ -92,7 +92,7 @@ export const startPipeline = asyncHandler(
     );
 
     // Re-check remaining uploads to return accurate numbers
-    const finalLimitCheck = await canUserUpload(userId);
+    const finalLimitCheck = await getUploadLimits(userId);
 
     // Create a new job document
     const job = await Job.create({
@@ -117,7 +117,7 @@ export const startPipeline = asyncHandler(
       message: 'Job added to queue',
       plan: finalLimitCheck.plan,
       remainingUploads: finalLimitCheck.remainingUploads,
-      uploadsOnHold: finalLimitCheck.uploadsOnHold,
+      uploadsOnHold: updatedUser?.uploadsOnHold || 0,
     };
 
     // Include warning if high volume is requested

@@ -7,8 +7,8 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { sendEmail } from '../services/emailService';
-import { canUserUpload } from '../services/uploadLimitService';
-import { PLAN_LIMITS } from '../config/plans';
+import { getUploadLimits } from '../services/uploadLimitService';
+import { planLimits } from '../config/plans';
 
 // Generate JWT
 const generateToken = (id: string): string => {
@@ -98,7 +98,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
 
   if (user) {
     // Get accurate current limits and plan for response
-    const limitCheck = await canUserUpload(user.id);
+    const limitCheck = await getUploadLimits(user.id);
 
     res.json({
       success: true,
@@ -115,8 +115,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         },
         plan: limitCheck.plan,
         remainingUploads: limitCheck.remainingUploads,
-        uploadsOnHold: limitCheck.uploadsOnHold,
-        uploadLimit: PLAN_LIMITS[limitCheck.plan] || PLAN_LIMITS['free'] || 3,
+        uploadsOnHold: user.uploadsOnHold || 0,
+        uploadLimit: planLimits[limitCheck.plan] || planLimits['free'] || 3,
       },
     });
   } else {

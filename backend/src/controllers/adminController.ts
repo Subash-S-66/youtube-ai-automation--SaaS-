@@ -5,7 +5,7 @@ import User from '../models/User';
 import Job from '../models/Job';
 import Prompt from '../models/Prompt';
 import { z } from 'zod';
-import { PLAN_LIMITS } from '../config/plans';
+import { planLimits } from '../config/plans';
 
 export const getAdminStats = asyncHandler(async (req: Request, res: Response) => {
   const totalUsers = await User.countDocuments();
