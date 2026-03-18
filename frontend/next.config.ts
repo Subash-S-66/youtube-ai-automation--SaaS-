@@ -17,10 +17,27 @@ const withPWA = withPWAInit({
         handler: 'NetworkOnly',
       },
       {
-        urlPattern: /^https?.*/,
-        handler: "NetworkFirst",
+        urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/,
+        handler: 'CacheFirst',
         options: {
-          cacheName: "offlineCache",
+          cacheName: 'static-images',
+          expiration: {
+            maxEntries: 100,
+          },
+        },
+      },
+      {
+        urlPattern: /\.(?:js|css)$/,
+        handler: 'StaleWhileRevalidate',
+        options: {
+          cacheName: 'static-resources',
+        },
+      },
+      {
+        urlPattern: /^https?.*/,
+        handler: 'NetworkFirst',
+        options: {
+          cacheName: 'offlineCache',
           expiration: {
             maxEntries: 200,
           },

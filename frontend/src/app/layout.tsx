@@ -29,6 +29,10 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "ClipForge",
   },
+  // Added to satisfy PWA requirements explicitly
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export default function RootLayout({
