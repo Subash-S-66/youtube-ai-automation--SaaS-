@@ -1,19 +1,23 @@
-FROM python:3.12-slim
+# Use the official Python 3.10 slim image as base
+FROM python:3.10-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app/src
-
+# Set the working directory
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Install system dependencies if required by the pipeline (e.g. ffmpeg)
+# RUN apt-get update && apt-get install -y ffmpeg
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Copy requirements and install python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . /app
+# Copy the rest of the application code
+COPY src/ /app/src/
 
-CMD ["python", "-m", "youtube_ai_automation.azure_job_runner"]
+# Set PYTHONPATH so python can find the modules
+ENV PYTHONPATH="/app/src"
+
+# Run the main pipeline script
+# Assuming Azure Container Apps Job will override this with args like:
+# ["--userId=123", "--prompt=...", "--token=...", "--settings=..."]
+ENTRYPOINT ["python", "-m", "youtube_ai_automation.main"]
