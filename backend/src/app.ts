@@ -8,6 +8,7 @@ import promptRoutes from './routes/promptRoutes';
 import pipelineRoutes from './routes/pipelineRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import notificationRoutes from './routes/notificationRoutes';
+import supportRoutes from './routes/supportRoutes';
 import adminRoutes from './routes/adminRoutes';
 import userRoutes from './routes/userRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
@@ -58,6 +59,7 @@ app.use('/api/prompt', promptRoutes);
 app.use('/api/pipeline', pipelineRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/support', supportRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRoutes);
 

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles } from 'lucide-react';
+import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
@@ -26,6 +26,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
     { name: 'History', icon: History, href: '/history' },
     { name: 'Payments', icon: CreditCard, href: '/payments' },
     { name: 'Settings', icon: Settings, href: '/settings' },
+    { name: 'Help', icon: HelpCircle, href: '/help' },
   ];
 
   return (
