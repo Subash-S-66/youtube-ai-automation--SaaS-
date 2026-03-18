@@ -81,11 +81,14 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
         const userId = session.client_reference_id;
 
         if (userId) {
+          const subscriptionExpiresAt = new Date();
+          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
+
           await User.findByIdAndUpdate(userId, {
             stripeCustomerId: session.customer as string,
             plan: 'pro',
             subscriptionStatus: 'active',
-            uploadLimitPerDay: 100, // Upgrade limits immediately
+            subscriptionExpiresAt,
           });
           console.log(`[Stripe] Checkout completed. User ${userId} upgraded to Pro.`);
         }
@@ -97,12 +100,15 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
         const customerId = invoice.customer as string;
 
         if (customerId) {
+          const subscriptionExpiresAt = new Date();
+          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
+
           await User.findOneAndUpdate(
             { stripeCustomerId: customerId },
             {
               plan: 'pro',
               subscriptionStatus: 'active',
-              uploadLimitPerDay: 100,
+              subscriptionExpiresAt,
             }
           );
           console.log(`[Stripe] Invoice paid for customer ${customerId}. Subscription active.`);
@@ -120,7 +126,7 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
             {
               plan: 'free',
               subscriptionStatus: 'inactive',
-              uploadLimitPerDay: 3,
+              $unset: { subscriptionExpiresAt: 1 },
             }
           );
           console.warn(`[Stripe] Invoice failed for customer ${customerId}. Subscription inactive.`);
@@ -138,7 +144,7 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
             {
               plan: 'free',
               subscriptionStatus: 'inactive',
-              uploadLimitPerDay: 3,
+              $unset: { subscriptionExpiresAt: 1 },
             }
           );
           console.log(`[Stripe] Subscription deleted for customer ${customerId}. Reverted to Free plan.`);

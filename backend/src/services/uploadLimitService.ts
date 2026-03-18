@@ -1,39 +1,41 @@
 import User from '../models/User';
 import { resetDailyUploads } from '../utils/dailyReset';
+import { PLAN_LIMITS } from '../config/plans';
+import { checkAndUpdateUserPlan } from '../utils/subscriptionHelper';
 
 interface UploadCheckResult {
   allowed: boolean;
   remainingUploads: number;
+  plan: string;
   message?: string;
 }
 
 export const canUserUpload = async (userId: string): Promise<UploadCheckResult> => {
-  const user = await User.findById(userId);
+  let user = await User.findById(userId);
 
   if (!user) {
     throw new Error('User not found');
   }
 
-  // Define plan rules dynamically if needed, or rely on user model defaults
-  if (user.plan === 'free' && user.uploadLimitPerDay !== 3) {
-    user.uploadLimitPerDay = 3;
-  } else if (user.plan === 'pro' && user.uploadLimitPerDay !== 100) {
-    // Arbitrary very high value for pro plan as per instructions
-    user.uploadLimitPerDay = 100;
-  }
+  // Ensure user's plan is updated if expired
+  user = await checkAndUpdateUserPlan(user);
+
+  // Get current plan limit
+  const currentLimit = PLAN_LIMITS[user!.plan] || PLAN_LIMITS['free'] || 3;
 
   // Reset daily counter if necessary
-  const wasReset = resetDailyUploads(user);
-  if (wasReset || user.isModified('uploadLimitPerDay')) {
-    await user.save();
+  const wasReset = resetDailyUploads(user as any);
+  if (wasReset) {
+    await user!.save();
   }
 
-  const remainingUploads = user.uploadLimitPerDay - user.uploadsUsedToday;
+  const remainingUploads = currentLimit - user!.uploadsUsedToday;
 
   if (remainingUploads <= 0) {
     return {
       allowed: false,
       remainingUploads: 0,
+      plan: user!.plan,
       message: 'Daily upload limit reached',
     };
   }
@@ -41,6 +43,7 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
   return {
     allowed: true,
     remainingUploads,
+    plan: user!.plan,
   };
 };
 

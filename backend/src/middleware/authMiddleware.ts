@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from './errorHandler';
+import { checkAndUpdateUserPlan } from '../utils/subscriptionHelper';
 
 interface DecodedToken {
   id: string;
@@ -41,7 +42,8 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
         return next(new AppError('User not found', 404));
       }
 
-      req.user = user;
+      // Automatically update plan if expired
+      req.user = await checkAndUpdateUserPlan(user);
 
       return next();
     } catch (error) {

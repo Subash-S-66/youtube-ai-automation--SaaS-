@@ -7,11 +7,14 @@ export interface IYoutubeTokens {
   expiry_date?: number;
 }
 
+import { PlanType } from '../config/plans';
+
 export interface IUser extends Document {
   email: string;
   password?: string;
   role: string;
-  plan: 'free' | 'pro';
+  plan: PlanType;
+  subscriptionExpiresAt?: Date;
   subscriptionStatus: 'active' | 'inactive';
   stripeCustomerId?: string;
   uploadLimitPerDay: number;
@@ -65,8 +68,11 @@ const UserSchema = new Schema<IUser>(
     },
     plan: {
       type: String,
-      enum: ['free', 'pro'],
+      enum: ['free', 'basic', 'pro', 'premium'],
       default: 'free',
+    },
+    subscriptionExpiresAt: {
+      type: Date,
     },
     subscriptionStatus: {
       type: String,
