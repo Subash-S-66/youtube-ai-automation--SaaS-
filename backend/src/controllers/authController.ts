@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import User from '../models/User';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
-import { RegisterInput, LoginInput, ForgotPasswordInput, ResetPasswordInput } from '../utils/validators/authValidators';
+import { RegisterInput, LoginInput, ForgotPasswordInput, ResetPasswordInput, ResendVerificationInput } from '../utils/validators/authValidators';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
@@ -155,7 +155,7 @@ export const login = asyncHandler(
 // @route   GET /api/auth/verify-email
 // @access  Public
 export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
-  const { token } = req.query;
+  const { token, redirect } = req.query;
 
   if (!token || typeof token !== 'string') {
     throw new AppError('Invalid token', 400);
@@ -181,11 +181,67 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
 
   await user.save();
 
+  const jwtToken = generateToken(user.id);
+  setTokenCookie(res, jwtToken);
+
+  const redirectUrl = typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/dashboard';
+
   res.json({
     success: true,
     message: 'Email verified successfully',
+    token: jwtToken,
+    user: {
+      _id: user.id,
+      email: user.email,
+      role: user.role,
+      plan: user.plan,
+    },
+    redirectUrl,
   });
 });
+
+// @desc    Resend verification email
+// @route   POST /api/auth/resend-verification
+// @access  Public
+export const resendVerificationEmail = asyncHandler(
+  async (req: Request<unknown, unknown, ResendVerificationInput>, res: Response) => {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user || user.isEmailVerified) {
+      // Always return success message to prevent email enumeration
+      res.json({
+        success: true,
+        message: 'If the email exists, a verification link has been sent.',
+      });
+      return;
+    }
+
+    // Generate new verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedVerificationToken = crypto.createHash('sha256').update(verificationToken).digest('hex');
+
+    // Set expiry 1 hour
+    const verificationExpires = new Date(Date.now() + 60 * 60 * 1000);
+
+    user.emailVerificationToken = hashedVerificationToken;
+    user.emailVerificationExpires = verificationExpires;
+
+    await user.save();
+
+    // Send email
+    const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
+    const emailMessage = `Click to verify your email: \n\n ${verificationUrl}`;
+
+    sendEmail(user.email, 'Verify your email', emailMessage).catch(console.error);
+
+    res.json({
+      success: true,
+      message: 'If the email exists, a verification link has been sent.',
+    });
+  }
+);
 
 // @desc    Request password reset
 // @route   POST /api/auth/forgot-password
