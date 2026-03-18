@@ -14,6 +14,8 @@ def generate_gemini_content(
     min_seconds: int = 25,
     max_seconds: int = 40,
     content_type: str = "tech",
+    story_mode: bool = False,
+    current_part: int = 1,
 ) -> GeneratedContent:
     """
     Force content generation through Gemini so script + scenes are created
@@ -27,5 +29,7 @@ def generate_gemini_content(
         min_seconds=min_seconds,
         max_seconds=max_seconds,
         content_type=content_type,
+        story_mode=story_mode,
+        current_part=current_part,
     )
 

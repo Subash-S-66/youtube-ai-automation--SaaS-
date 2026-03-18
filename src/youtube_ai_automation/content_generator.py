@@ -18,11 +18,12 @@ from typing import Any
 import requests
 
 LOGGER = logging.getLogger(__name__)
-GEMINI_FALLBACK_MODEL = "gemini-1.5-flash"
+GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 GEMINI_FALLBACK_MODELS_DEFAULT = (
+    "gemini-3.1-flash-lite",
+    "gemini-1.5-flash",
     "gemini-1.5-flash-latest",
     "gemini-1.5-pro",
-    "gemini-1.5-pro-latest",
     "gemini-1.0-pro",
 )
 GEMINI_RETRY_STATUS_CODES = {429, 503}
@@ -146,7 +147,7 @@ def _validate_content_quality(payload: dict[str, Any]) -> list[str]:
     return warnings
 
 
-def _sanitize_output(payload: dict[str, Any], min_seconds: int, max_seconds: int) -> GeneratedContent:
+def _sanitize_output(payload: dict[str, Any], min_seconds: int, max_seconds: int, gemini_api_key: str = "") -> GeneratedContent:
     min_words, max_words = _word_bounds(min_seconds, max_seconds)
 
     topic = _clean_text(str(payload.get("topic", "")))
@@ -169,44 +170,30 @@ def _sanitize_output(payload: dict[str, Any], min_seconds: int, max_seconds: int
     if len(lines) != 5:
         raise ValueError("Script must contain 5 non-empty lines for structured Shorts output.")
 
-    # Keep CTA as its own final line (read separately).
-    cta_options = [
-        "Subscribe for more world news updates.",
-        "Subscribe for daily world news.",
-        "Stay informed—subscribe for world news updates.",
-        "Get the world in minutes—subscribe for more.",
-        "Daily global headlines—subscribe now.",
-        "Subscribe for fast global news.",
-        "World news made simple—subscribe.",
-        "Stay updated worldwide—subscribe now.",
-        "Quick global headlines—subscribe.",
-        "Subscribe for breaking world stories.",
-        "Daily world brief—subscribe today.",
-        "Get global updates fast—subscribe.",
-        "Subscribe for clear world news.",
-        "Subscribe for top global headlines.",
-        "World news, short and clear—subscribe.",
-        "Stay in the loop—subscribe for world news.",
-        "Subscribe for daily global briefs.",
-        "Subscribe for the latest world headlines.",
-        "Global news in seconds—subscribe.",
-        "World updates every day—subscribe.",
-        "Subscribe for real-time world news.",
-        "Subscribe for quick global updates.",
-        "Stay informed daily—subscribe now.",
-        "Subscribe for trusted world news.",
-        "Subscribe for global headlines in under a minute.",
-        "Subscribe for today’s top world stories.",
-        "Subscribe for simple, fast world news.",
-        "Subscribe to stay updated on global events.",
-        "Subscribe for the latest international news.",
-        "Subscribe for world news, explained clearly.",
-        "Subscribe for non‑stop global updates.",
-        "Subscribe for the world’s biggest headlines.",
-        "Subscribe for fresh world news every day.",
-        "Subscribe and stay ahead of global news.",
-    ]
-    cta = random.choice(cta_options)
+    # Dynamic CTA Generation via Jules or Gemini
+    cta_prompt = f"Generate a short, punchy call-to-action (CTA) for a YouTube Short about this topic: '{topic}'. Do not include quotation marks or extra text, just the CTA sentence."
+
+    # Try Jules first
+    cta = None
+    jules_url = os.getenv("JULES_API_URL")
+    jules_key = os.getenv("JULES_API_KEY")
+    if jules_url and jules_key:
+        cta = _call_jules(cta_prompt, jules_url, jules_key)
+
+    # Fallback to Gemini
+    if not cta:
+        if gemini_api_key:
+            try:
+                cta = _call_model(cta_prompt, "gemini", gemini_api_key, GEMINI_FALLBACK_MODEL, "", "", "", "")
+            except Exception as e:
+                LOGGER.warning(f"Failed to generate dynamic CTA via Gemini: {e}")
+
+    # Ultimate Fallback
+    if not cta:
+        cta = "Subscribe for more content like this!"
+
+    cta = cta.strip().strip('"').strip("'")
+
     # Merge line 4 + line 5 content so CTA can stand alone.
     merged = " ".join([lines[3].strip(), lines[4].strip()]).strip()
     lines[3] = merged
@@ -282,7 +269,7 @@ def _normalize_gemini_model_name(model: str) -> str:
 
 
 def _gemini_model_candidates(primary_model: str) -> list[str]:
-    primary = _normalize_gemini_model_name(primary_model) or "gemini-3-flash"
+    primary = _normalize_gemini_model_name(primary_model) or GEMINI_FALLBACK_MODEL
     env_fallbacks_raw = os.getenv("GEMINI_FALLBACK_MODELS", "")
     env_fallbacks = [
         _normalize_gemini_model_name(item)
@@ -449,6 +436,27 @@ def _call_anthropic(prompt: str, api_key: str, model: str) -> str:
     return result
 
 
+def _call_jules(prompt: str, api_url: str, api_key: str) -> str | None:
+    try:
+        LOGGER.info("Calling Jules API for content generation...")
+        response = requests.post(
+            api_url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"prompt": prompt},
+            timeout=75,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = payload.get("output_text") or payload.get("response") or payload.get("text")
+        if result:
+            return str(result).strip()
+    except Exception as exc:
+        LOGGER.warning(f"Jules API failed: {exc}")
+    return None
+
 def _call_model(
     prompt: str,
     provider: str,
@@ -459,6 +467,14 @@ def _call_model(
     anthropic_api_key: str,
     anthropic_model: str,
 ) -> str:
+    # Try Jules API First
+    jules_url = os.getenv("JULES_API_URL")
+    jules_key = os.getenv("JULES_API_KEY")
+    if jules_url and jules_key:
+        jules_result = _call_jules(prompt, jules_url, jules_key)
+        if jules_result:
+            return jules_result
+
     normalized = provider.strip().lower()
     if normalized in {"gemini", "google"}:
         if not gemini_api_key:
@@ -479,7 +495,7 @@ def generate_content(
     topic: str,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-1.5-flash",
+    gemini_model: str = "gemini-3.1-flash-lite",
     openai_api_key: str = "",
     openai_model: str = "gpt-4.1-mini",
     anthropic_api_key: str = "",
@@ -487,6 +503,8 @@ def generate_content(
     min_seconds: int = 25,
     max_seconds: int = 40,
     content_type: str = "tech",
+    story_mode: bool = False,
+    current_part: int = 1,
 ) -> GeneratedContent:
     """
     Generate content for a single short video.
@@ -500,6 +518,13 @@ def generate_content(
 
     min_words, max_words = _word_bounds(min_seconds, max_seconds)
 
+    story_instruction = ""
+    if story_mode:
+        if current_part > 1:
+            story_instruction = f"\nThis is PART {current_part} of an ongoing story. Summarize the previous events briefly, then continue the story from where it left off."
+        else:
+            story_instruction = "\nThis is PART 1 of a new multi-part story series. Introduce the story and characters, but leave a cliffhanger at the end."
+
     prompt = dedent(
         f"""
         You are a news reporter creating a YouTube Short (vertical video, under 60 seconds) about a breaking news story.
@@ -508,6 +533,7 @@ def generate_content(
         Use simple, clear language.
 
         NEWS HEADLINE: {topic}
+        {story_instruction}
 
         --------------------------------
         ABSOLUTE RULES - FACTUAL ACCURACY
@@ -581,7 +607,7 @@ def generate_content(
             for warning in quality_warnings:
                 LOGGER.warning("Content quality issue: %s", warning)
 
-        return _sanitize_output(payload, min_seconds=min_seconds, max_seconds=max_seconds)
+        return _sanitize_output(payload, min_seconds=min_seconds, max_seconds=max_seconds, gemini_api_key=gemini_api_key)
     except Exception as exc:
         if normalized_provider in {"gemini", "google"}:
             raise RuntimeError(f"Gemini content generation failed: {exc}") from exc

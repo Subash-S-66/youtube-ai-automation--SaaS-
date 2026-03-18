@@ -322,12 +322,12 @@ def _compute_max_video_length(audio_seconds: float) -> int:
     return int(min(SHORTS_MAX_DURATION_SECONDS, max(MAX_VIDEO_LENGTH, padded)))
 
 
-def _generate_narration_with_retries(script: str, output_path: Path) -> Path:
+def _generate_narration_with_retries(script: str, output_path: Path, preferred_voice: str = "") -> Path:
     """
     Try multiple voice profiles before giving up on narration.
     """
     for attempt in range(1, NARRATION_RETRY_ATTEMPTS + 1):
-        selected_voice, selected_rate = pick_voice_profile(voice=DEFAULT_VOICE)
+        selected_voice, selected_rate = pick_voice_profile(voice=preferred_voice or DEFAULT_VOICE)
         LOGGER.info(
             "Voice profile attempt %s/%s: %s at %s",
             attempt,
@@ -526,10 +526,23 @@ def _build_short_from_optimized_idea(
     LOGGER.info("Selected best hook: %s", idea.best_hook)
     LOGGER.info("Selected viral score: %.2f", idea.viral_score)
 
+    import os, json, random
+    settings_env = os.getenv("SETTINGS", "{}")
+    try:
+        settings = json.loads(settings_env)
+    except Exception:
+        settings = {}
+
+    voices = settings.get("voices", [])
+    preferred_voice = ""
+    if voices and isinstance(voices, list):
+        preferred_voice = random.choice(voices)
+
     LOGGER.info("Generating voice narration")
     audio_file = _generate_narration_with_retries(
         script=idea.script,
         output_path=AUDIO_PATH,
+        preferred_voice=preferred_voice,
     )
 
     scene_duration = _choose_scene_duration()
@@ -915,10 +928,24 @@ def _build_video_from_content(
     min_script_seconds, max_script_seconds = _script_duration_bounds()
     LOGGER.info("Title: %s", content.title)
     LOGGER.info("Hook: %s", content.hook)
+
+    import os, json, random
+    settings_env = os.getenv("SETTINGS", "{}")
+    try:
+        settings = json.loads(settings_env)
+    except Exception:
+        settings = {}
+
+    voices = settings.get("voices", [])
+    preferred_voice = ""
+    if voices and isinstance(voices, list):
+        preferred_voice = random.choice(voices)
+
     LOGGER.info("Generating voice narration")
     audio_file = _generate_narration_with_retries(
         script=content.script,
         output_path=AUDIO_PATH,
+        preferred_voice=preferred_voice,
     )
 
     scene_duration = _choose_scene_duration()
@@ -1098,6 +1125,17 @@ def _build_single_short(
 ) -> Path:
     min_script_seconds, max_script_seconds = _script_duration_bounds()
     LOGGER.info("Generating AI content for topic: %s", topic)
+
+    import os, json
+    settings_env = os.getenv("SETTINGS", "{}")
+    try:
+        settings = json.loads(settings_env)
+    except Exception:
+        settings = {}
+
+    story_mode = settings.get("storyMode", False)
+    current_part = settings.get("currentPart", 1)
+
     provider = (provider_override or AI_PROVIDER).strip().lower()
     content = generate_content(
         topic=topic,
@@ -1110,6 +1148,8 @@ def _build_single_short(
         anthropic_model=ANTHROPIC_MODEL,
         min_seconds=min_script_seconds,
         max_seconds=max_script_seconds,
+        story_mode=story_mode,
+        current_part=current_part,
     )
     return _build_video_from_content(content=content, upload=upload, publish_at=publish_at)
 

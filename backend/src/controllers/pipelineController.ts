@@ -3,6 +3,7 @@ import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { RunPipelineInput } from '../utils/validators/pipelineValidators';
 import Prompt from '../models/Prompt';
+import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import Job from '../models/Job';
 import User from '../models/User';
@@ -82,6 +83,21 @@ export const startPipeline = asyncHandler(
         message: 'YouTube allows ~10 uploads per 24 hours. This may fail.',
         warning: 'YouTube allows ~10 uploads per 24 hours. This may fail.',
       });
+    }
+
+    // Handle Story Mode
+    if (settings.storyMode && settings.storyId) {
+      if (settings.resetStory) {
+        await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
+        settings.currentPart = 1;
+      } else {
+        const progress = await StoryProgress.findOne({ userId, storyId: settings.storyId });
+        if (progress) {
+          settings.currentPart = progress.currentPart;
+        } else {
+          settings.currentPart = 1;
+        }
+      }
     }
 
     // Increment uploadsOnHold for the user

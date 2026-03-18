@@ -6,6 +6,7 @@ import { connection } from '../config/redis';
 import JobModel from '../models/Job';
 import User from '../models/User';
 import Prompt from '../models/Prompt';
+import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import { PipelineJobPayload } from '../queues/pipelineQueue';
 import { incrementUploadCount } from '../services/uploadLimitService';
@@ -120,7 +121,10 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
                 { name: "PROMPT", value: geminiPrompt },
                 { name: "SETTINGS", value: JSON.stringify(settings) },
                 { name: "YOUTUBE_TOKEN", value: youtubeToken },
-                { name: "JOB_ID", value: jobId }
+                { name: "JOB_ID", value: jobId },
+                { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
+                { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
+                { name: "MONGO_URI", value: process.env.MONGO_URI || "" }
               ]
             }
           ]
@@ -200,6 +204,26 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
          // Handle Consumption Rules
          if (finalStatusMarker === 'SUCCESS') {
             await incrementUploadCount(userId).catch(console.error);
+
+            // Handle Story Mode increment
+            if (settings.storyMode && settings.storyId) {
+                try {
+                   const nextPart = (settings.currentPart || 1) + 1;
+                   await StoryProgress.findOneAndUpdate(
+                       { userId, storyId: settings.storyId },
+                       {
+                           $set: {
+                               lastPrompt: geminiPrompt,
+                               currentPart: nextPart
+                           }
+                       },
+                       { upsert: true, new: true }
+                   );
+                   console.log(`Story ${settings.storyId} progressed to part ${nextPart} for user ${userId}`);
+                } catch (err) {
+                   console.error('Failed to update StoryProgress', err);
+                }
+            }
 
             if (user) {
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
