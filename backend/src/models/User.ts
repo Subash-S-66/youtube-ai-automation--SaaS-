@@ -25,6 +25,9 @@ export interface IUser extends Document {
   isYoutubeConnected: boolean;
   telegramChatId?: string;
   fcmToken?: string | undefined;
+  emailNotificationsEnabled: boolean;
+  telegramNotificationsEnabled: boolean;
+  pushNotificationsEnabled: boolean;
   isEmailVerified: boolean;
   emailVerificationToken?: string | undefined;
   emailVerificationExpires?: Date | undefined;
@@ -113,6 +116,18 @@ const UserSchema = new Schema<IUser>(
     },
     fcmToken: {
       type: String,
+    },
+    emailNotificationsEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    telegramNotificationsEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    pushNotificationsEnabled: {
+      type: Boolean,
+      default: true,
     },
     isEmailVerified: {
       type: Boolean,

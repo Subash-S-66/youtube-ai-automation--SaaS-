@@ -9,6 +9,7 @@ import pipelineRoutes from './routes/pipelineRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import adminRoutes from './routes/adminRoutes';
+import userRoutes from './routes/userRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 const app: Application = express();
@@ -58,6 +59,7 @@ app.use('/api/pipeline', pipelineRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/user', userRoutes);
 
 // Base route
 app.get('/', (req: Request, res: Response) => {

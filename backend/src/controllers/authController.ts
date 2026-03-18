@@ -8,6 +8,7 @@ import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { sendEmail } from '../services/emailService';
 import { canUserUpload } from '../services/uploadLimitService';
+import { PLAN_LIMITS } from '../config/plans';
 
 // Generate JWT
 const generateToken = (id: string): string => {
@@ -107,10 +108,15 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
           email: user.email,
           role: user.role,
           isYoutubeConnected: user.isYoutubeConnected,
+          emailNotificationsEnabled: user.emailNotificationsEnabled,
+          telegramNotificationsEnabled: user.telegramNotificationsEnabled,
+          pushNotificationsEnabled: user.pushNotificationsEnabled,
+          subscriptionExpiresAt: user.subscriptionExpiresAt,
         },
         plan: limitCheck.plan,
         remainingUploads: limitCheck.remainingUploads,
         uploadsOnHold: limitCheck.uploadsOnHold,
+        uploadLimit: PLAN_LIMITS[limitCheck.plan] || PLAN_LIMITS['free'] || 3,
       },
     });
   } else {
