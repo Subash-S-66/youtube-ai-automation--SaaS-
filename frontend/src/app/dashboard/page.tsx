@@ -177,7 +177,7 @@ export default function Dashboard() {
       }
 
       const pipelineRes = await pipelineService.runPipeline(promptId, {
-        duration,
+        targetDuration: duration,
         contentType,
         videoCount,
         storyMode,
