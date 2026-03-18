@@ -1,0 +1,12 @@
+import { Router } from 'express';
+import { saveToken } from '../controllers/notificationController';
+import { protect } from '../middleware/authMiddleware';
+
+const router = Router();
+
+// Protect all notification routes
+router.use(protect);
+
+router.post('/save-token', saveToken);
+
+export default router;

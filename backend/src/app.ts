@@ -7,6 +7,7 @@ import youtubeRoutes from './routes/youtubeRoutes';
 import promptRoutes from './routes/promptRoutes';
 import pipelineRoutes from './routes/pipelineRoutes';
 import paymentRoutes from './routes/paymentRoutes';
+import notificationRoutes from './routes/notificationRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 const app: Application = express();
@@ -54,6 +55,7 @@ app.use('/api/youtube', youtubeRoutes);
 app.use('/api/prompt', promptRoutes);
 app.use('/api/pipeline', pipelineRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Base route
 app.get('/', (req: Request, res: Response) => {

@@ -1,9 +1,13 @@
 import dotenv from 'dotenv';
 import app from './app';
 import connectDB from './config/db';
+import { initializeFirebaseAdmin } from './config/firebaseAdmin';
 
 // Load environment variables
 dotenv.config();
+
+// Initialize Firebase Admin
+initializeFirebaseAdmin();
 
 // Connect to Database
 connectDB();
