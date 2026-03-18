@@ -89,9 +89,6 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
             })}
           </nav>
 
-          {/* Install PWA Prompt */}
-          <InstallPwaButton />
-
           {/* User Area / Logout */}
           <div className="p-4 border-t border-[#1A2235] bg-[#0B0F1A]/50">
              <div className="flex items-center">
@@ -122,6 +119,8 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
              <Menu className="h-6 w-6" />
            </button>
            <div className="ml-auto flex items-center">
+              {/* Install PWA Prompt */}
+              <InstallPwaButton />
               <div className="h-8 w-8 rounded-full bg-[#7C5CFF]/20 flex items-center justify-center border border-[#7C5CFF]/30 shadow-glow-primary">
                  <span className="text-[#00D4FF] text-xs font-bold">{user?.email?.charAt(0).toUpperCase() || 'U'}</span>
               </div>
