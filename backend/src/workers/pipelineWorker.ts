@@ -2,6 +2,7 @@ import { Worker, Job as BullJob } from 'bullmq';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import connectDB from '../config/db';
+import { pipelineQueue } from '../queues/pipelineQueue';
 import { connection } from '../config/redis';
 import JobModel from '../models/Job';
 import User from '../models/User';
@@ -83,9 +84,36 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     const { userId, promptId, jobId, settings } = job.data;
     console.log(`Processing job ${jobId} for user ${userId}`);
 
+    let isPaused = false;
+
     await appendLogSafe(jobId, 'Starting pipeline execution...\n', 'running');
 
     try {
+      // Check for blocked channels before processing
+      if (settings.channelId) {
+         const u = await User.findById(userId);
+         if (u) {
+            const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
+            if (ch && ch.blockedUntil && Date.now() < ch.blockedUntil.getTime()) {
+               isPaused = true;
+               await appendLogSafe(jobId, `\nJob paused. Channel is blocked due to limits until ${ch.blockedUntil.toISOString()}.\n`, 'paused_due_to_limit');
+
+               // Re-add to queue with delay
+               const delay = ch.blockedUntil.getTime() - Date.now();
+               await pipelineQueue.add('runPipeline', job.data, { delay });
+
+               return; // Exit early
+            } else if (ch && ch.blockedUntil && Date.now() >= ch.blockedUntil.getTime()) {
+               // Resume automatically
+               await User.findOneAndUpdate(
+                 { _id: userId, 'youtubeChannels.channelId': settings.channelId },
+                 { $unset: { 'youtubeChannels.$.blockedUntil': "" } }
+               );
+               await notifyUser(u, 'Uploads Resumed', '✅ Uploads resumed. Scheduled videos will continue.').catch(console.error);
+            }
+         }
+      }
+
       // 1. Fetch Prompt to get gemini_prompt
       const prompt = await Prompt.findById(promptId);
       if (!prompt) {
@@ -234,12 +262,33 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
          } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
+            // Check if we need to block the channel
+            if (
+                finalLogs.includes('uploadLimitExceeded') ||
+                finalLogs.includes('quotaExceeded') ||
+                finalLogs.includes('dailyLimitExceeded')
+            ) {
+               await JobModel.findByIdAndUpdate(jobId, { status: 'failed' });
+               const u = await User.findById(userId);
+               if (u && settings.channelId) {
+                  const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
+                  if (ch && !ch.blockedUntil) {
+                     const blockUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+                     await User.findOneAndUpdate(
+                       { _id: userId, 'youtubeChannels.channelId': settings.channelId },
+                       { $set: { 'youtubeChannels.$.blockedUntil': blockUntil } }
+                     );
+                     await notifyUser(u, 'YouTube Limit Reached', '⚠️ YouTube upload limit reached. Remaining scheduled videos are paused for 24 hours.').catch(console.error);
+                  }
+               }
+            } else {
+               if (user) {
+                 await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
+               }
+            }
+
             // Always consume upload on YouTube rejection (per updated specs)
             await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
-
-            if (user) {
-              await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
-            }
          } else {
             // FAILED (normal) - do not increment usage
             if (user) {
@@ -260,35 +309,38 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
       throw error;
     } finally {
-      // Decrement uploadsOnHold (global) and videosOnHold (channel) safely when the job finishes
-      const videoCount = settings.videoCount || 1;
-      const channelId = settings.channelId;
+      // If the job is merely paused and re-queued, do not release the hold yet
+      if (!isPaused) {
+        // Decrement uploadsOnHold (global) and videosOnHold (channel) safely when the job finishes
+        const videoCount = settings.videoCount || 1;
+        const channelId = settings.channelId;
 
-      if (channelId) {
-        // Find user first to check current values to prevent negative numbers
-        try {
-          const user = await User.findById(userId);
-          if (user) {
-             const actualUploadsHold = Math.max(0, user.uploadsOnHold - videoCount);
+        if (channelId) {
+          // Find user first to check current values to prevent negative numbers
+          try {
+            const user = await User.findById(userId);
+            if (user) {
+               const actualUploadsHold = Math.max(0, user.uploadsOnHold - videoCount);
 
-             let channelUpdateQuery: any = { uploadsOnHold: actualUploadsHold };
+               let channelUpdateQuery: any = { uploadsOnHold: actualUploadsHold };
 
-             const channel = user.youtubeChannels.find((c: any) => c.channelId === channelId);
-             if (channel) {
-                const actualChannelHold = Math.max(0, channel.videosOnHold - videoCount);
-                channelUpdateQuery = {
-                   uploadsOnHold: actualUploadsHold,
-                   'youtubeChannels.$.videosOnHold': actualChannelHold
-                };
-             }
+               const channel = user.youtubeChannels.find((c: any) => c.channelId === channelId);
+               if (channel) {
+                  const actualChannelHold = Math.max(0, channel.videosOnHold - videoCount);
+                  channelUpdateQuery = {
+                     uploadsOnHold: actualUploadsHold,
+                     'youtubeChannels.$.videosOnHold': actualChannelHold
+                  };
+               }
 
-             await User.findOneAndUpdate(
-               { _id: userId, 'youtubeChannels.channelId': channelId },
-               { $set: channelUpdateQuery }
-             );
+               await User.findOneAndUpdate(
+                 { _id: userId, 'youtubeChannels.channelId': channelId },
+                 { $set: channelUpdateQuery }
+               );
+            }
+          } catch (err) {
+             console.error(`Failed to decrement hold counters for user ${userId}:`, err);
           }
-        } catch (err) {
-           console.error(`Failed to decrement hold counters for user ${userId}:`, err);
         }
       }
     }
