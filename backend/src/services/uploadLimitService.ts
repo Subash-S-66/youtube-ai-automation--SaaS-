@@ -1,69 +1,53 @@
 import User from '../models/User';
-import SystemConfig from '../models/SystemConfig';
-import { resetDailyUploads } from '../utils/dailyReset';
-import { PLAN_LIMITS } from '../config/plans';
+import { planLimits, PlanType } from '../config/plans';
 import { checkAndUpdateUserPlan } from '../utils/subscriptionHelper';
 
-interface UploadCheckResult {
-  allowed: boolean;
+interface UploadLimitCheckResult {
+  canUpload: boolean;
   remainingUploads: number;
-  uploadsOnHold: number;
-  plan: string;
-  displayPlan: string;
-  isBetaMode: boolean;
-  message?: string;
+  plan: PlanType;
 }
 
-export const canUserUpload = async (userId: string): Promise<UploadCheckResult> => {
-  let user = await User.findById(userId);
+export const checkAndDowngradeExpiredPlan = async (user: any): Promise<any> => {
+  if (user.subscriptionExpiresAt && new Date() > user.subscriptionExpiresAt) {
+    user.plan = 'free';
+    user.subscriptionExpiresAt = undefined;
+    await user.save();
+  }
+  return user;
+};
 
+export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckResult> => {
+  const user = await User.findById(userId);
   if (!user) {
     throw new Error('User not found');
   }
 
-  // Ensure user's plan is updated if expired
-  user = await checkAndUpdateUserPlan(user);
+  const updatedUser = await checkAndDowngradeExpiredPlan(user);
 
-  const config = await SystemConfig.findOne();
-  const isBetaMode = config?.betaMode || false;
+  // UTC day reset check
+  const now = new Date();
+  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-  // Evaluate effective plan based on Beta Mode
-  const effectivePlan = isBetaMode ? 'pro' : user!.plan;
-  const displayPlan = isBetaMode ? 'free (beta)' : user!.plan;
+  let uploadsUsedToday = updatedUser.uploadsUsedToday;
+  let uploadsOnHold = updatedUser.uploadsOnHold || 0;
 
-  // Get current plan limit
-  const currentLimit = PLAN_LIMITS[effectivePlan] || PLAN_LIMITS['free'] || 3;
-
-  // Reset daily counter if necessary
-  const wasReset = resetDailyUploads(user as any);
-  if (wasReset) {
-    await user!.save();
+  if (updatedUser.lastUploadReset < startOfUTCDay) {
+    uploadsUsedToday = 0;
+    uploadsOnHold = 0; // Assuming holds don't carry over days, or adjust as needed
+    updatedUser.uploadsUsedToday = 0;
+    updatedUser.uploadsOnHold = 0;
+    updatedUser.lastUploadReset = now;
+    await updatedUser.save();
   }
 
-  const uploadsUsedToday = user!.uploadsUsedToday || 0;
-  const uploadsOnHold = user!.uploadsOnHold || 0;
-
-  const remainingUploads = currentLimit - (uploadsUsedToday + uploadsOnHold);
-
-  if (remainingUploads <= 0) {
-    return {
-      allowed: false,
-      remainingUploads: 0,
-      uploadsOnHold,
-      plan: effectivePlan,
-      displayPlan,
-      isBetaMode,
-      message: 'Daily upload limit reached',
-    };
-  }
+  const limit = planLimits[updatedUser.plan as PlanType] || planLimits.free;
+  const remainingUploads = Math.max(0, limit - uploadsUsedToday - uploadsOnHold);
 
   return {
-    allowed: true,
+    canUpload: remainingUploads > 0,
     remainingUploads,
-    uploadsOnHold,
-    plan: effectivePlan,
-    displayPlan,
-    isBetaMode,
+    plan: updatedUser.plan as PlanType,
   };
 };
 
@@ -71,22 +55,17 @@ export const incrementUploadCount = async (userId: string, count: number = 1): P
   const now = new Date();
   const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-  // We can do this in a single atomic findOneAndUpdate.
-  // We check if lastUploadReset is LESS than the start of the current UTC day.
-  // If it is, that means we haven't reset today yet, so we reset to count and update lastUploadReset.
   const user = await User.findOneAndUpdate(
     {
       _id: userId,
       lastUploadReset: { $lt: startOfUTCDay }
     },
     {
-      $set: { uploadsUsedToday: count, lastUploadReset: now }
+      $set: { uploadsUsedToday: 1, uploadsOnHold: 0, lastUploadReset: now }
     },
     { new: true }
   );
 
-  // If the user wasn't found, it means they ALREADY reset today (lastUploadReset >= startOfUTCDay).
-  // In that case, we can safely just $inc.
   if (!user) {
     await User.updateOne(
       { _id: userId },

@@ -9,13 +9,7 @@ import GlobalBanner from '../models/GlobalBanner';
 import DeletedUser from '../models/DeletedUser';
 import SystemConfig from '../models/SystemConfig';
 import { z } from 'zod';
-import { PLAN_LIMITS } from '../config/plans';
-import { emailQueue } from '../queues/emailQueue';
-import Stripe from 'stripe';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-  apiVersion: '2025-01-27.acacia' as any,
-});
+import { planLimits } from '../config/plans';
 
 export const getAdminStats = asyncHandler(async (req: Request, res: Response) => {
   const totalUsers = await User.countDocuments();
