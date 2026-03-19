@@ -9,6 +9,8 @@ interface UploadCheckResult {
   remainingUploads: number;
   uploadsOnHold: number;
   plan: string;
+  displayPlan: string;
+  isBetaMode: boolean;
   message?: string;
 }
 
@@ -27,6 +29,7 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
 
   // Evaluate effective plan based on Beta Mode
   const effectivePlan = isBetaMode ? 'pro' : user!.plan;
+  const displayPlan = isBetaMode ? 'free (beta)' : user!.plan;
 
   // Get current plan limit
   const currentLimit = PLAN_LIMITS[effectivePlan] || PLAN_LIMITS['free'] || 3;
@@ -48,6 +51,8 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
       remainingUploads: 0,
       uploadsOnHold,
       plan: effectivePlan,
+      displayPlan,
+      isBetaMode,
       message: 'Daily upload limit reached',
     };
   }
@@ -57,6 +62,8 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
     remainingUploads,
     uploadsOnHold,
     plan: effectivePlan,
+    displayPlan,
+    isBetaMode,
   };
 };
 

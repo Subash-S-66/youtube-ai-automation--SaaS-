@@ -126,10 +126,21 @@ export default function AdminDashboard() {
   };
 
   const handleUpdateConfig = async (newBetaMode: boolean) => {
+    if (newBetaMode) {
+      const confirm1 = window.confirm("Are you sure you want to enable Beta Mode? This will instantly grant ALL users PRO privileges.");
+      if (!confirm1) return;
+      const confirm2 = window.confirm("Are you ABSOLUTELY sure? This overrides all limits globally.");
+      if (!confirm2) return;
+    } else {
+      const confirmOff = window.confirm("Are you sure you want to disable Beta Mode? Users will instantly revert to their normal plans.");
+      if (!confirmOff) return;
+    }
+
     setUpdatingConfig(true);
     try {
       await adminService.updateSystemConfig({ betaMode: newBetaMode });
       setBetaMode(newBetaMode);
+      alert(`Beta Mode ${newBetaMode ? 'ENABLED' : 'DISABLED'} successfully.`);
     } catch (err) {
       console.error(err);
       alert('Failed to update system config.');
@@ -171,7 +182,7 @@ export default function AdminDashboard() {
           return;
         }
 
-        setCurrentUser(me.data.user);
+        setCurrentUser({ ...me.data.user, plan: me.data.plan, displayPlan: me.data.displayPlan, isBetaMode: me.data.isBetaMode });
 
         const [statsData, usersData] = await Promise.all([
           adminService.getStats(),
