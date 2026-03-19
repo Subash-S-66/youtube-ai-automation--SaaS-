@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { sendEmail } from '../services/emailService';
 import { getUploadLimits } from '../services/uploadLimitService';
 import { planLimits } from '../config/plans';
+import { google } from 'googleapis';
 
 // Generate JWT
 const generateToken = (id: string): string => {

@@ -10,6 +10,13 @@ import DeletedUser from '../models/DeletedUser';
 import SystemConfig from '../models/SystemConfig';
 import { z } from 'zod';
 import { planLimits } from '../config/plans';
+import Stripe from 'stripe';
+import { emailQueue } from '../queues/emailQueue';
+import { pipelineQueue } from '../queues/pipelineQueue';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
+  apiVersion: '2025-01-27.acacia' as any,
+});
 
 export const getAdminStats = asyncHandler(async (req: Request, res: Response) => {
   const totalUsers = await User.countDocuments();
@@ -221,6 +228,18 @@ export const deleteUserByAdmin = asyncHandler(async (req: Request, res: Response
     },
     deletedAt: new Date(),
   });
+
+  // Remove pending jobs from BullMQ queue to save resources
+  try {
+    const activeJobs = await pipelineQueue.getJobs(['waiting', 'delayed']);
+    for (const job of activeJobs) {
+      if (id && job.data.userId === id.toString()) {
+        await job.remove();
+      }
+    }
+  } catch (error) {
+    console.error('Failed to cleanup BullMQ jobs during admin deletion:', error);
+  }
 
   // Delete user from active users
   await user.deleteOne();

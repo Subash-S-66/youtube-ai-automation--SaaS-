@@ -132,18 +132,11 @@ export const startPipeline = asyncHandler(
     if (settings.storyMode && settings.storyId) {
       if (settings.resetStory) {
         await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
-        settings.currentPart = 1;
-        settings.lastPrompt = "";
-      } else {
-        const progress = await StoryProgress.findOne({ userId, storyId: settings.storyId });
-        if (progress) {
-          settings.currentPart = progress.currentPart;
-          settings.lastPrompt = progress.lastPrompt;
-        } else {
-          settings.currentPart = 1;
-          settings.lastPrompt = "";
-        }
+        // The worker will evaluate and set currentPart = 1 dynamically.
       }
+      // Note: We intentionally do NOT query StoryProgress here to set currentPart or lastPrompt.
+      // If the user queues multiple parts consecutively, querying it here would snapshot Part 1
+      // for all of them. Instead, the pipelineWorker evaluates it safely at runtime to guarantee progression.
     }
 
     // Increment uploadsOnHold (global) and channel.videosOnHold by videoCount

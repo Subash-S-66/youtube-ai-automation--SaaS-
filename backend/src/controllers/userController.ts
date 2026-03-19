@@ -5,6 +5,7 @@ import User from '../models/User';
 import DeletedUser from '../models/DeletedUser';
 import { z } from 'zod';
 import Stripe from 'stripe';
+import { pipelineQueue } from '../queues/pipelineQueue';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
   apiVersion: '2025-01-27.acacia' as any,
@@ -90,6 +91,18 @@ export const deleteAccount = asyncHandler(async (req: Request, res: Response) =>
     },
     deletedAt: new Date(),
   });
+
+  // Remove pending jobs from BullMQ queue to save resources
+  try {
+    const activeJobs = await pipelineQueue.getJobs(['waiting', 'delayed']);
+    for (const job of activeJobs) {
+      if (job.data.userId === userId.toString()) {
+        await job.remove();
+      }
+    }
+  } catch (error) {
+    console.error('Failed to cleanup BullMQ jobs during account deletion:', error);
+  }
 
   // Delete user from active users
   await user.deleteOne();
