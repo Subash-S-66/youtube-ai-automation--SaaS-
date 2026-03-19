@@ -123,6 +123,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
           subscriptionExpiresAt: user.subscriptionExpiresAt,
         },
         plan: limitCheck.plan,
+        displayPlan: limitCheck.displayPlan,
+        isBetaMode: limitCheck.isBetaMode,
         remainingUploads: limitCheck.remainingUploads,
         uploadsOnHold: limitCheck.uploadsOnHold,
         uploadLimit: PLAN_LIMITS[limitCheck.plan] || PLAN_LIMITS['free'] || 3,

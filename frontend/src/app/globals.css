@@ -27,6 +27,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+body.has-global-banner {
+  padding-top: 40px; /* matches the global banner height */
+}
+
 /* Custom Scrollbar for modern SaaS dark theme */
 ::-webkit-scrollbar {
   width: 8px;
@@ -69,5 +73,18 @@ body {
   .border-glow-primary:focus-within {
     border-color: #7C5CFF;
     box-shadow: 0 0 10px rgba(124, 92, 255, 0.3);
+  }
+
+  .banner-info {
+    background-color: #2563eb;
+    color: white;
+  }
+  .banner-warning {
+    background-color: #f59e0b;
+    color: black;
+  }
+  .banner-critical {
+    background-color: #dc2626;
+    color: white;
   }
 }

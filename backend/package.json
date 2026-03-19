@@ -8,7 +8,9 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "worker": "ts-node src/workers/pipelineWorker.ts",
-    "start:worker": "node dist/workers/pipelineWorker.js"
+    "start:worker": "node dist/workers/pipelineWorker.js",
+    "worker:email": "ts-node src/workers/emailWorker.ts",
+    "start:worker:email": "node dist/workers/emailWorker.js"
   },
   "keywords": [],
   "author": "",

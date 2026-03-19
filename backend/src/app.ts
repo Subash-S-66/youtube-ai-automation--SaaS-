@@ -10,6 +10,7 @@ import paymentRoutes from './routes/paymentRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import adminRoutes from './routes/adminRoutes';
 import userRoutes from './routes/userRoutes';
+import bannerRoutes from './routes/bannerRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 
 const app: Application = express();
@@ -60,6 +61,7 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/banner', bannerRoutes);
 
 // Base route
 app.get('/', (req: Request, res: Response) => {

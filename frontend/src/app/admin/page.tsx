@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, History as HistoryIcon, FileText } from 'lucide-react';
+import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, History as HistoryIcon, FileText, Bell, MonitorPlay, Trash2, Settings } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { authService } from '../../services/authService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -44,6 +44,135 @@ export default function AdminDashboard() {
   const [editExpiry, setEditExpiry] = useState('');
   const [savingPlan, setSavingPlan] = useState(false);
 
+  // Tools forms
+  const [notifyTitle, setNotifyTitle] = useState('');
+  const [notifyMessage, setNotifyMessage] = useState('');
+  const [notifyType, setNotifyType] = useState('info');
+  const [notifyTargetPlans, setNotifyTargetPlans] = useState<string[]>(['free', 'basic', 'pro', 'premium']);
+  const [notifySendEmail, setNotifySendEmail] = useState(false);
+  const [notifying, setNotifying] = useState(false);
+
+  const [bannerMessage, setBannerMessage] = useState('');
+  const [bannerActive, setBannerActive] = useState(true);
+  const [bannerType, setBannerType] = useState('info');
+  const [bannerStart, setBannerStart] = useState('');
+  const [bannerEnd, setBannerEnd] = useState('');
+  const [bannering, setBannering] = useState(false);
+
+  const [betaMode, setBetaMode] = useState(false);
+  const [updatingConfig, setUpdatingConfig] = useState(false);
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const configData = await adminService.getSystemConfig();
+        if (configData.success && configData.data) {
+          setBetaMode(configData.data.betaMode);
+        }
+      } catch (err) {
+        console.error("Failed to load system config", err);
+      }
+    };
+    if (currentUser?.role === 'admin') {
+      fetchConfig();
+    }
+  }, [currentUser]);
+
+  const handleCreateNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!notifyTitle || !notifyMessage || notifyTargetPlans.length === 0) return;
+    setNotifying(true);
+    try {
+      await adminService.createNotification({
+        title: notifyTitle,
+        message: notifyMessage,
+        type: notifyType,
+        targetPlans: notifyTargetPlans,
+        sendEmail: notifySendEmail
+      });
+      alert('Notification sent successfully!');
+      setNotifyTitle('');
+      setNotifyMessage('');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to send notification.');
+    } finally {
+      setNotifying(false);
+    }
+  };
+
+  const handleSetBanner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bannerMessage) return;
+    setBannering(true);
+    try {
+      await adminService.setGlobalBanner({
+        message: bannerMessage,
+        isActive: bannerActive,
+        type: bannerType,
+        startAt: bannerStart ? new Date(bannerStart).toISOString() : null,
+        endAt: bannerEnd ? new Date(bannerEnd).toISOString() : null
+      });
+      alert('Banner updated successfully!');
+      setBannerMessage('');
+      setBannerStart('');
+      setBannerEnd('');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update banner.');
+    } finally {
+      setBannering(false);
+    }
+  };
+
+  const handleUpdateConfig = async (newBetaMode: boolean) => {
+    if (newBetaMode) {
+      const confirm1 = window.confirm("Are you sure you want to enable Beta Mode? This will instantly grant ALL users PRO privileges.");
+      if (!confirm1) return;
+      const confirm2 = window.confirm("Are you ABSOLUTELY sure? This overrides all limits globally.");
+      if (!confirm2) return;
+    } else {
+      const confirmOff = window.confirm("Are you sure you want to disable Beta Mode? Users will instantly revert to their normal plans.");
+      if (!confirmOff) return;
+    }
+
+    setUpdatingConfig(true);
+    try {
+      await adminService.updateSystemConfig({ betaMode: newBetaMode });
+      setBetaMode(newBetaMode);
+      alert(`Beta Mode ${newBetaMode ? 'ENABLED' : 'DISABLED'} successfully.`);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update system config.');
+    } finally {
+      setUpdatingConfig(false);
+    }
+  };
+
+  const handleTogglePlan = (plan: string) => {
+    if (notifyTargetPlans.includes(plan)) {
+      setNotifyTargetPlans(notifyTargetPlans.filter(p => p !== plan));
+    } else {
+      setNotifyTargetPlans([...notifyTargetPlans, plan]);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!selectedUserId) return;
+    const confirm = window.confirm('Are you absolutely sure you want to delete this user? This action cannot be undone.');
+    if (!confirm) return;
+    try {
+      await adminService.deleteUser(selectedUserId);
+      alert('User deleted successfully.');
+      setSelectedUserId(null);
+      const usersData = await adminService.getUsers();
+      setUsers(usersData.data);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to delete user.');
+    }
+  };
+
   useEffect(() => {
     const initAdmin = async () => {
       try {
@@ -53,7 +182,7 @@ export default function AdminDashboard() {
           return;
         }
 
-        setCurrentUser(me.data.user);
+        setCurrentUser({ ...me.data.user, plan: me.data.plan, displayPlan: me.data.displayPlan, isBetaMode: me.data.isBetaMode });
 
         const [statsData, usersData] = await Promise.all([
           adminService.getStats(),
@@ -126,6 +255,106 @@ export default function AdminDashboard() {
         {!selectedUserId ? (
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
             <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Admin Panel</h1>
+
+            {/* Control Tools */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Notification Sender */}
+              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
+                <div className="flex items-center mb-6">
+                  <Bell className="h-5 w-5 text-[#7C5CFF] mr-2" />
+                  <h2 className="text-xl font-bold text-white">Send Notification</h2>
+                </div>
+                <form onSubmit={handleCreateNotification} className="space-y-4">
+                  <div>
+                    <input type="text" placeholder="Title" value={notifyTitle} onChange={(e) => setNotifyTitle(e.target.value)} required className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none" />
+                  </div>
+                  <div>
+                    <textarea placeholder="Message" value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} required rows={3} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none resize-none"></textarea>
+                  </div>
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <select value={notifyType} onChange={(e) => setNotifyType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none">
+                        <option value="info">Info</option>
+                        <option value="warning">Warning</option>
+                        <option value="critical">Critical</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400 mb-2">Target Plans</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {['free', 'basic', 'pro', 'premium'].map(plan => (
+                        <button key={plan} type="button" onClick={() => handleTogglePlan(plan)} className={cn("px-3 py-1 text-xs font-bold rounded-full border transition-colors", notifyTargetPlans.includes(plan) ? "bg-[#7C5CFF]/20 text-[#7C5CFF] border-[#7C5CFF]/50" : "bg-transparent text-slate-400 border-[#1A2235] hover:border-slate-500")}>
+                          {plan.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <label className="flex items-center mt-2 cursor-pointer">
+                    <input type="checkbox" checked={notifySendEmail} onChange={(e) => setNotifySendEmail(e.target.checked)} className="rounded border-slate-700 bg-slate-800 text-[#7C5CFF] focus:ring-[#7C5CFF]" />
+                    <span className="ml-2 text-sm text-slate-300">Also send via Email Queue</span>
+                  </label>
+                  <button type="submit" disabled={notifying} className="w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center">
+                    {notifying ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Send Broadcast'}
+                  </button>
+                </form>
+              </div>
+
+              {/* Banner Control */}
+              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
+                <div className="flex items-center mb-6">
+                  <MonitorPlay className="h-5 w-5 text-[#00D4FF] mr-2" />
+                  <h2 className="text-xl font-bold text-white">Global Banner</h2>
+                </div>
+                <form onSubmit={handleSetBanner} className="space-y-4">
+                  <div>
+                    <input type="text" placeholder="Banner Message (Max 200 chars)" value={bannerMessage} onChange={(e) => setBannerMessage(e.target.value)} required maxLength={200} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none" />
+                  </div>
+                  <div>
+                    <select value={bannerType} onChange={(e) => setBannerType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none">
+                      <option value="info">Info (Blue)</option>
+                      <option value="warning">Warning (Amber)</option>
+                      <option value="critical">Critical (Red)</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="block text-xs text-slate-400 mb-1">Start At (Optional)</label>
+                      <input type="datetime-local" value={bannerStart} onChange={(e) => setBannerStart(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs text-slate-400 mb-1">End At (Optional)</label>
+                      <input type="datetime-local" value={bannerEnd} onChange={(e) => setBannerEnd(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                    </div>
+                  </div>
+                  <label className="flex items-center cursor-pointer">
+                    <input type="checkbox" checked={bannerActive} onChange={(e) => setBannerActive(e.target.checked)} className="rounded border-slate-700 bg-slate-800 text-[#00D4FF] focus:ring-[#00D4FF]" />
+                    <span className="ml-2 text-sm text-slate-300">Is Active</span>
+                  </label>
+                  <button type="submit" disabled={bannering} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-black font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
+                    {bannering ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Update Banner'}
+                  </button>
+                </form>
+              </div>
+
+              {/* System Config (Beta Mode) */}
+              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl lg:col-span-2">
+                <div className="flex items-center mb-6">
+                  <Settings className="h-5 w-5 text-slate-300 mr-2" />
+                  <h2 className="text-xl font-bold text-white">System Config</h2>
+                </div>
+                <div className="p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between">
+                  <div>
+                    <p className="text-white font-bold">Beta Mode</p>
+                    <p className="text-sm text-slate-400">When enabled, all users temporarily receive "Pro" plan limits. Does not modify their database record.</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
+                  </label>
+                </div>
+              </div>
+            </div>
 
             {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -226,6 +455,12 @@ export default function AdminDashboard() {
                         <div className="flex justify-between"><span>Verified:</span> <span className={userDetails.user.isEmailVerified ? 'text-green-400' : 'text-red-400'}>{userDetails.user.isEmailVerified ? 'Yes' : 'No'}</span></div>
                         <div className="flex justify-between"><span>YouTube:</span> <span className={userDetails.user.isYoutubeConnected ? 'text-[#00D4FF]' : 'text-slate-500'}>{userDetails.user.isYoutubeConnected ? 'Connected' : 'Disconnected'}</span></div>
                      </div>
+                  </div>
+
+                  <div className="pt-4">
+                    <button onClick={handleDeleteUser} className="w-full flex justify-center items-center py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 font-bold rounded-lg transition-colors">
+                      <Trash2 className="h-4 w-4 mr-2" /> Delete Account
+                    </button>
                   </div>
                 </div>
 
