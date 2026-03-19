@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Play, Activity, Youtube, ListVideo, Clock, FileVideo,
   ShieldAlert, Sparkles, RefreshCw, PenLine, List,
@@ -27,7 +28,7 @@ const AVAILABLE_VOICES = [
   { id: 'v4', name: 'Rachel (News Anchor)' },
 ];
 
-export default function Dashboard() {
+function Dashboard() {
   const [user, setUser] = useState<any>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string>('');
   const [jobs, setJobs] = useState<any[]>([]);
@@ -76,8 +77,19 @@ export default function Dashboard() {
   const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
   const [pendingPromptContent, setPendingPromptContent] = useState<string | null>(null);
 
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (searchParams.get('payment') === 'success') {
+      alert('Subscription upgraded successfully! Your limits have been updated.');
+      router.replace('/dashboard');
+    }
+  }, [searchParams, router]);
+
   useEffect(() => {
     const fetchData = async () => {
+
       try {
         const userData = await authService.getMe();
         setUser(userData.data);
@@ -757,5 +769,13 @@ export default function Dashboard() {
       />
 
     </DashboardLayout>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center"><RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" /></div>}>
+      <Dashboard />
+    </Suspense>
   );
 }
