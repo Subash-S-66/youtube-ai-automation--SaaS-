@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { sendEmail } from '../services/emailService';
 import { canUserUpload } from '../services/uploadLimitService';
 import { PLAN_LIMITS } from '../config/plans';
+import { google } from 'googleapis';
 
 // Generate JWT
 const generateToken = (id: string): string => {
@@ -23,13 +24,21 @@ const generateToken = (id: string): string => {
 };
 
 // Helper to set HTTP-only cookie for JWT
-const setTokenCookie = (res: Response, token: string) => {
+const setTokenCookie = (res: Response, token: string, isOAuth: boolean = false) => {
   res.cookie('jwt', token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    secure: isOAuth ? true : process.env.NODE_ENV === 'production',
+    sameSite: isOAuth ? 'none' : 'strict',
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
+};
+
+const getGoogleOAuth2Client = () => {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID || process.env.YOUTUBE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET || process.env.YOUTUBE_CLIENT_SECRET,
+    `${process.env.BACKEND_URL}/api/auth/google/callback`
+  );
 };
 
 // @desc    Register new user
@@ -329,3 +338,82 @@ export const resetPassword = asyncHandler(
     });
   }
 );
+
+// @desc    Initiate Google OAuth Login
+// @route   GET /api/auth/google
+// @access  Public
+export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
+  const oauth2Client = getGoogleOAuth2Client();
+  const authUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: [
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ],
+    prompt: 'consent',
+  });
+  res.redirect(authUrl);
+});
+
+// @desc    Google OAuth Callback
+// @route   GET /api/auth/google/callback
+// @access  Public
+export const googleCallback = asyncHandler(async (req: Request, res: Response) => {
+  const code = req.query.code as string;
+  const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+  if (!code) {
+    res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
+    return;
+  }
+
+  const oauth2Client = getGoogleOAuth2Client();
+  const { tokens } = await oauth2Client.getToken(code);
+  oauth2Client.setCredentials(tokens);
+
+  const oauth2 = google.oauth2({
+    auth: oauth2Client,
+    version: 'v2',
+  });
+
+  const { data } = await oauth2.userinfo.get();
+
+  if (!data.email) {
+    res.redirect(`${FRONTEND_URL}/login?error=Email_Not_Found`);
+    return;
+  }
+
+  let user = await User.findOne({ email: data.email });
+
+  if (user) {
+    // If local user tries to log in via google, they either need to have provider='google' or we convert them
+    // or just allow login but maybe mark them as verified.
+    if (user.provider === 'local') {
+      // Just log them in but you could update provider to 'google' or keep local. We'll update to Google
+      // or at least mark email as verified. Let's just log them in as requested.
+      if (!user.isEmailVerified) {
+         user.isEmailVerified = true;
+         await user.save();
+      }
+    }
+  } else {
+    // Create Google User
+    const createPayload: any = {
+      email: data.email,
+      provider: 'google',
+      isEmailVerified: true, // Auto-verified by Google
+    };
+    if (data.id) {
+      createPayload.googleId = data.id;
+    }
+    user = await User.create(createPayload);
+  }
+
+  const token = generateToken((user._id as unknown) as string);
+  setTokenCookie(res, token, true);
+
+  // Set standard token as well in query param or we can just let frontend rely on cookie + /me endpoint.
+  // Actually, instructions state "Do NOT pass token in URL."
+
+  res.redirect(`${FRONTEND_URL}/dashboard`);
+});

@@ -347,7 +347,9 @@ def _gemini_model_candidates(primary_model: str) -> list[str]:
     return deduped
 
 
-def _call_gemini(prompt: str, api_key: str, model: str) -> str:
+from .gemini_utils import execute_with_gemini_fallback
+
+def _call_gemini_single_key(prompt: str, api_key: str, model: str) -> str:
     errors: list[str] = []
     model_candidates = _gemini_model_candidates(model)
     available_models = _fetch_available_gemini_models(api_key)
@@ -394,9 +396,9 @@ def _call_gemini(prompt: str, api_key: str, model: str) -> str:
                     return result
                 errors.append(f"{model_name}: empty response")
                 break
-            except requests.exceptions.HTTPError as exc:
-                status_code = exc.response.status_code
-                response_text = (exc.response.text or "")[:160]
+            except requests.exceptions.HTTPError as hexc:
+                status_code = hexc.response.status_code
+                response_text = (hexc.response.text or "")[:160]
                 if status_code in GEMINI_RETRY_STATUS_CODES and attempt < GEMINI_MAX_RETRIES_PER_MODEL:
                     delay = GEMINI_RETRY_DELAYS_SECONDS[min(attempt - 1, len(GEMINI_RETRY_DELAYS_SECONDS) - 1)]
                     LOGGER.warning(
@@ -416,10 +418,12 @@ def _call_gemini(prompt: str, api_key: str, model: str) -> str:
                     error_str = f"Bad request ({model_name}): {response_text}"
                 elif status_code == 429:
                     error_str = "Quota exceeded / Rate limited"
+                    raise hexc # Bubble up to trigger fallback switch
                 elif status_code == 503:
                     error_str = "Service unavailable"
+                    raise hexc # Bubble up to trigger fallback switch
                 else:
-                    error_str = f"HTTP {status_code}: {response_text or str(exc)[:80]}"
+                    error_str = f"HTTP {status_code}: {response_text or str(hexc)[:80]}"
                 errors.append(f"{model_name}: {error_str}")
                 break
             except Exception as exc:
@@ -427,6 +431,11 @@ def _call_gemini(prompt: str, api_key: str, model: str) -> str:
                 break
 
     raise RuntimeError("Gemini request failed for all models: " + " | ".join(errors))
+
+def _call_gemini(prompt: str, api_key: str, model: str) -> str:
+    def operation(key: str) -> str:
+        return _call_gemini_single_key(prompt, key, model)
+    return execute_with_gemini_fallback(operation)
 
 
 def _fetch_available_gemini_models(api_key: str) -> set[str] | None:

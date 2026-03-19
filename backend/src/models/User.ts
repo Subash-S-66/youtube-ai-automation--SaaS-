@@ -12,6 +12,8 @@ import { PlanType } from '../config/plans';
 export interface IUser extends Document {
   email: string;
   password?: string;
+  provider: 'local' | 'google';
+  googleId?: string;
   role: string;
   plan: PlanType;
   subscriptionExpiresAt?: Date;
@@ -65,7 +67,17 @@ const UserSchema = new Schema<IUser>(
     },
     password: {
       type: String,
-      required: true,
+      required: function (this: IUser) {
+        return this.provider === 'local';
+      },
+    },
+    provider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
+    },
+    googleId: {
+      type: String,
     },
     role: {
       type: String,
