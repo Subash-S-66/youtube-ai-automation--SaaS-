@@ -6,6 +6,8 @@ interface UploadLimitCheckResult {
   canUpload: boolean;
   remainingUploads: number;
   plan: PlanType;
+  displayPlan?: string;
+  isBetaMode?: boolean;
 }
 
 export const checkAndDowngradeExpiredPlan = async (user: any): Promise<any> => {

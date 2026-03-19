@@ -76,7 +76,7 @@ app.use(cors({
 // Webhook payload needs to remain raw for Stripe Signature verification.
 // We mount the explicit route here BEFORE `express.json()` is applied globally.
 import { webhookHandler } from './controllers/paymentController';
-app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), webhookHandler);
+app.post('/api/payment/webhook', express.raw({ type: 'application/json', limit: '2mb' }), webhookHandler);
 
 // Body parser
 app.use(express.json());

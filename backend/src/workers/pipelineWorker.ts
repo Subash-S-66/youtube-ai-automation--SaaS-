@@ -123,6 +123,8 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
                if (jobScheduledAt.getTime() < nextAllowedAt.getTime()) {
                   isSkipped = true;
                   await appendLogSafe(jobId, `\nJob skipped due to YouTube 24-hour upload limit. Will not execute pipeline.\n`, 'skipped_due_to_limit');
+                  // Update job status manually to ensure the finally block knows it's a completed state
+                  await JobModel.findByIdAndUpdate(jobId, { status: 'skipped_due_to_limit' });
 
                   // Notify user only once per limit window
                   const u = await User.findById(userId);
@@ -151,6 +153,19 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         throw new Error(`Prompt ${promptId} not found`);
       }
       const geminiPrompt = prompt.gemini_prompt;
+
+      // 2b. Safely compute Story Mode state exactly before passing to container
+      if (settings.storyMode && settings.storyId) {
+        const progress = await StoryProgress.findOne({ userId, storyId: settings.storyId });
+        if (progress) {
+          settings.currentPart = progress.currentPart;
+          settings.lastPrompt = progress.lastPrompt;
+        } else {
+          settings.currentPart = 1;
+          settings.lastPrompt = "";
+        }
+        await appendLogSafe(jobId, `\nProceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...\n`, 'running');
+      }
 
       // 3. Get valid YouTube token
       const youtubeToken = await getValidYouTubeToken(userId, settings.channelId);
@@ -267,6 +282,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
          // Handle Consumption Rules
          if (finalStatusMarker === 'SUCCESS') {
+            await JobModel.findByIdAndUpdate(jobId, { status: 'success' });
             await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
 
             // Handle Story Mode increment
@@ -293,6 +309,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
          } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
+            await JobModel.findByIdAndUpdate(jobId, { status: 'failed' });
             // Always consume upload on YouTube rejection (per updated specs)
             await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
 
@@ -300,6 +317,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
               await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
             }
          } else {
+            await JobModel.findByIdAndUpdate(jobId, { status: 'failed' });
             // FAILED (normal) - do not increment usage
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video generation or upload failed. Please try again.').catch(console.error);
@@ -323,11 +341,32 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
       throw error;
     } finally {
-      // Decrement uploadsOnHold safely when the job finishes regardless of success or failure
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { uploadsOnHold: -1 } }
-      ).catch((err) => console.error(`Failed to decrement uploadsOnHold for user ${userId}:`, err));
+      // Release holds only if the job is successful, skipped, or has exhausted all retries
+      const attemptsMade = job.attemptsMade || 0;
+      const maxAttempts = job.opts.attempts || 1;
+      const isFinalAttempt = attemptsMade >= maxAttempts - 1;
+
+      const dbJob = await JobModel.findById(jobId);
+      // 'failed' is also a completed state in this context (e.g. graceful failure without throwing error back to BullMQ)
+      const isCompletedState = dbJob?.status === 'success' || dbJob?.status === 'skipped_due_to_limit' || dbJob?.status === 'failed';
+
+      if (isCompletedState || isFinalAttempt) {
+        const decrementCount = -(settings.videoCount || 1);
+
+        // Safely decrement the global user uploadsOnHold
+        await User.updateOne(
+          { _id: userId },
+          { $inc: { uploadsOnHold: decrementCount } }
+        ).catch((err) => console.error(`Failed to decrement global holds for user ${userId}:`, err));
+
+        // Safely decrement the channel specific videosOnHold
+        await User.updateOne(
+          { _id: userId, 'youtubeChannels.channelId': settings.channelId },
+          { $inc: { 'youtubeChannels.$.videosOnHold': decrementCount } }
+        ).catch((err) => console.error(`Failed to decrement channel holds for user ${userId}:`, err));
+      } else {
+        console.log(`Job ${jobId} failed but will retry (attempt ${attemptsMade + 1}/${maxAttempts}). Holds maintained.`);
+      }
     }
   },
   {
