@@ -7,6 +7,7 @@ import Prompt from '../models/Prompt';
 import Notification from '../models/Notification';
 import GlobalBanner from '../models/GlobalBanner';
 import DeletedUser from '../models/DeletedUser';
+import SystemConfig from '../models/SystemConfig';
 import { z } from 'zod';
 import { PLAN_LIMITS } from '../config/plans';
 import { emailQueue } from '../queues/emailQueue';
@@ -94,7 +95,51 @@ const bannerSchema = z.object({
       .refine(s => !s.includes('\n'), { message: 'Banner message must be a single line (no newlines)' }),
     isActive: z.boolean().default(true),
     type: z.enum(['info', 'warning', 'critical']).default('info'),
+    startAt: z.string().optional().nullable(),
+    endAt: z.string().optional().nullable(),
   }),
+});
+
+export const getSystemConfig = asyncHandler(async (req: Request, res: Response) => {
+  let config = await SystemConfig.findOne();
+  if (!config) {
+    config = await SystemConfig.create({ betaMode: false });
+  }
+
+  res.status(200).json({
+    success: true,
+    data: config,
+  });
+});
+
+const configSchema = z.object({
+  body: z.object({
+    betaMode: z.boolean(),
+  }),
+});
+
+export const updateSystemConfig = asyncHandler(async (req: Request, res: Response) => {
+  const validation = configSchema.safeParse({ body: req.body });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const { betaMode } = validation.data.body;
+
+  let config = await SystemConfig.findOne();
+  if (config) {
+    config.betaMode = betaMode;
+    await config.save();
+  } else {
+    config = await SystemConfig.create({ betaMode });
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'System config updated successfully',
+    data: config,
+  });
 });
 
 export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) => {
@@ -104,7 +149,7 @@ export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) 
     throw new AppError(errorMessages, 400);
   }
 
-  const { message, isActive, type } = validation.data.body;
+  const { message, isActive, type, startAt, endAt } = validation.data.body;
 
   let banner = await GlobalBanner.findOne();
 
@@ -112,12 +157,16 @@ export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) 
     banner.message = message;
     banner.isActive = isActive;
     banner.type = type;
+    banner.startAt = startAt ? new Date(startAt) : null as any;
+    banner.endAt = endAt ? new Date(endAt) : null as any;
     await banner.save();
   } else {
     banner = await GlobalBanner.create({
       message,
       isActive,
       type,
+      startAt: startAt ? new Date(startAt) : null as any,
+      endAt: endAt ? new Date(endAt) : null as any,
     });
   }
 

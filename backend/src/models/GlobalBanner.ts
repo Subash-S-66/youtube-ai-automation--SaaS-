@@ -4,6 +4,8 @@ export interface IGlobalBanner extends Document {
   message: string;
   isActive: boolean;
   type: 'info' | 'warning' | 'critical';
+  startAt?: Date;
+  endAt?: Date;
   updatedAt: Date;
 }
 
@@ -22,6 +24,12 @@ const GlobalBannerSchema = new Schema<IGlobalBanner>(
       type: String,
       enum: ['info', 'warning', 'critical'],
       default: 'info',
+    },
+    startAt: {
+      type: Date,
+    },
+    endAt: {
+      type: Date,
     },
   },
   {

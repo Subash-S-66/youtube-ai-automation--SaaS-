@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, History as HistoryIcon, FileText, Bell, MonitorPlay, Trash2 } from 'lucide-react';
+import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, History as HistoryIcon, FileText, Bell, MonitorPlay, Trash2, Settings } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { authService } from '../../services/authService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -55,7 +55,28 @@ export default function AdminDashboard() {
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(true);
   const [bannerType, setBannerType] = useState('info');
+  const [bannerStart, setBannerStart] = useState('');
+  const [bannerEnd, setBannerEnd] = useState('');
   const [bannering, setBannering] = useState(false);
+
+  const [betaMode, setBetaMode] = useState(false);
+  const [updatingConfig, setUpdatingConfig] = useState(false);
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const configData = await adminService.getSystemConfig();
+        if (configData.success && configData.data) {
+          setBetaMode(configData.data.betaMode);
+        }
+      } catch (err) {
+        console.error("Failed to load system config", err);
+      }
+    };
+    if (currentUser?.role === 'admin') {
+      fetchConfig();
+    }
+  }, [currentUser]);
 
   const handleCreateNotification = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,15 +109,32 @@ export default function AdminDashboard() {
       await adminService.setGlobalBanner({
         message: bannerMessage,
         isActive: bannerActive,
-        type: bannerType
+        type: bannerType,
+        startAt: bannerStart ? new Date(bannerStart).toISOString() : null,
+        endAt: bannerEnd ? new Date(bannerEnd).toISOString() : null
       });
       alert('Banner updated successfully!');
       setBannerMessage('');
+      setBannerStart('');
+      setBannerEnd('');
     } catch (err) {
       console.error(err);
       alert('Failed to update banner.');
     } finally {
       setBannering(false);
+    }
+  };
+
+  const handleUpdateConfig = async (newBetaMode: boolean) => {
+    setUpdatingConfig(true);
+    try {
+      await adminService.updateSystemConfig({ betaMode: newBetaMode });
+      setBetaMode(newBetaMode);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update system config.');
+    } finally {
+      setUpdatingConfig(false);
     }
   };
 
@@ -268,6 +306,16 @@ export default function AdminDashboard() {
                       <option value="critical">Critical (Red)</option>
                     </select>
                   </div>
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="block text-xs text-slate-400 mb-1">Start At (Optional)</label>
+                      <input type="datetime-local" value={bannerStart} onChange={(e) => setBannerStart(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs text-slate-400 mb-1">End At (Optional)</label>
+                      <input type="datetime-local" value={bannerEnd} onChange={(e) => setBannerEnd(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                    </div>
+                  </div>
                   <label className="flex items-center cursor-pointer">
                     <input type="checkbox" checked={bannerActive} onChange={(e) => setBannerActive(e.target.checked)} className="rounded border-slate-700 bg-slate-800 text-[#00D4FF] focus:ring-[#00D4FF]" />
                     <span className="ml-2 text-sm text-slate-300">Is Active</span>
@@ -276,6 +324,24 @@ export default function AdminDashboard() {
                     {bannering ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Update Banner'}
                   </button>
                 </form>
+              </div>
+
+              {/* System Config (Beta Mode) */}
+              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl lg:col-span-2">
+                <div className="flex items-center mb-6">
+                  <Settings className="h-5 w-5 text-slate-300 mr-2" />
+                  <h2 className="text-xl font-bold text-white">System Config</h2>
+                </div>
+                <div className="p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between">
+                  <div>
+                    <p className="text-white font-bold">Beta Mode</p>
+                    <p className="text-sm text-slate-400">When enabled, all users temporarily receive "Pro" plan limits. Does not modify their database record.</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
+                  </label>
+                </div>
               </div>
             </div>
 

@@ -9,6 +9,8 @@ import {
   createNotification,
   setGlobalBanner,
   deleteUserByAdmin,
+  getSystemConfig,
+  updateSystemConfig,
 } from '../controllers/adminController';
 
 const router = express.Router();
@@ -24,5 +26,7 @@ router.put('/users/:id/plan', updateUserPlan);
 router.delete('/users/:id', deleteUserByAdmin);
 router.post('/notify', createNotification);
 router.post('/banner', setGlobalBanner);
+router.get('/config', getSystemConfig);
+router.post('/config', updateSystemConfig);
 
 export default router;

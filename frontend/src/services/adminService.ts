@@ -31,8 +31,18 @@ export const adminService = {
     return response.data;
   },
 
-  async setGlobalBanner(data: { message: string, isActive: boolean, type: string }) {
+  async setGlobalBanner(data: { message: string, isActive: boolean, type: string, startAt?: string | null, endAt?: string | null }) {
     const response = await api.post('/admin/banner', data);
+    return response.data;
+  },
+
+  async getSystemConfig() {
+    const response = await api.get('/admin/config');
+    return response.data;
+  },
+
+  async updateSystemConfig(data: { betaMode: boolean }) {
+    const response = await api.post('/admin/config', data);
     return response.data;
   }
 };
