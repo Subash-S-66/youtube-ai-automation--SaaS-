@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
-import { connection } from '../config/redis';
+import { connection, redisEnabled } from '../config/redis';
+import { NoopQueue } from './noopQueue';
 
 // Define the payload structure for our pipeline jobs
 export interface PipelineJobPayload {
@@ -10,6 +11,8 @@ export interface PipelineJobPayload {
 }
 
 // Create and export the queue
-export const pipelineQueue = new Queue<PipelineJobPayload>('pipelineQueue', {
-  connection: connection as any, // Cast to any to bypass strict type matching between different ioredis versions installed
-});
+export const pipelineQueue = redisEnabled && connection
+  ? new Queue<PipelineJobPayload>('pipelineQueue', {
+      connection: connection as any, // Cast to any to bypass strict type matching between different ioredis versions installed
+    })
+  : (new NoopQueue('pipelineQueue') as any);

@@ -1,14 +1,20 @@
 import Redis from 'ioredis';
 
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+export const redisEnabled = !!process.env.REDIS_URL;
 
-// Configure Redis connection
-export const connection = new Redis(redisUrl, {
-  maxRetriesPerRequest: null,
-});
+// Configure Redis connection only when REDIS_URL is provided
+export const connection: Redis | null = redisEnabled
+  ? new Redis(process.env.REDIS_URL as string, {
+      maxRetriesPerRequest: null,
+    })
+  : null;
 
-connection.on('error', (err) => {
-  console.error('Redis error:', err);
-});
+if (connection) {
+  connection.on('error', (err) => {
+    console.error('Redis error:', err);
+  });
+} else {
+  console.warn('[Redis] REDIS_URL not set. Running without Redis-backed queues/rate limits.');
+}
 
 export default connection;

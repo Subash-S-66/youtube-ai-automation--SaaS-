@@ -73,7 +73,7 @@ app.use(cors({
   credentials: true,
 }));
 
-// Webhook payload needs to remain raw for Stripe Signature verification.
+// Webhook payload needs to remain raw for Razorpay signature verification.
 // We mount the explicit route here BEFORE `express.json()` is applied globally.
 import { webhookHandler } from './controllers/paymentController';
 app.post('/api/payment/webhook', express.raw({ type: 'application/json', limit: '2mb' }), webhookHandler);
@@ -103,7 +103,7 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 // Handle undefined routes
-app.all('*', (req: Request, res: Response, next: NextFunction) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   next(new AppError(`Can't find ${req.originalUrl} on this server`, 404));
 });
 
