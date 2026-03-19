@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
 import InstallPwaButton from '../InstallPwaButton';
+import InAppNotifications from './InAppNotifications';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -95,7 +96,19 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
              <div className="flex items-center">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-white truncate">{user?.email || 'Loading...'}</p>
-                  <p className="text-xs text-[#FF4FD8] capitalize tracking-wider mt-1">{user?.plan} Plan</p>
+                  <div className="flex items-center mt-1">
+                    <p className="text-xs text-[#FF4FD8] capitalize tracking-wider">
+                      {user?.displayPlan || user?.plan} Plan
+                    </p>
+                    {user?.isBetaMode && (
+                      <span
+                        title="You are currently in beta with PRO access"
+                        className="ml-2 px-1.5 py-0.5 text-[10px] font-bold bg-[#00D4FF]/20 text-[#00D4FF] border border-[#00D4FF]/30 rounded cursor-help"
+                      >
+                        BETA
+                      </span>
+                    )}
+                  </div>
                 </div>
              </div>
              <button
@@ -146,6 +159,9 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
           </motion.div>
         </main>
       </div>
+
+      {/* Notifications */}
+      <InAppNotifications />
     </div>
   );
 }

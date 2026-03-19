@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { saveToken } from '../controllers/notificationController';
+import { saveToken, getNotifications } from '../controllers/notificationController';
 import { protect } from '../middleware/authMiddleware';
 
 const router = Router();
@@ -8,5 +8,6 @@ const router = Router();
 router.use(protect);
 
 router.post('/save-token', saveToken);
+router.get('/', getNotifications);
 
 export default router;

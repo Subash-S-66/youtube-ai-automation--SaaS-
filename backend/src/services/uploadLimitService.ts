@@ -51,7 +51,7 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
   };
 };
 
-export const incrementUploadCount = async (userId: string): Promise<void> => {
+export const incrementUploadCount = async (userId: string, count: number = 1): Promise<void> => {
   const now = new Date();
   const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
@@ -69,7 +69,7 @@ export const incrementUploadCount = async (userId: string): Promise<void> => {
   if (!user) {
     await User.updateOne(
       { _id: userId },
-      { $inc: { uploadsUsedToday: 1 } }
+      { $inc: { uploadsUsedToday: count } }
     );
   }
 };

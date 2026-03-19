@@ -2,9 +2,17 @@ import mongoose, { Document, Schema } from 'mongoose';
 import { encrypt, decrypt } from '../utils/encryption';
 
 export interface IYoutubeTokens {
-  access_token?: string;
-  refresh_token?: string;
-  expiry_date?: number;
+  access_token?: string | undefined;
+  refresh_token?: string | undefined;
+  expiry_date?: number | undefined;
+}
+
+export interface IYoutubeChannel {
+  channelId: string;
+  channelName: string;
+  tokens: IYoutubeTokens;
+  videosOnHold: number;
+  lastLimitWarningSentAt?: Date;
 }
 
 import { PlanType } from '../config/plans';
@@ -12,6 +20,8 @@ import { PlanType } from '../config/plans';
 export interface IUser extends Document {
   email: string;
   password?: string;
+  provider: 'local' | 'google';
+  googleId?: string;
   role: string;
   plan: PlanType;
   subscriptionExpiresAt?: Date;
@@ -21,7 +31,7 @@ export interface IUser extends Document {
   uploadsUsedToday: number;
   uploadsOnHold: number;
   lastUploadReset: Date;
-  youtubeTokens?: IYoutubeTokens;
+  youtubeChannels: IYoutubeChannel[];
   isYoutubeConnected: boolean;
   telegramChatId?: string;
   fcmToken?: string | undefined;
@@ -54,6 +64,17 @@ const YoutubeTokensSchema = new Schema<IYoutubeTokens>(
   { _id: false, toJSON: { getters: true }, toObject: { getters: true } }
 );
 
+const YoutubeChannelSchema = new Schema<IYoutubeChannel>(
+  {
+    channelId: { type: String, required: true },
+    channelName: { type: String, required: true },
+    tokens: { type: YoutubeTokensSchema, required: true },
+    videosOnHold: { type: Number, default: 0 },
+    lastLimitWarningSentAt: { type: Date },
+  },
+  { _id: false, toJSON: { getters: true }, toObject: { getters: true } }
+);
+
 const UserSchema = new Schema<IUser>(
   {
     email: {
@@ -65,7 +86,17 @@ const UserSchema = new Schema<IUser>(
     },
     password: {
       type: String,
-      required: true,
+      required: function (this: IUser) {
+        return this.provider === 'local';
+      },
+    },
+    provider: {
+      type: String,
+      enum: ['local', 'google'],
+      default: 'local',
+    },
+    googleId: {
+      type: String,
     },
     role: {
       type: String,
@@ -104,8 +135,9 @@ const UserSchema = new Schema<IUser>(
       type: Date,
       default: Date.now,
     },
-    youtubeTokens: {
-      type: YoutubeTokensSchema,
+    youtubeChannels: {
+      type: [YoutubeChannelSchema],
+      default: [],
     },
     isYoutubeConnected: {
       type: Boolean,

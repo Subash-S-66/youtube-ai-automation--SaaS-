@@ -13,6 +13,7 @@ import { promptService } from '../../services/promptService';
 import { pipelineService } from '../../services/pipelineService';
 import { paymentService } from '../../services/paymentService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import AppModal, { AppModalType } from '../../components/ui/AppModal';
 import { usePersistentSettings } from '../../hooks/usePersistentSettings';
 import { requestNotificationPermission } from '../../lib/notifications';
 import { cn } from '../../lib/utils';
@@ -28,6 +29,7 @@ const AVAILABLE_VOICES = [
 
 export default function Dashboard() {
   const [user, setUser] = useState<any>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<string>('');
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -55,14 +57,57 @@ export default function Dashboard() {
 
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    type: AppModalType;
+    onConfirm?: () => void;
+    onCancel?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    type: 'info',
+  });
+
+  const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
+  const [pendingPromptContent, setPendingPromptContent] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const userData = await authService.getMe();
         setUser(userData.data);
+
+        if (userData.data?.youtubeChannels && userData.data.youtubeChannels.length > 0) {
+            setSelectedChannelId(userData.data.youtubeChannels[0].channelId);
+        }
+
         const jobsData = await pipelineService.getJobs();
         setJobs(jobsData.data);
+
+        // Parse URL params for auth callback errors
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlError = urlParams.get('error');
+        if (urlError === 'channel_limit_reached') {
+            setModalConfig({
+                isOpen: true,
+                title: 'Channel Limit Reached',
+                description: 'You have reached the maximum number of connected YouTube channels allowed for your current plan. Please upgrade to connect more.',
+                type: 'error',
+                confirmText: 'Upgrade',
+                onConfirm: () => {
+                    window.location.href = '/settings';
+                },
+                cancelText: 'Close',
+                onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+            });
+            // Clean URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
 
         // Request notification permission once user is loaded
         requestNotificationPermission();
@@ -81,7 +126,39 @@ export default function Dashboard() {
         interval = setInterval(async () => {
             try {
                 const jobsData = await pipelineService.getJobs();
-                setJobs(jobsData.data);
+
+            // Check for newly completed/failed jobs to notify the user
+            const currentJobs = jobsData.data || [];
+            const seenJobNotifications = JSON.parse(localStorage.getItem('seenJobNotifications') || '[]');
+
+            for (const job of currentJobs) {
+                if ((job.status === 'success' || job.status === 'failed') && !seenJobNotifications.includes(job._id)) {
+                    seenJobNotifications.push(job._id);
+                    localStorage.setItem('seenJobNotifications', JSON.stringify(seenJobNotifications));
+
+                    if (job.status === 'success') {
+                        setModalConfig({
+                            isOpen: true,
+                            title: 'Job Completed',
+                            description: 'Your video generation and upload has completed successfully!',
+                            type: 'success',
+                            confirmText: 'Awesome',
+                            onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+                        });
+                    } else if (job.status === 'failed') {
+                        setModalConfig({
+                            isOpen: true,
+                            title: 'Job Failed',
+                            description: 'A background job failed to complete. You can view the logs in your history.',
+                            type: 'error',
+                            confirmText: 'Dismiss',
+                            onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+                        });
+                    }
+                }
+            }
+
+            setJobs(currentJobs);
             } catch (err) {
                 // Silently ignore polling errors
             }
@@ -118,7 +195,19 @@ export default function Dashboard() {
   const handleGenerateAndRun = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.isYoutubeConnected) {
-      setMessage({ text: 'Please connect YouTube first', type: 'error' });
+      setModalConfig({
+        isOpen: true,
+        title: 'Connection Required',
+        description: 'Please connect your YouTube channel first before generating videos.',
+        type: 'error',
+        confirmText: 'Connect Now',
+        onConfirm: () => {
+          setModalConfig(prev => ({ ...prev, isOpen: false }));
+          handleConnectYouTube();
+        },
+        cancelText: 'Cancel',
+        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+      });
       return;
     }
 
@@ -132,6 +221,27 @@ export default function Dashboard() {
       return;
     }
 
+    if (videoCount >= 7) {
+      setModalConfig({
+         isOpen: true,
+         title: 'High Volume Warning',
+         description: `You are requesting ${videoCount} videos at once. This is a high volume and may take significant time to process. Do you want to proceed?`,
+         type: 'warning',
+         confirmText: 'Proceed',
+         cancelText: 'Cancel',
+         onConfirm: () => {
+             setModalConfig(prev => ({ ...prev, isOpen: false }));
+             runPipelineGeneration();
+         },
+         onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+      });
+      return;
+    }
+
+    runPipelineGeneration();
+  };
+
+  const runPipelineGeneration = async () => {
     setGenerating(true);
     setMessage(null);
     try {
@@ -176,17 +286,88 @@ export default function Dashboard() {
         finalVoices = [AVAILABLE_VOICES[Math.floor(Math.random() * AVAILABLE_VOICES.length)].id];
       }
 
-      const pipelineRes = await pipelineService.runPipeline(promptId, {
-        duration,
+      await executePipeline(promptId, false, promptRes.data?.gemini_prompt, currentStoryId);
+    } catch (err: any) {
+      console.error(err);
+      if (err.response?.data?.warning) {
+        setModalConfig({
+          isOpen: true,
+          title: 'Limit Warning',
+          description: err.response.data.warning,
+          type: 'warning',
+          confirmText: 'Proceed Anyway',
+          cancelText: 'Cancel',
+          onConfirm: () => handleConfirmWarning(),
+          onCancel: () => handleCancelWarning(),
+        });
+      } else {
+        handleApiError(err);
+      }
+      setGenerating(false);
+    }
+  };
+
+  const handleApiError = (err: any) => {
+     const errorMsg = err.response?.data?.message || err.message || 'An unknown error occurred.';
+
+     if (errorMsg.includes('youtube_token_expired') || errorMsg.includes('YouTube channel is not connected or token is invalid')) {
+         setModalConfig({
+             isOpen: true,
+             title: 'YouTube Reconnect Required',
+             description: 'Your YouTube token has expired or is invalid. Please reconnect your account to continue.',
+             type: 'error',
+             confirmText: 'Reconnect',
+             onConfirm: handleConnectYouTube,
+             cancelText: 'Close',
+             onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+         });
+     } else if (errorMsg.includes('Maximum concurrent jobs reached') || errorMsg.includes('videos running/pending') || errorMsg.includes('Not enough uploads remaining') || errorMsg.includes('exceeds the strict limit')) {
+         setModalConfig({
+             isOpen: true,
+             title: 'Upload Limit Reached',
+             description: errorMsg,
+             type: 'error',
+             confirmText: 'Upgrade Plan',
+             onConfirm: () => {
+                window.location.href = '/pricing';
+             },
+             cancelText: 'Dismiss',
+             onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+         });
+     } else {
+         setModalConfig({
+             isOpen: true,
+             title: 'Action Failed',
+             description: errorMsg,
+             type: 'error',
+             confirmText: 'Dismiss',
+             onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+         });
+     }
+  };
+
+  const executePipeline = async (pId: string, acceptedWarning: boolean, newPromptContent?: string, executeStoryId?: string) => {
+    try {
+      if (acceptedWarning) {
+          setGenerating(true);
+      }
+      let finalVoices = selectedVoices;
+      if (randomVoice && AVAILABLE_VOICES.length > 0) {
+        finalVoices = [AVAILABLE_VOICES[Math.floor(Math.random() * AVAILABLE_VOICES.length)]!.id];
+      }
+
+      const pipelineRes = await pipelineService.runPipeline(pId, {
+        targetDuration: duration,
         contentType,
         videoCount,
+        channelId: selectedChannelId,
         storyMode,
-        storyId: currentStoryId,
+        storyId: executeStoryId || storyId,
         currentPart,
         recapEnabled,
         ctaEnabled,
         voices: finalVoices
-      });
+      }, acceptedWarning);
 
       if (pipelineRes.warning) {
           setMessage({ text: pipelineRes.warning, type: 'warning' });
@@ -198,7 +379,7 @@ export default function Dashboard() {
       if (storyMode) {
         setStoryContext(prevContext => {
           // ensure we only append the newly generated content, not the prompt with previous context already injected
-          const newContext = promptRes.data?.gemini_prompt || (inputMode === 'prompt' ? prompt : `Video about: ${selectedTopic === 'Custom' ? customTopic : selectedTopic}`);
+          const newContext = newPromptContent || (inputMode === 'prompt' ? prompt : `Video about: ${selectedTopic === 'Custom' ? customTopic : selectedTopic}`);
           return prevContext ? `${prevContext}\n\n[Part ${currentPart}]: ${newContext}` : `[Part 1]: ${newContext}`;
         });
         setCurrentPart(prev => prev + 1);
@@ -206,11 +387,44 @@ export default function Dashboard() {
 
       const jobsData = await pipelineService.getJobs();
       setJobs(jobsData.data);
+      setModalConfig(prev => ({ ...prev, isOpen: false }));
+      setPendingPromptId(null);
+      setPendingPromptContent(null);
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.message || 'Failed to generate video', type: 'error' });
+      console.error(err);
+      if (err.response?.data?.warning) {
+         setPendingPromptId(pId);
+         setPendingPromptContent(newPromptContent || null);
+         setModalConfig({
+            isOpen: true,
+            title: 'Limit Warning',
+            description: err.response.data.warning,
+            type: 'warning',
+            confirmText: 'Proceed Anyway',
+            cancelText: 'Cancel',
+            onConfirm: () => handleConfirmWarning(),
+            onCancel: () => handleCancelWarning(),
+         });
+      } else {
+         handleApiError(err);
+      }
     } finally {
-      setGenerating(false);
+      if (acceptedWarning) {
+          setGenerating(false);
+      }
     }
+  };
+
+  const handleConfirmWarning = async () => {
+     if (pendingPromptId) {
+         await executePipeline(pendingPromptId, true, pendingPromptContent || undefined, storyId);
+     }
+  };
+
+  const handleCancelWarning = () => {
+     setModalConfig(prev => ({ ...prev, isOpen: false }));
+     setPendingPromptId(null);
+     setPendingPromptContent(null);
   };
 
   if (loading) {
@@ -477,21 +691,43 @@ export default function Dashboard() {
              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Integrations</h3>
 
              <div className="flex flex-col space-y-4 relative z-10">
-                <div className="flex items-center justify-between p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
-                  <div className="flex items-center">
-                    <div className="relative mr-3">
-                      <Youtube className={`h-6 w-6 ${user?.isYoutubeConnected ? 'text-[#FF4FD8]' : 'text-slate-600'}`} />
-                      <div className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#0B0F1A] ${user?.isYoutubeConnected ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.8)]' : 'bg-red-500'}`}></div>
+                <div className="flex flex-col p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center">
+                      <div className="relative mr-3">
+                        <Youtube className={`h-6 w-6 ${user?.isYoutubeConnected ? 'text-[#FF4FD8]' : 'text-slate-600'}`} />
+                        <div className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#0B0F1A] ${user?.isYoutubeConnected ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.8)]' : 'bg-red-500'}`}></div>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-white">YouTube Channel</p>
+                        <p className="text-xs text-slate-500">{user?.isYoutubeConnected ? 'Authorized' : 'Disconnected'}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-bold text-white">YouTube</p>
-                      <p className="text-xs text-slate-500">{user?.isYoutubeConnected ? 'Authorized' : 'Disconnected'}</p>
-                    </div>
+                    {!user?.isYoutubeConnected ? (
+                      <button onClick={handleConnectYouTube} className="text-xs bg-white/5 hover:bg-white/10 text-white font-semibold px-3 py-1.5 rounded-lg border border-white/10 transition-colors">
+                        Connect
+                      </button>
+                    ) : (
+                      <button onClick={handleConnectYouTube} className="text-xs bg-white/5 hover:bg-white/10 text-white font-semibold px-3 py-1.5 rounded-lg border border-white/10 transition-colors">
+                        Add Channel
+                      </button>
+                    )}
                   </div>
-                  {!user?.isYoutubeConnected && (
-                    <button onClick={handleConnectYouTube} className="text-xs bg-white/5 hover:bg-white/10 text-white font-semibold px-3 py-1.5 rounded-lg border border-white/10 transition-colors">
-                      Connect
-                    </button>
+
+                  {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length > 0 && (
+                    <div className="mt-2">
+                      <select
+                        value={selectedChannelId}
+                        onChange={(e) => setSelectedChannelId(e.target.value)}
+                        className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                      >
+                        {user.youtubeChannels.map((channel: any) => (
+                          <option key={channel.channelId} value={channel.channelId}>
+                            {channel.channelName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   )}
                 </div>
 
@@ -507,6 +743,19 @@ export default function Dashboard() {
           </motion.div>
         </div>
       </div>
+
+      <AppModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        description={modalConfig.description}
+        type={modalConfig.type}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={modalConfig.onCancel}
+        confirmText={modalConfig.confirmText}
+        cancelText={modalConfig.cancelText}
+        isLoading={generating}
+      />
+
     </DashboardLayout>
   );
 }

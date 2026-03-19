@@ -3,7 +3,7 @@ import { generatePrompt } from '../controllers/promptController';
 import { protect } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validateResource';
 import { generatePromptSchema } from '../utils/validators/promptValidators';
-import { promptRateLimiter } from '../middleware/rateLimiter';
+import { globalLimiter } from '../middleware/rateLimiter';
 
 const router = express.Router();
 
@@ -12,7 +12,7 @@ router.use(protect);
 
 router.post(
   '/generate',
-  promptRateLimiter,
+  globalLimiter,
   validate(generatePromptSchema),
   generatePrompt
 );

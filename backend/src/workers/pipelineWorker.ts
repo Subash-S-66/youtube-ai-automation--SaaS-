@@ -2,11 +2,24 @@ import { Worker, Job as BullJob } from 'bullmq';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import connectDB from '../config/db';
+import { pipelineQueue } from '../queues/pipelineQueue';
 import { connection } from '../config/redis';
 import JobModel from '../models/Job';
 import User from '../models/User';
 import Prompt from '../models/Prompt';
+import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
+import * as Sentry from '@sentry/node';
+import { nodeProfilingIntegration } from '@sentry/profiling-node';
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [nodeProfilingIntegration()],
+    tracesSampleRate: 1.0,
+    profilesSampleRate: 1.0,
+  });
+}
 import { PipelineJobPayload } from '../queues/pipelineQueue';
 import { incrementUploadCount } from '../services/uploadLimitService';
 import { notifyUser } from '../services/notificationService';
@@ -82,23 +95,70 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     const { userId, promptId, jobId, settings } = job.data;
     console.log(`Processing job ${jobId} for user ${userId}`);
 
+    let isSkipped = false;
+
     await appendLogSafe(jobId, 'Starting pipeline execution...\n', 'running');
 
     try {
-      // 1. Fetch Prompt to get gemini_prompt
+      // 1. Check Rolling Limit
+      if (settings.channelId) {
+         const recentJobs = await JobModel.find({
+            userId,
+            channelId: settings.channelId,
+            status: 'success'
+         }).sort({ createdAt: -1 }).limit(10);
+
+         // We check length against 10 (or whatever max we consider, the instructions state if >= 10 get 10th item).
+         // Actually the soft limit is 10 uploads. Since a job can contain multiple videos,
+         // we need to sum up to the 10-video limit. But instructions simply said:
+         // "If uploads >= 10: get oldest upload (10th item). nextAllowedAt = oldest.createdAt + 24 hours"
+         if (recentJobs.length >= 10) {
+            const oldest = recentJobs[9];
+            if (oldest) {
+               const nextAllowedAt = new Date(oldest.createdAt.getTime() + 24 * 60 * 60 * 1000);
+
+               const dbJob = await JobModel.findById(jobId);
+               const jobScheduledAt = dbJob?.createdAt || new Date();
+
+               if (jobScheduledAt.getTime() < nextAllowedAt.getTime()) {
+                  isSkipped = true;
+                  await appendLogSafe(jobId, `\nJob skipped due to YouTube 24-hour upload limit. Will not execute pipeline.\n`, 'skipped_due_to_limit');
+
+                  // Notify user only once per limit window
+                  const u = await User.findById(userId);
+                  if (u) {
+                     const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
+                     if (ch) {
+                        const lastWarning = ch.lastLimitWarningSentAt;
+                        if (!lastWarning || lastWarning.getTime() < oldest.createdAt.getTime()) {
+                           await User.findOneAndUpdate(
+                              { _id: userId, 'youtubeChannels.channelId': settings.channelId },
+                              { $set: { 'youtubeChannels.$.lastLimitWarningSentAt': new Date() } }
+                           );
+                           await notifyUser(u, 'Scheduled Videos Skipped', '⚠️ Some scheduled videos were skipped due to YouTube 24-hour upload limit. Uploads will continue automatically.').catch(console.error);
+                        }
+                     }
+                  }
+                  return; // Do not consume upload, release hold in finally block
+               }
+            }
+         }
+      }
+
+      // 2. Fetch Prompt to get gemini_prompt
       const prompt = await Prompt.findById(promptId);
       if (!prompt) {
         throw new Error(`Prompt ${promptId} not found`);
       }
       const geminiPrompt = prompt.gemini_prompt;
 
-      // 2. Get valid YouTube token
-      const youtubeToken = await getValidYouTubeToken(userId);
+      // 3. Get valid YouTube token
+      const youtubeToken = await getValidYouTubeToken(userId, settings.channelId);
       if (!youtubeToken) {
         throw new Error('Failed to obtain a valid YouTube token');
       }
 
-      // 3. Trigger Azure Container App Job instead of local spawn
+      // 4. Trigger Azure Container App Job instead of local spawn
       const AZURE_JOB_NAME = process.env.AZURE_JOB_NAME;
       const AZURE_RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP;
       const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
@@ -120,7 +180,10 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
                 { name: "PROMPT", value: geminiPrompt },
                 { name: "SETTINGS", value: JSON.stringify(settings) },
                 { name: "YOUTUBE_TOKEN", value: youtubeToken },
-                { name: "JOB_ID", value: jobId }
+                { name: "JOB_ID", value: jobId },
+                { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
+                { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
+                { name: "MONGO_URI", value: process.env.MONGO_URI || "" }
               ]
             }
           ]
@@ -189,7 +252,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
          const finalDbJob = await JobModel.findById(jobId);
          const finalLogs = finalDbJob?.logs || '';
 
-         if (finalLogs.includes('PIPELINE_STATUS:YOUTUBE_REJECTED')) {
+         if (
+             finalLogs.includes('PIPELINE_STATUS:YOUTUBE_REJECTED') ||
+             finalLogs.includes('uploadLimitExceeded') ||
+             finalLogs.includes('quotaExceeded') ||
+             finalLogs.includes('dailyLimitExceeded')
+         ) {
              finalStatusMarker = 'YOUTUBE_REJECTED';
          } else if (finalLogs.includes('PIPELINE_STATUS:SUCCESS')) {
              finalStatusMarker = 'SUCCESS';
@@ -199,15 +267,34 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
          // Handle Consumption Rules
          if (finalStatusMarker === 'SUCCESS') {
-            await incrementUploadCount(userId).catch(console.error);
+            await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
+
+            // Handle Story Mode increment
+            if (settings.storyMode && settings.storyId) {
+                try {
+                   const nextPart = (settings.currentPart || 1) + 1;
+                   await StoryProgress.findOneAndUpdate(
+                       { userId, storyId: settings.storyId },
+                       {
+                           $set: {
+                               lastPrompt: geminiPrompt,
+                               currentPart: nextPart
+                           }
+                       },
+                       { upsert: true, new: true }
+                   );
+                   console.log(`Story ${settings.storyId} progressed to part ${nextPart} for user ${userId}`);
+                } catch (err) {
+                   console.error('Failed to update StoryProgress', err);
+                }
+            }
 
             if (user) {
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
          } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
-            if (acceptedLimitWarning) {
-                await incrementUploadCount(userId).catch(console.error);
-            } // Else: release upload (do not increment)
+            // Always consume upload on YouTube rejection (per updated specs)
+            await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
 
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
@@ -226,6 +313,10 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     } catch (error: any) {
       console.error(`Error processing job ${jobId}:`, error);
 
+      if (process.env.SENTRY_DSN) {
+        Sentry.captureException(error, { extra: { jobId, userId } });
+      }
+
       // Attempt to record failure in DB if not already captured
       const errorMsg = `\nWorker Error: ${error.message}`;
       await appendLogSafe(jobId, errorMsg, 'failed');
@@ -233,15 +324,15 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       throw error;
     } finally {
       // Decrement uploadsOnHold safely when the job finishes regardless of success or failure
-      await User.findOneAndUpdate(
-        { _id: userId, uploadsOnHold: { $gt: 0 } },
+      await User.updateOne(
+        { _id: userId },
         { $inc: { uploadsOnHold: -1 } }
       ).catch((err) => console.error(`Failed to decrement uploadsOnHold for user ${userId}:`, err));
     }
   },
   {
     connection: connection as any, // Cast to any to bypass strict type matching
-    concurrency: 1, // Limit concurrency to 1 jobs at a time
+    concurrency: 5, // Limit concurrency to 5 jobs at a time to improve performance
   }
 );
 
