@@ -1,4 +1,5 @@
 import User from '../models/User';
+import SystemConfig from '../models/SystemConfig';
 import { resetDailyUploads } from '../utils/dailyReset';
 import { PLAN_LIMITS } from '../config/plans';
 import { checkAndUpdateUserPlan } from '../utils/subscriptionHelper';
@@ -6,7 +7,10 @@ import { checkAndUpdateUserPlan } from '../utils/subscriptionHelper';
 interface UploadCheckResult {
   allowed: boolean;
   remainingUploads: number;
+  uploadsOnHold: number;
   plan: string;
+  displayPlan: string;
+  isBetaMode: boolean;
   message?: string;
 }
 
@@ -20,8 +24,15 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
   // Ensure user's plan is updated if expired
   user = await checkAndUpdateUserPlan(user);
 
+  const config = await SystemConfig.findOne();
+  const isBetaMode = config?.betaMode || false;
+
+  // Evaluate effective plan based on Beta Mode
+  const effectivePlan = isBetaMode ? 'pro' : user!.plan;
+  const displayPlan = isBetaMode ? 'free (beta)' : user!.plan;
+
   // Get current plan limit
-  const currentLimit = PLAN_LIMITS[user!.plan] || PLAN_LIMITS['free'] || 3;
+  const currentLimit = PLAN_LIMITS[effectivePlan] || PLAN_LIMITS['free'] || 3;
 
   // Reset daily counter if necessary
   const wasReset = resetDailyUploads(user as any);
@@ -29,13 +40,19 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
     await user!.save();
   }
 
-  const remainingUploads = currentLimit - user!.uploadsUsedToday;
+  const uploadsUsedToday = user!.uploadsUsedToday || 0;
+  const uploadsOnHold = user!.uploadsOnHold || 0;
+
+  const remainingUploads = currentLimit - (uploadsUsedToday + uploadsOnHold);
 
   if (remainingUploads <= 0) {
     return {
       allowed: false,
       remainingUploads: 0,
-      plan: user!.plan,
+      uploadsOnHold,
+      plan: effectivePlan,
+      displayPlan,
+      isBetaMode,
       message: 'Daily upload limit reached',
     };
   }
@@ -43,7 +60,10 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
   return {
     allowed: true,
     remainingUploads,
-    plan: user!.plan,
+    uploadsOnHold,
+    plan: effectivePlan,
+    displayPlan,
+    isBetaMode,
   };
 };
 

@@ -3,8 +3,10 @@ import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { RunPipelineInput } from '../utils/validators/pipelineValidators';
 import Prompt from '../models/Prompt';
+import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import Job from '../models/Job';
+import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { canUserUpload } from '../services/uploadLimitService';
 
@@ -29,7 +31,7 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
 // @access  Private
 export const startPipeline = asyncHandler(
   async (req: Request<unknown, unknown, RunPipelineInput>, res: Response) => {
-    const { promptId, settings } = req.body;
+    const { promptId, settings, acceptedYouTubeLimitWarning } = req.body;
 
     if (!req.user || !req.user.id) {
       throw new AppError('Not authorized', 401);
@@ -75,12 +77,49 @@ export const startPipeline = asyncHandler(
         throw new AppError('YouTube is not connected or token is invalid. Please connect your account first.', 400);
     }
 
+    if (settings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
+      return res.status(400).json({
+        success: false,
+        message: 'YouTube allows ~10 uploads per 24 hours. This may fail.',
+        warning: 'YouTube allows ~10 uploads per 24 hours. This may fail.',
+      });
+    }
+
+    // Handle Story Mode
+    if (settings.storyMode && settings.storyId) {
+      if (settings.resetStory) {
+        await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
+        settings.currentPart = 1;
+        settings.lastPrompt = "";
+      } else {
+        const progress = await StoryProgress.findOne({ userId, storyId: settings.storyId });
+        if (progress) {
+          settings.currentPart = progress.currentPart;
+          settings.lastPrompt = progress.lastPrompt;
+        } else {
+          settings.currentPart = 1;
+          settings.lastPrompt = "";
+        }
+      }
+    }
+
+    // Increment uploadsOnHold for the user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $inc: { uploadsOnHold: 1 } },
+      { new: true }
+    );
+
+    // Re-check remaining uploads to return accurate numbers
+    const finalLimitCheck = await canUserUpload(userId);
+
     // Create a new job document
     const job = await Job.create({
       userId,
       promptId,
       status: 'pending',
       logs: 'Job added to queue...\n',
+      acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
     });
 
     // Add job to BullMQ
@@ -95,11 +134,14 @@ export const startPipeline = asyncHandler(
       success: true,
       jobId: job._id.toString(),
       message: 'Job added to queue',
+      plan: finalLimitCheck.plan,
+      remainingUploads: finalLimitCheck.remainingUploads,
+      uploadsOnHold: finalLimitCheck.uploadsOnHold,
     };
 
     // Include warning if high volume is requested
     if (settings.videoCount > 10) {
-      responsePayload.warning = 'YouTube allows ~10 uploads per 10 hours. This may affect uploads.';
+      responsePayload.warning = 'YouTube allows ~10 uploads per 24 hours. This may fail.';
     }
 
     res.status(200).json(responsePayload);

@@ -2,25 +2,37 @@
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, Youtube, Mail, BellRing, Trash2, ShieldAlert, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Settings, Youtube, Mail, BellRing, Trash2, ShieldAlert, CheckCircle2, RefreshCw, User, Info, Save } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
+import { userService } from '../../services/userService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { usePersistentSettings } from '../../hooks/usePersistentSettings';
+import { cn } from '../../lib/utils';
 
 export default function SettingsPage() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
 
   const [, setStoryPart] = usePersistentSettings<number>('clipforge_storyPart', 1);
+
+  // Form State
+  const [emailNotifs, setEmailNotifs] = useState(true);
+  const [telegramNotifs, setTelegramNotifs] = useState(true);
+  const [pushNotifs, setPushNotifs] = useState(true);
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         const userData = await authService.getMe();
-        setUser(userData.data);
+        const me = userData.data;
+        setUser(me);
+        setEmailNotifs(me.user?.emailNotificationsEnabled ?? true);
+        setTelegramNotifs(me.user?.telegramNotificationsEnabled ?? true);
+        setPushNotifs(me.user?.pushNotificationsEnabled ?? true);
       } catch (err) {
         authService.logout();
       } finally {
@@ -39,7 +51,7 @@ export default function SettingsPage() {
     setMessage(null);
     try {
       await youtubeService.disconnect();
-      setUser({ ...user, isYoutubeConnected: false });
+      setUser({ ...user, user: { ...user.user, isYoutubeConnected: false } });
       setMessage({ text: 'YouTube account disconnected successfully', type: 'success' });
     } catch (err: any) {
       setMessage({ text: err.response?.data?.message || 'Failed to disconnect YouTube', type: 'error' });
@@ -53,6 +65,23 @@ export default function SettingsPage() {
     setMessage({ text: 'Story memory has been reset to Part 1', type: 'success' });
   };
 
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    setMessage(null);
+    try {
+      await userService.updateSettings({
+        emailNotificationsEnabled: emailNotifs,
+        telegramNotificationsEnabled: telegramNotifs,
+        pushNotificationsEnabled: pushNotifs
+      });
+      setMessage({ text: 'Settings saved successfully', type: 'success' });
+    } catch (err: any) {
+      setMessage({ text: err.response?.data?.message || 'Failed to save settings', type: 'error' });
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
@@ -62,7 +91,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <DashboardLayout user={user}>
+    <DashboardLayout user={user?.user}>
 
       <AnimatePresence>
         {message && (
@@ -91,9 +120,43 @@ export default function SettingsPage() {
             </div>
             <h2 className="text-xl font-bold text-white tracking-tight">Account Settings</h2>
           </div>
+          <button
+            onClick={handleSaveSettings}
+            disabled={savingSettings}
+            className="flex items-center text-sm bg-gradient-primary text-white font-bold px-4 py-2 rounded-lg transition-transform hover:scale-[1.02] shadow-glow-primary disabled:opacity-50"
+          >
+            {savingSettings ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
+            Save Settings
+          </button>
         </div>
 
         <div className="p-6 md:p-8 space-y-10">
+
+          {/* User Info Section */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-6 flex items-center">
+              <User className="h-4 w-4 mr-2" /> Account Details
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
+                <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Current Plan</p>
+                <p className="text-lg font-bold text-white capitalize">{user?.plan}</p>
+              </div>
+              <div className="p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
+                <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Subscription Expiry</p>
+                <p className="text-lg font-bold text-white">
+                  {user?.user?.subscriptionExpiresAt ? new Date(user.user.subscriptionExpiresAt).toLocaleDateString() : 'N/A'}
+                </p>
+              </div>
+              <div className="p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
+                <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Upload Limits</p>
+                <div className="flex items-end justify-between">
+                  <span className="text-2xl font-bold text-[#00D4FF]">{user?.remainingUploads} <span className="text-sm text-slate-400 font-normal">/ {user?.uploadLimit}</span></span>
+                  <span className="text-xs text-yellow-400 font-medium">{user?.uploadsOnHold} on hold</span>
+                </div>
+              </div>
+            </div>
+          </div>
 
           {/* YouTube Integrations */}
           <div>
@@ -104,13 +167,13 @@ export default function SettingsPage() {
               <div>
                 <p className="text-base font-bold text-white mb-1">YouTube Access</p>
                 <p className="text-sm text-slate-500 max-w-xl">
-                  {user?.isYoutubeConnected
+                  {user?.user?.isYoutubeConnected
                     ? "Your account is authorized to upload generated Shorts."
                     : "Connect your YouTube channel to enable automatic video pipeline uploads."}
                 </p>
               </div>
               <div className="flex items-center">
-                {user?.isYoutubeConnected ? (
+                {user?.user?.isYoutubeConnected ? (
                   <button
                     onClick={handleDisconnectYouTube}
                     disabled={disconnecting}
@@ -135,27 +198,43 @@ export default function SettingsPage() {
           {/* Contact / Notifications */}
           <div>
             <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-6 flex items-center">
-              <BellRing className="h-4 w-4 mr-2" /> Communications
+              <BellRing className="h-4 w-4 mr-2" /> Notifications & Communications
             </h3>
             <div className="space-y-4">
+
               <div className="flex items-center justify-between p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
-                <div>
-                  <p className="text-base font-bold text-white mb-1 flex items-center"><Mail className="h-4 w-4 mr-2 text-slate-400" /> Account Email</p>
-                  <p className="text-sm text-slate-500">System notifications and billing receipts are sent here.</p>
+                <div className="flex-1 pr-4">
+                  <p className="text-base font-bold text-white mb-1">Email Notifications</p>
+                  <p className="text-sm text-slate-500">Receive pipeline status updates and alerts via email ({user?.user?.email}).</p>
                 </div>
-                <div className="text-sm text-slate-300 bg-[#111827] border border-[#1A2235] px-4 py-2 rounded-lg font-medium">
-                  {user?.email}
-                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer" checked={emailNotifs} onChange={(e) => setEmailNotifs(e.target.checked)} />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                </label>
               </div>
-              <div className="flex items-center justify-between p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235] opacity-60 pointer-events-none">
-                <div>
-                  <p className="text-base font-bold text-white mb-1 flex items-center">Telegram Connect</p>
+
+              <div className="flex items-center justify-between p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
+                <div className="flex-1 pr-4">
+                  <p className="text-base font-bold text-white mb-1">Telegram Notifications</p>
                   <p className="text-sm text-slate-500">Receive instant pipeline updates via Telegram Bot.</p>
                 </div>
-                <button className="text-sm bg-[#00D4FF] hover:bg-[#00b3d6] text-[#0B0F1A] font-bold px-4 py-2 rounded-lg transition-colors">
-                  Setup Bot
-                </button>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer" checked={telegramNotifs} onChange={(e) => setTelegramNotifs(e.target.checked)} />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                </label>
               </div>
+
+              <div className="flex items-center justify-between p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
+                <div className="flex-1 pr-4">
+                  <p className="text-base font-bold text-white mb-1">Push Notifications</p>
+                  <p className="text-sm text-slate-500">Receive browser-based web push notifications for critical events.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer" checked={pushNotifs} onChange={(e) => setPushNotifs(e.target.checked)} />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                </label>
+              </div>
+
             </div>
           </div>
 

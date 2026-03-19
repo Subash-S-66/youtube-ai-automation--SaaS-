@@ -6,6 +6,7 @@ import { connection } from '../config/redis';
 import JobModel from '../models/Job';
 import User from '../models/User';
 import Prompt from '../models/Prompt';
+import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import { PipelineJobPayload } from '../queues/pipelineQueue';
 import { incrementUploadCount } from '../services/uploadLimitService';
@@ -120,7 +121,10 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
                 { name: "PROMPT", value: geminiPrompt },
                 { name: "SETTINGS", value: JSON.stringify(settings) },
                 { name: "YOUTUBE_TOKEN", value: youtubeToken },
-                { name: "JOB_ID", value: jobId }
+                { name: "JOB_ID", value: jobId },
+                { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
+                { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
+                { name: "MONGO_URI", value: process.env.MONGO_URI || "" }
               ]
             }
           ]
@@ -157,18 +161,83 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
          }
 
          const user = await User.findById(userId);
+         const dbJob = await JobModel.findById(jobId);
+         const acceptedLimitWarning = dbJob?.acceptedYouTubeLimitWarning || false;
+
+         // Let's pretend the Python pipeline appended the marker to logs, but since we are mocking,
+         // we simulate parsing it. If the dbJob.logs already contains a marker, we use it.
+         // Otherwise, we fallback to Succeeded/Failed based on jobStatus.
+         let finalStatusMarker = 'FAILED';
 
          if (jobStatus === 'Succeeded') {
-            await appendLogSafe(jobId, `\n[Azure Container App] Job Execution Succeeded.\nPIPELINE_STATUS:SUCCESS`, 'success');
+            finalStatusMarker = 'SUCCESS';
+            // Simulating a case where it could be rejected by YouTube (for testing purposes, we assume SUCCESS if jobStatus is Succeeded, unless logs explicitly say otherwise).
+            if (dbJob && dbJob.logs && dbJob.logs.includes('PIPELINE_STATUS:YOUTUBE_REJECTED')) {
+                finalStatusMarker = 'YOUTUBE_REJECTED';
+            } else if (dbJob && dbJob.logs && dbJob.logs.includes('PIPELINE_STATUS:SUCCESS')) {
+                finalStatusMarker = 'SUCCESS';
+            } else {
+                // Manually append SUCCESS marker as mock since we simulate Success
+                await appendLogSafe(jobId, `\n[Azure Container App] Job Execution Succeeded.\nPIPELINE_STATUS:SUCCESS`, 'success');
+            }
+         } else {
+            finalStatusMarker = 'FAILED';
+            if (dbJob && dbJob.logs && dbJob.logs.includes('PIPELINE_STATUS:FAILED')) {
+                // already failed
+            } else {
+                await appendLogSafe(jobId, `\n[Azure Container App] Job Execution Failed or Timed Out.\nPIPELINE_STATUS:FAILED`, 'failed');
+            }
+         }
 
+         // Fetch the latest logs to evaluate markers
+         const finalDbJob = await JobModel.findById(jobId);
+         const finalLogs = finalDbJob?.logs || '';
+
+         if (finalLogs.includes('PIPELINE_STATUS:YOUTUBE_REJECTED')) {
+             finalStatusMarker = 'YOUTUBE_REJECTED';
+         } else if (finalLogs.includes('PIPELINE_STATUS:SUCCESS')) {
+             finalStatusMarker = 'SUCCESS';
+         } else if (finalLogs.includes('PIPELINE_STATUS:FAILED')) {
+             finalStatusMarker = 'FAILED';
+         }
+
+         // Handle Consumption Rules
+         if (finalStatusMarker === 'SUCCESS') {
             await incrementUploadCount(userId).catch(console.error);
+
+            // Handle Story Mode increment
+            if (settings.storyMode && settings.storyId) {
+                try {
+                   const nextPart = (settings.currentPart || 1) + 1;
+                   await StoryProgress.findOneAndUpdate(
+                       { userId, storyId: settings.storyId },
+                       {
+                           $set: {
+                               lastPrompt: geminiPrompt,
+                               currentPart: nextPart
+                           }
+                       },
+                       { upsert: true, new: true }
+                   );
+                   console.log(`Story ${settings.storyId} progressed to part ${nextPart} for user ${userId}`);
+                } catch (err) {
+                   console.error('Failed to update StoryProgress', err);
+                }
+            }
 
             if (user) {
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
-         } else {
-            await appendLogSafe(jobId, `\n[Azure Container App] Job Execution Failed or Timed Out.\nPIPELINE_STATUS:FAILED`, 'failed');
+         } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
+            if (acceptedLimitWarning) {
+                await incrementUploadCount(userId).catch(console.error);
+            } // Else: release upload (do not increment)
 
+            if (user) {
+              await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
+            }
+         } else {
+            // FAILED (normal) - do not increment usage
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video generation or upload failed. Please try again.').catch(console.error);
             }
@@ -186,11 +255,17 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       await appendLogSafe(jobId, errorMsg, 'failed');
 
       throw error;
+    } finally {
+      // Decrement uploadsOnHold safely when the job finishes regardless of success or failure
+      await User.updateOne(
+        { _id: userId },
+        { $inc: { uploadsOnHold: -1 } }
+      ).catch((err) => console.error(`Failed to decrement uploadsOnHold for user ${userId}:`, err));
     }
   },
   {
     connection: connection as any, // Cast to any to bypass strict type matching
-    concurrency: 1, // Limit concurrency to 1 jobs at a time
+    concurrency: 5, // Limit concurrency to 5 jobs at a time to improve performance
   }
 );
 

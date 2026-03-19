@@ -292,7 +292,8 @@ def _compute_target_scene_count(audio_seconds: float, scene_duration: float) -> 
     if audio_seconds <= 0:
         return 5
     capped_seconds = min(audio_seconds, float(SHORTS_MAX_DURATION_SECONDS))
-    base = max(5, int(math.ceil(capped_seconds / max(2.0, scene_duration))))
+    # scenes = targetDuration / sceneDuration
+    base = max(5, int(math.ceil(capped_seconds / scene_duration)))
     return min(base, 20)
 
 
@@ -322,12 +323,12 @@ def _compute_max_video_length(audio_seconds: float) -> int:
     return int(min(SHORTS_MAX_DURATION_SECONDS, max(MAX_VIDEO_LENGTH, padded)))
 
 
-def _generate_narration_with_retries(script: str, output_path: Path) -> Path:
+def _generate_narration_with_retries(script: str, output_path: Path, preferred_voice: str = "") -> Path:
     """
     Try multiple voice profiles before giving up on narration.
     """
     for attempt in range(1, NARRATION_RETRY_ATTEMPTS + 1):
-        selected_voice, selected_rate = pick_voice_profile(voice=DEFAULT_VOICE)
+        selected_voice, selected_rate = pick_voice_profile(voice=preferred_voice or DEFAULT_VOICE)
         LOGGER.info(
             "Voice profile attempt %s/%s: %s at %s",
             attempt,
@@ -362,11 +363,12 @@ def _generate_narration_with_retries(script: str, output_path: Path) -> Path:
     )
 
 
-def _script_duration_bounds() -> tuple[int, int]:
+def _script_duration_bounds(settings: dict) -> int:
     """
-    Keep scripts in a short-form range with hard caps for retention.
+    Return target duration from settings or fallback to MAX_SCRIPT_SECONDS.
     """
-    return MIN_SCRIPT_SECONDS, MAX_SCRIPT_SECONDS
+    target = int(settings.get("targetDuration", settings.get("duration", MAX_SCRIPT_SECONDS)))
+    return max(15, min(target, SHORTS_MAX_DURATION_SECONDS))
 
 
 def _dedupe_preserve_order(items: list[str]) -> list[str]:
@@ -521,16 +523,32 @@ def _build_short_from_optimized_idea(
     upload: bool,
     publish_at: str | None,
 ) -> Path:
-    min_script_seconds, max_script_seconds = _script_duration_bounds()
+    import os, json, random
+    settings_env = os.getenv("SETTINGS", "{}")
+    try:
+        settings = json.loads(settings_env)
+    except Exception:
+        settings = {}
+
+    target_duration = _script_duration_bounds(settings)
     LOGGER.info("Selected best topic: %s", idea.topic)
     LOGGER.info("Selected best hook: %s", idea.best_hook)
     LOGGER.info("Selected viral score: %.2f", idea.viral_score)
+
+    voices = settings.get("voices", [])
+    preferred_voice = ""
+    if voices and isinstance(voices, list):
+        preferred_voice = random.choice(voices)
 
     LOGGER.info("Generating voice narration")
     audio_file = _generate_narration_with_retries(
         script=idea.script,
         output_path=AUDIO_PATH,
+        preferred_voice=preferred_voice,
     )
+
+    content_type = settings.get("contentType", "clips").lower()
+    user_media_paths = settings.get("userMediaPaths", [])
 
     scene_duration = _choose_scene_duration()
     try:
@@ -553,26 +571,95 @@ def _build_short_from_optimized_idea(
         random.shuffle(body)
         scene_queries = [scene_queries[0], *body]
 
-    LOGGER.info("Downloading scene clips with %.1fs cuts", scene_duration)
-    videos = download_scene_videos(
-        scenes=scene_queries,
-        output_dir=CLIPS_DIR,
-        pexels_key=PEXELS_API_KEY,
-        pixabay_key=PIXABAY_API_KEY,
-        scene_duration=scene_duration,
-        min_resolution=720,
-        used_clips_file=USED_CLIPS_FILE,
-        clips_per_scene_min=1,
-        clips_per_scene_max=3,
-    )
-    LOGGER.info("Downloaded %s clips", len(videos))
+    videos = []
+
+    # Pre-fill videos with user uploaded media if available
+    if user_media_paths and isinstance(user_media_paths, list):
+        for media_path in user_media_paths:
+            path_obj = Path(media_path)
+            if path_obj.exists():
+                videos.append(path_obj)
+        LOGGER.info(f"Loaded {len(videos)} user uploaded media clips")
+
+    # If we need more videos than the user provided, fetch the rest
+    needed_clips = len(scene_queries) - len(videos)
+
+    if needed_clips > 0:
+        remaining_queries = scene_queries[len(videos):]
+        if content_type == "images":
+            LOGGER.info("Media mode 'images': Downloading stock images")
+            from youtube_ai_automation.image_fetcher import fetch_images
+            for idx, query in enumerate(remaining_queries, start=1):
+                try:
+                    # fetch 1 image per scene
+                    imgs = fetch_images(
+                        query=query,
+                        output_dir=CLIPS_DIR,
+                        count=1,
+                        pexels_key=PEXELS_API_KEY,
+                        pixabay_key=PIXABAY_API_KEY,
+                    )
+                    if imgs:
+                        videos.extend(imgs)
+                except Exception as e:
+                    LOGGER.warning(f"Failed to fetch image for query '{query}': {e}")
+        elif content_type == "mixed":
+            LOGGER.info("Media mode 'mixed': Downloading video and image clips")
+            from youtube_ai_automation.image_fetcher import fetch_images
+            initial_video_count = len(videos)
+            for idx, query in enumerate(remaining_queries, start=1):
+                try:
+                    # Intro (1st scene) -> Video, Explanation (Middle scenes) -> Images, Highlights (Last scene) -> Video
+                    # Adjust idx relative to total queries to keep intro/outro logic intact
+                    global_idx = initial_video_count + idx
+                    if global_idx == 1 or global_idx == len(scene_queries):
+                        clips = download_scene_videos(
+                            scenes=[query],
+                            output_dir=CLIPS_DIR,
+                            pexels_key=PEXELS_API_KEY,
+                            pixabay_key=PIXABAY_API_KEY,
+                            scene_duration=scene_duration,
+                            min_resolution=720,
+                            used_clips_file=USED_CLIPS_FILE,
+                            clips_per_scene_min=1,
+                            clips_per_scene_max=1,
+                        )
+                        videos.extend(clips)
+                    else:
+                        imgs = fetch_images(
+                            query=query,
+                            output_dir=CLIPS_DIR,
+                            count=1,
+                            pexels_key=PEXELS_API_KEY,
+                            pixabay_key=PIXABAY_API_KEY,
+                        )
+                        if imgs:
+                            videos.extend(imgs)
+                except Exception as e:
+                    LOGGER.warning(f"Failed to fetch mixed media for query '{query}': {e}")
+        else:
+            LOGGER.info("Media mode 'clips': Downloading scene clips with %.1fs cuts", scene_duration)
+            fetched_videos = download_scene_videos(
+                scenes=remaining_queries,
+                output_dir=CLIPS_DIR,
+                pexels_key=PEXELS_API_KEY,
+                pixabay_key=PIXABAY_API_KEY,
+                scene_duration=scene_duration,
+                min_resolution=720,
+                used_clips_file=USED_CLIPS_FILE,
+                clips_per_scene_min=1,
+                clips_per_scene_max=3,
+            )
+            videos.extend(fetched_videos)
+
+    LOGGER.info("Prepared %s media clips", len(videos))
 
     caption_chunk = _pick_caption_chunk_size()
     subtitle_file = create_subtitles_from_script(
         script=idea.script,
         audio_path=audio_file,
         subtitle_path=SUBTITLE_PATH,
-        max_words=10,
+        max_words=3,
         highlight_words=_extract_highlight_words(idea.topic, idea.best_hook),
         line_mode=True,
     )
@@ -587,8 +674,8 @@ def _build_short_from_optimized_idea(
         height=1920,
         fps=30,
         scene_duration=scene_duration,
-        min_video_length=max(MIN_VIDEO_LENGTH, min_script_seconds),
-        max_video_length=_compute_max_video_length(audio_seconds),
+        min_video_length=max(15, target_duration - 5),
+        max_video_length=min(60, _compute_max_video_length(audio_seconds)),
         background_music_path=music_path,
         bg_music_volume=BACKGROUND_MUSIC_VOLUME,
         shuffle_scenes=True,
@@ -835,6 +922,15 @@ def _select_optimized_idea(topic: str, niche: str) -> AutoSelection:
     score_breakdown["strategy_pattern_weight"] = round(strategy.pattern_weight, 4)
     score_breakdown["combined_viral_score"] = round(selected_ranked.combined_score, 2)
 
+    # To properly set duration here, we fetch it from settings
+    import os, json
+    settings_env = os.getenv("SETTINGS", "{}")
+    try:
+        settings = json.loads(settings_env)
+    except Exception:
+        settings = {}
+    target_duration = _script_duration_bounds(settings)
+
     optimized = build_optimized_idea(
         candidate=selected_candidate,
         best_hook=selected_hook,
@@ -847,8 +943,7 @@ def _select_optimized_idea(topic: str, niche: str) -> AutoSelection:
         openai_model=OPENAI_MODEL,
         anthropic_api_key=ANTHROPIC_API_KEY,
         anthropic_model=ANTHROPIC_MODEL,
-        min_script_seconds=min_script_seconds,
-        max_script_seconds=max_script_seconds,
+        target_duration=target_duration,
     )
     topic_memory = refresh_topic_generation_memory(
         trending_topics=topic_signals,
@@ -912,13 +1007,30 @@ def _build_video_from_content(
     upload: bool,
     publish_at: str | None,
 ) -> Path:
-    min_script_seconds, max_script_seconds = _script_duration_bounds()
+    import os, json, random
+    settings_env = os.getenv("SETTINGS", "{}")
+    try:
+        settings = json.loads(settings_env)
+    except Exception:
+        settings = {}
+
+    target_duration = _script_duration_bounds(settings)
     LOGGER.info("Title: %s", content.title)
     LOGGER.info("Hook: %s", content.hook)
+
+    voices = settings.get("voices", [])
+    preferred_voice = ""
+    if voices and isinstance(voices, list):
+        preferred_voice = random.choice(voices)
+
+    content_type = settings.get("contentType", "clips").lower()
+    user_media_paths = settings.get("userMediaPaths", [])
+
     LOGGER.info("Generating voice narration")
     audio_file = _generate_narration_with_retries(
         script=content.script,
         output_path=AUDIO_PATH,
+        preferred_voice=preferred_voice,
     )
 
     scene_duration = _choose_scene_duration()
@@ -937,26 +1049,96 @@ def _build_video_from_content(
     )
     LOGGER.info("Scene duration: %.1fs", scene_duration)
     scene_queries = _extend_scene_queries(scene_plan.search_queries[:], target_scenes)
-    LOGGER.info("Downloading scene clips (%s scenes)", len(scene_queries))
-    videos = download_scene_videos(
-        scenes=scene_queries,
-        output_dir=CLIPS_DIR,
-        pexels_key=PEXELS_API_KEY,
-        pixabay_key=PIXABAY_API_KEY,
-        scene_duration=scene_duration,
-        min_resolution=720,
-        used_clips_file=USED_CLIPS_FILE,
-        clips_per_scene_min=1,
-        clips_per_scene_max=3,
-    )
-    LOGGER.info("Downloaded %s clips", len(videos))
+
+    videos = []
+
+    # Pre-fill videos with user uploaded media if available
+    if user_media_paths and isinstance(user_media_paths, list):
+        for media_path in user_media_paths:
+            path_obj = Path(media_path)
+            if path_obj.exists():
+                videos.append(path_obj)
+        LOGGER.info(f"Loaded {len(videos)} user uploaded media clips")
+
+    # If we need more videos than the user provided, fetch the rest
+    needed_clips = len(scene_queries) - len(videos)
+
+    if needed_clips > 0:
+        remaining_queries = scene_queries[len(videos):]
+        if content_type == "images":
+            LOGGER.info("Media mode 'images': Downloading stock images")
+            from youtube_ai_automation.image_fetcher import fetch_images
+            for idx, query in enumerate(remaining_queries, start=1):
+                try:
+                    # fetch 1 image per scene
+                    imgs = fetch_images(
+                        query=query,
+                        output_dir=CLIPS_DIR,
+                        count=1,
+                        pexels_key=PEXELS_API_KEY,
+                        pixabay_key=PIXABAY_API_KEY,
+                    )
+                    if imgs:
+                        videos.extend(imgs)
+                except Exception as e:
+                    LOGGER.warning(f"Failed to fetch image for query '{query}': {e}")
+        elif content_type == "mixed":
+            LOGGER.info("Media mode 'mixed': Downloading video and image clips")
+            from youtube_ai_automation.image_fetcher import fetch_images
+            initial_video_count = len(videos)
+            for idx, query in enumerate(remaining_queries, start=1):
+                try:
+                    # Intro (1st scene) -> Video, Explanation (Middle scenes) -> Images, Highlights (Last scene) -> Video
+                    # Adjust idx relative to total queries to keep intro/outro logic intact
+                    global_idx = initial_video_count + idx
+                    if global_idx == 1 or global_idx == len(scene_queries):
+                        clips = download_scene_videos(
+                            scenes=[query],
+                            output_dir=CLIPS_DIR,
+                            pexels_key=PEXELS_API_KEY,
+                            pixabay_key=PIXABAY_API_KEY,
+                            scene_duration=scene_duration,
+                            min_resolution=720,
+                            used_clips_file=USED_CLIPS_FILE,
+                            clips_per_scene_min=1,
+                            clips_per_scene_max=1,
+                        )
+                        videos.extend(clips)
+                    else:
+                        imgs = fetch_images(
+                            query=query,
+                            output_dir=CLIPS_DIR,
+                            count=1,
+                            pexels_key=PEXELS_API_KEY,
+                            pixabay_key=PIXABAY_API_KEY,
+                        )
+                        if imgs:
+                            videos.extend(imgs)
+                except Exception as e:
+                    LOGGER.warning(f"Failed to fetch mixed media for query '{query}': {e}")
+        else:
+            LOGGER.info("Media mode 'clips': Downloading scene clips with %.1fs cuts", scene_duration)
+            fetched_videos = download_scene_videos(
+                scenes=remaining_queries,
+                output_dir=CLIPS_DIR,
+                pexels_key=PEXELS_API_KEY,
+                pixabay_key=PIXABAY_API_KEY,
+                scene_duration=scene_duration,
+                min_resolution=720,
+                used_clips_file=USED_CLIPS_FILE,
+                clips_per_scene_min=1,
+                clips_per_scene_max=3,
+            )
+            videos.extend(fetched_videos)
+
+    LOGGER.info("Prepared %s media clips", len(videos))
 
     LOGGER.info("Building advanced captions")
     subtitle_file = create_subtitles_from_script(
         script=content.script,
         audio_path=audio_file,
         subtitle_path=SUBTITLE_PATH,
-        max_words=10,
+        max_words=3,
         highlight_words=_extract_highlight_words(content.topic, content.hook),
         line_mode=True,
     )
@@ -972,8 +1154,8 @@ def _build_video_from_content(
         height=1920,
         fps=30,
         scene_duration=scene_duration,
-        min_video_length=max(MIN_VIDEO_LENGTH, min_script_seconds),
-        max_video_length=_compute_max_video_length(audio_seconds),
+        min_video_length=max(15, target_duration - 5),
+        max_video_length=min(60, _compute_max_video_length(audio_seconds)),
         background_music_path=music_path,
         bg_music_volume=BACKGROUND_MUSIC_VOLUME,
         shuffle_scenes=True,
@@ -1096,8 +1278,21 @@ def _build_single_short(
     publish_at: str | None,
     provider_override: str | None = None,
 ) -> Path:
-    min_script_seconds, max_script_seconds = _script_duration_bounds()
-    LOGGER.info("Generating AI content for topic: %s", topic)
+    import os, json
+    settings_env = os.getenv("SETTINGS", "{}")
+    try:
+        settings = json.loads(settings_env)
+    except Exception:
+        settings = {}
+
+    target_duration = _script_duration_bounds(settings)
+    LOGGER.info("Generating AI content for topic: %s (target duration: %s)", topic, target_duration)
+
+    story_mode = settings.get("storyMode", False)
+    current_part = settings.get("currentPart", 1)
+    recap_enabled = settings.get("recapEnabled", False)
+    last_prompt = settings.get("lastPrompt", "")
+
     provider = (provider_override or AI_PROVIDER).strip().lower()
     content = generate_content(
         topic=topic,
@@ -1108,8 +1303,11 @@ def _build_single_short(
         openai_model=OPENAI_MODEL,
         anthropic_api_key=ANTHROPIC_API_KEY,
         anthropic_model=ANTHROPIC_MODEL,
-        min_seconds=min_script_seconds,
-        max_seconds=max_script_seconds,
+        target_duration=target_duration,
+        story_mode=story_mode,
+        current_part=current_part,
+        recap_enabled=recap_enabled,
+        last_prompt=last_prompt,
     )
     return _build_video_from_content(content=content, upload=upload, publish_at=publish_at)
 
@@ -1132,7 +1330,7 @@ def run_news_pipeline(
     news_fetcher -> gemini_content_generator -> video pipeline
     """
     created: list[Path] = []
-    min_script_seconds, max_script_seconds = _script_duration_bounds()
+    target_duration = 40 # Default if settings not available here
     LOGGER.info("Starting news generation")
     try:
         fetch_limit = max(count * NEWS_FETCH_MULTIPLIER, count)
@@ -1189,8 +1387,7 @@ def run_news_pipeline(
             topic=headline,
             gemini_api_key=GEMINI_API_KEY,
             gemini_model=GEMINI_MODEL,
-            min_seconds=min_script_seconds,
-            max_seconds=max_script_seconds,
+            target_duration=target_duration,
             content_type="news",
         )
         try:
@@ -1219,7 +1416,7 @@ def run_auto_pipeline(
     -> video_creator -> youtube_uploader
     """
     created: list[Path] = []
-    min_script_seconds, max_script_seconds = _script_duration_bounds()
+    target_duration = 40
     for index in range(max(1, count)):
         LOGGER.info("Starting auto generation %s/%s", index + 1, count)
         LOGGER.info("trend_engine: collecting trend candidates")
@@ -1240,8 +1437,7 @@ def run_auto_pipeline(
             topic=selected_topic,
             gemini_api_key=GEMINI_API_KEY,
             gemini_model=GEMINI_MODEL,
-            min_seconds=min_script_seconds,
-            max_seconds=max_script_seconds,
+            target_duration=target_duration,
         )
         try:
             video_path = _build_video_from_content(

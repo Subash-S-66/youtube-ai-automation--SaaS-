@@ -19,11 +19,15 @@ export interface IUser extends Document {
   stripeCustomerId?: string;
   uploadLimitPerDay: number;
   uploadsUsedToday: number;
+  uploadsOnHold: number;
   lastUploadReset: Date;
   youtubeTokens?: IYoutubeTokens;
   isYoutubeConnected: boolean;
   telegramChatId?: string;
   fcmToken?: string | undefined;
+  emailNotificationsEnabled: boolean;
+  telegramNotificationsEnabled: boolean;
+  pushNotificationsEnabled: boolean;
   isEmailVerified: boolean;
   emailVerificationToken?: string | undefined;
   emailVerificationExpires?: Date | undefined;
@@ -65,6 +69,7 @@ const UserSchema = new Schema<IUser>(
     },
     role: {
       type: String,
+      enum: ['user', 'admin'],
       default: 'user',
     },
     plan: {
@@ -91,6 +96,10 @@ const UserSchema = new Schema<IUser>(
       type: Number,
       default: 0,
     },
+    uploadsOnHold: {
+      type: Number,
+      default: 0,
+    },
     lastUploadReset: {
       type: Date,
       default: Date.now,
@@ -107,6 +116,18 @@ const UserSchema = new Schema<IUser>(
     },
     fcmToken: {
       type: String,
+    },
+    emailNotificationsEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    telegramNotificationsEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    pushNotificationsEnabled: {
+      type: Boolean,
+      default: true,
     },
     isEmailVerified: {
       type: Boolean,

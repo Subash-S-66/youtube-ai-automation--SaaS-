@@ -5,6 +5,7 @@ export interface IJob extends Document {
   promptId: mongoose.Types.ObjectId;
   status: 'pending' | 'running' | 'success' | 'failed';
   logs: string;
+  acceptedYouTubeLimitWarning: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,11 +31,18 @@ const JobSchema = new Schema<IJob>(
       type: String,
       default: '',
     },
+    acceptedYouTubeLimitWarning: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+// Optimize lookups for pending/running jobs per user
+JobSchema.index({ userId: 1, status: 1 });
 
 const Job = mongoose.model<IJob>('Job', JobSchema);
 

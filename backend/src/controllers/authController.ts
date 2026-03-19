@@ -7,6 +7,8 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { sendEmail } from '../services/emailService';
+import { canUserUpload } from '../services/uploadLimitService';
+import { PLAN_LIMITS } from '../config/plans';
 
 // Generate JWT
 const generateToken = (id: string): string => {
@@ -95,14 +97,28 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   const user = await User.findById(req.user?.id).select('-password');
 
   if (user) {
+    // Get accurate current limits and plan for response
+    const limitCheck = await canUserUpload(user.id);
+
     res.json({
       success: true,
       data: {
-        _id: user.id,
-        email: user.email,
-        role: user.role,
-        plan: user.plan,
-        isYoutubeConnected: user.isYoutubeConnected,
+        user: {
+          _id: user.id,
+          email: user.email,
+          role: user.role,
+          isYoutubeConnected: user.isYoutubeConnected,
+          emailNotificationsEnabled: user.emailNotificationsEnabled,
+          telegramNotificationsEnabled: user.telegramNotificationsEnabled,
+          pushNotificationsEnabled: user.pushNotificationsEnabled,
+          subscriptionExpiresAt: user.subscriptionExpiresAt,
+        },
+        plan: limitCheck.plan,
+        displayPlan: limitCheck.displayPlan,
+        isBetaMode: limitCheck.isBetaMode,
+        remainingUploads: limitCheck.remainingUploads,
+        uploadsOnHold: limitCheck.uploadsOnHold,
+        uploadLimit: PLAN_LIMITS[limitCheck.plan] || PLAN_LIMITS['free'] || 3,
       },
     });
   } else {

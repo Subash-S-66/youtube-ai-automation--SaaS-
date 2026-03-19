@@ -13,12 +13,18 @@ import random
 import re
 import subprocess
 
+import base64
+import requests
+
 try:
     import edge_tts
 except Exception:  # pragma: no cover - optional dependency behavior
     edge_tts = None
 
 LOGGER = logging.getLogger(__name__)
+
+# Gemini Audio API constants
+GEMINI_TTS_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 ROTATION_VOICES = [
     "en-US-GuyNeural",
@@ -288,6 +294,78 @@ def _write_silent_audio(output_path: Path, duration_seconds: float) -> Path:
     return output_path
 
 
+def _map_edge_voice_to_gemini(edge_voice: str) -> str:
+    """Map Edge TTS voice names to Gemini Native Audio voice names."""
+    low = str(edge_voice).lower()
+    # Gemini voices: Puck, Charon, Kore, Fenrir, Aoede
+    if "guy" in low or "jason" in low or "tony" in low or "davis" in low:
+        return random.choice(["Puck", "Charon", "Fenrir"])
+    else:
+        return random.choice(["Kore", "Aoede"])
+
+def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not found")
+
+    gemini_voice = _map_edge_voice_to_gemini(voice)
+
+    payload = {
+        "contents": [{"parts": [{"text": script}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {
+                        "voiceName": gemini_voice
+                    }
+                }
+            }
+        }
+    }
+
+    LOGGER.info(f"Calling Gemini 2.5 Flash Native Audio (Voice: {gemini_voice})...")
+    response = requests.post(
+        GEMINI_TTS_URL,
+        params={"key": api_key},
+        json=payload,
+        timeout=60
+    )
+    response.raise_for_status()
+
+    data = response.json()
+
+    try:
+        # Extract base64 audio data from the response.
+        # Note: The exact structure might vary slightly depending on the live Gemini 2.5 API response,
+        # but typically it returns inlineData for media.
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise RuntimeError("No candidates returned from Gemini")
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            raise RuntimeError("No parts returned from Gemini")
+
+        audio_part = None
+        for p in parts:
+            if "inlineData" in p and p["inlineData"].get("mimeType", "").startswith("audio/"):
+                audio_part = p["inlineData"]["data"]
+                break
+
+        if not audio_part:
+            raise RuntimeError("No audio data found in Gemini response")
+
+        # Decode and save
+        audio_bytes = base64.b64decode(audio_part)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(audio_bytes)
+
+        return output_path
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse Gemini audio response: {e}")
+
 def generate_voice(
     script: str,
     voice: str,
@@ -298,7 +376,7 @@ def generate_voice(
     """
     Generate voice audio from script text.
 
-    Tries Edge TTS first, then silent audio as last resort.
+    Tries Gemini Audio first, then Edge TTS, then silent audio as last resort.
     Never crashes the pipeline - always returns a valid audio file.
 
     Returns:
@@ -321,7 +399,17 @@ def generate_voice(
     edge_error = ""
     global _EDGE_TTS_DISABLED_REASON
 
-    # --- Stage 1: Try Edge TTS with multiple voices ---
+    # --- Stage 1: Try Gemini Audio (Primary) ---
+    try:
+        LOGGER.info("Attempting primary voice generation via Gemini Audio...")
+        audio_file = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
+        if audio_file.exists() and audio_file.stat().st_size > 1000:
+            LOGGER.info(f"Successfully generated voice via Gemini Audio ({audio_file.stat().st_size} bytes)")
+            return audio_file, True
+    except Exception as gemini_err:
+        LOGGER.warning(f"Gemini Audio failed, falling back to Edge TTS: {gemini_err}")
+
+    # --- Stage 2: Try Edge TTS with multiple voices (Fallback) ---
     if _EDGE_TTS_DISABLED_REASON:
         LOGGER.warning("Skipping Edge TTS (disabled earlier in this run): %s", _EDGE_TTS_DISABLED_REASON)
         edge_error = _EDGE_TTS_DISABLED_REASON
