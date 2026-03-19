@@ -2,15 +2,57 @@
 
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { CreditCard, CheckCircle2, RefreshCw, Zap } from 'lucide-react';
+import { CreditCard, CheckCircle2, RefreshCw, Zap, Sparkles } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { paymentService } from '../../services/paymentService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import { cn } from '../../lib/utils';
+
+interface Plan {
+  id: string;
+  name: string;
+  price: string;
+  limit: number;
+  features: string[];
+  recommended?: boolean;
+}
+
+const PLANS: Plan[] = [
+  {
+    id: 'free',
+    name: 'Free',
+    price: '$0/mo',
+    limit: 3,
+    features: ['3 video uploads per day', 'Basic AI generation', 'Standard voices', 'Community support'],
+  },
+  {
+    id: 'basic',
+    name: 'Basic',
+    price: '$10/mo',
+    limit: 10,
+    features: ['10 video uploads per day', 'Faster AI generation', 'Standard voices', 'Email support'],
+  },
+  {
+    id: 'pro',
+    name: 'Pro',
+    price: '$25/mo',
+    limit: 25,
+    features: ['25 video uploads per day', 'Priority generation queue', 'Premium AI voices', 'Priority support'],
+    recommended: true,
+  },
+  {
+    id: 'premium',
+    name: 'Premium',
+    price: '$99/mo',
+    limit: 100,
+    features: ['100 video uploads per day', 'Instant generation queue', 'All AI voices unlocked', '24/7 dedicated support', 'Custom templates'],
+  }
+];
 
 export default function PaymentsPage() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
+  const [processing, setProcessing] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -27,17 +69,17 @@ export default function PaymentsPage() {
     fetchData();
   }, []);
 
-  const handleUpgrade = async () => {
-    setProcessing(true);
+  const handleUpgrade = async (planId: string) => {
+    setProcessing(planId);
     setMessage(null);
     try {
-      const response = await paymentService.createCheckoutSession();
+      const response = await paymentService.createCheckoutSession(planId);
       if (response.success && response.url) {
         window.location.href = response.url;
       }
     } catch (err: any) {
       setMessage({ text: err.response?.data?.message || 'Failed to start checkout', type: 'error' });
-      setProcessing(false);
+      setProcessing(null);
     }
   };
 
@@ -49,7 +91,7 @@ export default function PaymentsPage() {
     );
   }
 
-  const isPro = user?.plan === 'pro';
+  const currentPlanId = user?.plan || 'free';
 
   return (
     <DashboardLayout user={user}>
@@ -61,7 +103,7 @@ export default function PaymentsPage() {
             <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
               <CreditCard className="h-5 w-5 text-[#7C5CFF]" />
             </div>
-            <h2 className="text-xl font-bold text-white tracking-tight">Billing & Usage</h2>
+            <h2 className="text-xl font-bold text-white tracking-tight">Subscriptions & Usage</h2>
           </div>
         </div>
 
@@ -74,8 +116,7 @@ export default function PaymentsPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-
+          <div className="mb-10">
             {/* Current Plan Overview */}
             <div className="bg-[#0B0F1A] rounded-2xl p-6 border border-[#1A2235]">
               <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Current Plan</h3>
@@ -83,11 +124,8 @@ export default function PaymentsPage() {
                 <span className="text-4xl font-extrabold text-white capitalize">{user?.plan}</span>
                 <span className="text-sm text-slate-500 mb-1 ml-2">/ month</span>
               </div>
-              <p className="text-sm text-slate-400 mb-6">
-                {isPro ? 'You have access to all premium features and elevated limits.' : 'Upgrade to unlock priority queues and elevated upload limits.'}
-              </p>
 
-              <div className="space-y-4">
+              <div className="space-y-4 mt-6">
                 <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Daily Usage</h4>
                 <div>
                   <div className="flex justify-between text-sm mb-1">
@@ -96,56 +134,84 @@ export default function PaymentsPage() {
                   </div>
                   <div className="w-full bg-[#111827] rounded-full h-2 border border-[#1A2235]">
                     <div
-                      className={`h-2 rounded-full ${isPro ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.6)]' : 'bg-[#7C5CFF]'}`}
+                      className={`h-2 rounded-full ${user?.plan !== 'free' ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.6)]' : 'bg-[#7C5CFF]'}`}
                       style={{ width: `${Math.min((user?.uploadsUsedToday / user?.uploadLimitPerDay) * 100, 100)}%` }}
                     ></div>
                   </div>
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Upgrade Prompt */}
-            {!isPro && (
-              <div className="bg-[#1A2235]/40 rounded-2xl p-6 border border-[#7C5CFF]/30 flex flex-col justify-center relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-primary opacity-5 pointer-events-none"></div>
-                <div className="flex items-center mb-4 relative z-10">
-                  <Zap className="h-6 w-6 text-[#FF4FD8] mr-2" />
-                  <h3 className="text-lg font-bold text-white">Upgrade to Pro</h3>
-                </div>
-                <ul className="space-y-3 mb-8 relative z-10">
-                  <li className="flex items-center text-sm text-slate-300">
-                    <CheckCircle2 className="h-4 w-4 mr-3 text-[#00D4FF]" /> 100 Daily Uploads
-                  </li>
-                  <li className="flex items-center text-sm text-slate-300">
-                    <CheckCircle2 className="h-4 w-4 mr-3 text-[#00D4FF]" /> Priority Processing Queue
-                  </li>
-                  <li className="flex items-center text-sm text-slate-300">
-                    <CheckCircle2 className="h-4 w-4 mr-3 text-[#00D4FF]" /> Custom Voice Selection
-                  </li>
-                </ul>
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={handleUpgrade}
-                  disabled={processing}
-                  className="w-full py-3 px-4 bg-gradient-primary text-white font-bold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 flex items-center justify-center relative z-10"
-                >
-                  {processing ? <RefreshCw className="h-5 w-5 animate-spin mr-2" /> : null}
-                  {processing ? 'Processing...' : 'Upgrade Now - $29/mo'}
-                </motion.button>
-              </div>
-            )}
+          <div>
+            <h3 className="text-lg font-bold text-white mb-6">Available Plans</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {PLANS.map((plan, index) => {
+                const isCurrentPlan = currentPlanId === plan.id;
 
-            {isPro && (
-              <div className="bg-[#1A2235]/40 rounded-2xl p-6 border border-[#00D4FF]/30 flex flex-col justify-center items-center text-center relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 pointer-events-none"></div>
-                <div className="h-16 w-16 bg-[#00D4FF]/20 rounded-full flex items-center justify-center mb-4 relative z-10 shadow-[0_0_15px_rgba(0,212,255,0.4)]">
-                  <CheckCircle2 className="h-8 w-8 text-[#00D4FF]" />
-                </div>
-                <h3 className="text-xl font-bold text-white mb-2 relative z-10">You are a Pro Member</h3>
-                <p className="text-sm text-[#00D4FF]/80 relative z-10">Thank you for your support. Your account is fully upgraded with priority features.</p>
-              </div>
-            )}
+                return (
+                  <motion.div
+                    key={plan.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                    className={cn(
+                      "relative bg-[#0B0F1A] rounded-2xl p-6 border flex flex-col transition-all hover:scale-[1.02]",
+                      plan.recommended
+                        ? "border-[#7C5CFF]/50 shadow-[0_0_20px_rgba(124,92,255,0.1)] bg-gradient-to-b from-[#0B0F1A] to-[#7C5CFF]/5"
+                        : "border-[#1A2235] hover:border-slate-700"
+                    )}
+                  >
+                    {plan.recommended && (
+                      <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gradient-primary text-white text-[10px] font-extrabold uppercase tracking-widest px-3 py-1 rounded-full shadow-glow-primary flex items-center">
+                        <Sparkles className="h-3 w-3 mr-1" /> Popular
+                      </div>
+                    )}
+
+                    <div className="mb-4">
+                      <h3 className="text-lg font-bold text-white mb-1 capitalize">{plan.name}</h3>
+                      <div className="flex items-baseline mb-2">
+                        <span className="text-3xl font-extrabold text-white tracking-tight">{plan.price}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex-1">
+                      <ul className="space-y-3 mb-6">
+                        {plan.features.map((feature, i) => (
+                          <li key={i} className="flex items-start text-xs text-slate-300">
+                            <CheckCircle2 className="h-4 w-4 mr-2 text-[#7C5CFF] flex-shrink-0" />
+                            <span className="leading-tight">{feature}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div className="mt-auto">
+                      <button
+                        onClick={() => handleUpgrade(plan.id)}
+                        disabled={isCurrentPlan || processing !== null}
+                        className={cn(
+                          "w-full py-2.5 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center",
+                          isCurrentPlan
+                            ? "bg-[#111827] text-[#00D4FF] cursor-not-allowed border border-[#00D4FF]/30"
+                            : plan.recommended
+                              ? "bg-gradient-primary text-white shadow-glow-primary hover:shadow-glow-primary-hover"
+                              : "bg-white/5 text-white hover:bg-white/10 border border-white/10"
+                        )}
+                      >
+                        {processing === plan.id ? (
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                        ) : isCurrentPlan ? (
+                          'Current Plan'
+                        ) : (
+                          <>Upgrade <Zap className="h-3.5 w-3.5 ml-1.5" /></>
+                        )}
+                      </button>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
