@@ -28,6 +28,7 @@ const AVAILABLE_VOICES = [
 
 export default function Dashboard() {
   const [user, setUser] = useState<any>(null);
+  const [selectedChannelId, setSelectedChannelId] = useState<string>('');
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -61,6 +62,11 @@ export default function Dashboard() {
       try {
         const userData = await authService.getMe();
         setUser(userData.data);
+
+        if (userData.data?.youtubeChannels && userData.data.youtubeChannels.length > 0) {
+            setSelectedChannelId(userData.data.youtubeChannels[0].channelId);
+        }
+
         const jobsData = await pipelineService.getJobs();
         setJobs(jobsData.data);
 
@@ -180,6 +186,7 @@ export default function Dashboard() {
         targetDuration: duration,
         contentType,
         videoCount,
+        channelId: selectedChannelId,
         storyMode,
         storyId: currentStoryId,
         currentPart,
@@ -477,21 +484,43 @@ export default function Dashboard() {
              <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">Integrations</h3>
 
              <div className="flex flex-col space-y-4 relative z-10">
-                <div className="flex items-center justify-between p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
-                  <div className="flex items-center">
-                    <div className="relative mr-3">
-                      <Youtube className={`h-6 w-6 ${user?.isYoutubeConnected ? 'text-[#FF4FD8]' : 'text-slate-600'}`} />
-                      <div className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#0B0F1A] ${user?.isYoutubeConnected ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.8)]' : 'bg-red-500'}`}></div>
+                <div className="flex flex-col p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center">
+                      <div className="relative mr-3">
+                        <Youtube className={`h-6 w-6 ${user?.isYoutubeConnected ? 'text-[#FF4FD8]' : 'text-slate-600'}`} />
+                        <div className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full border-2 border-[#0B0F1A] ${user?.isYoutubeConnected ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.8)]' : 'bg-red-500'}`}></div>
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-white">YouTube Channel</p>
+                        <p className="text-xs text-slate-500">{user?.isYoutubeConnected ? 'Authorized' : 'Disconnected'}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-bold text-white">YouTube</p>
-                      <p className="text-xs text-slate-500">{user?.isYoutubeConnected ? 'Authorized' : 'Disconnected'}</p>
-                    </div>
+                    {!user?.isYoutubeConnected ? (
+                      <button onClick={handleConnectYouTube} className="text-xs bg-white/5 hover:bg-white/10 text-white font-semibold px-3 py-1.5 rounded-lg border border-white/10 transition-colors">
+                        Connect
+                      </button>
+                    ) : (
+                      <button onClick={handleConnectYouTube} className="text-xs bg-white/5 hover:bg-white/10 text-white font-semibold px-3 py-1.5 rounded-lg border border-white/10 transition-colors">
+                        Add Channel
+                      </button>
+                    )}
                   </div>
-                  {!user?.isYoutubeConnected && (
-                    <button onClick={handleConnectYouTube} className="text-xs bg-white/5 hover:bg-white/10 text-white font-semibold px-3 py-1.5 rounded-lg border border-white/10 transition-colors">
-                      Connect
-                    </button>
+
+                  {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length > 0 && (
+                    <div className="mt-2">
+                      <select
+                        value={selectedChannelId}
+                        onChange={(e) => setSelectedChannelId(e.target.value)}
+                        className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                      >
+                        {user.youtubeChannels.map((channel: any) => (
+                          <option key={channel.channelId} value={channel.channelId}>
+                            {channel.channelName}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   )}
                 </div>
 

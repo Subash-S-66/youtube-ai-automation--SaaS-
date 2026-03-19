@@ -20,7 +20,7 @@ interface UserSummary {
   email: string;
   plan: string;
   uploadsUsedToday: number;
-  uploadsOnHold: number;
+  videosOnHold: number;
   subscriptionExpiresAt?: string;
 }
 
@@ -167,7 +167,7 @@ export default function AdminDashboard() {
                           <span className={cn("px-2.5 py-1 text-xs font-bold rounded-lg border", u.plan === 'free' ? "bg-slate-500/10 text-slate-300 border-slate-500/20" : "bg-[#7C5CFF]/10 text-[#7C5CFF] border-[#7C5CFF]/20")}>{u.plan.toUpperCase()}</span>
                         </td>
                         <td className="p-4 text-slate-400 hidden sm:table-cell">{u.uploadsUsedToday}</td>
-                        <td className="p-4 text-slate-400 hidden sm:table-cell">{u.uploadsOnHold}</td>
+                        <td className="p-4 text-slate-400 hidden sm:table-cell">{u.videosOnHold}</td>
                         <td className="p-4 text-slate-400 hidden md:table-cell">{u.subscriptionExpiresAt ? new Date(u.subscriptionExpiresAt).toLocaleDateString() : 'N/A'}</td>
                       </tr>
                     ))}
@@ -222,7 +222,7 @@ export default function AdminDashboard() {
                      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Current Usage</h3>
                      <div className="space-y-2 text-sm text-slate-300">
                         <div className="flex justify-between"><span>Used Today:</span> <span className="text-white font-medium">{userDetails.user.uploadsUsedToday}</span></div>
-                        <div className="flex justify-between"><span>On Hold:</span> <span className="text-white font-medium">{userDetails.user.uploadsOnHold}</span></div>
+                        <div className="flex justify-between"><span>On Hold:</span> <span className="text-white font-medium">{userDetails.user.videosOnHold}</span></div>
                         <div className="flex justify-between"><span>Verified:</span> <span className={userDetails.user.isEmailVerified ? 'text-green-400' : 'text-red-400'}>{userDetails.user.isEmailVerified ? 'Yes' : 'No'}</span></div>
                         <div className="flex justify-between"><span>YouTube:</span> <span className={userDetails.user.isYoutubeConnected ? 'text-[#00D4FF]' : 'text-slate-500'}>{userDetails.user.isYoutubeConnected ? 'Connected' : 'Disconnected'}</span></div>
                      </div>

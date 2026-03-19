@@ -6,7 +6,7 @@ export interface PipelineJobPayload {
   userId: string;
   promptId: string;
   jobId: string; // The MongoDB Job Document ID
-  settings: Record<string, any>;
+  settings: Record<string, any>; // Includes videoCount and channelId
 }
 
 // Create and export the queue

@@ -115,7 +115,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         },
         plan: limitCheck.plan,
         remainingUploads: limitCheck.remainingUploads,
-        uploadsOnHold: limitCheck.uploadsOnHold,
+        videosOnHold: limitCheck.videosOnHold,
         uploadLimit: PLAN_LIMITS[limitCheck.plan] || PLAN_LIMITS['free'] || 3,
       },
     });

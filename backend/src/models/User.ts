@@ -2,9 +2,15 @@ import mongoose, { Document, Schema } from 'mongoose';
 import { encrypt, decrypt } from '../utils/encryption';
 
 export interface IYoutubeTokens {
-  access_token?: string;
-  refresh_token?: string;
-  expiry_date?: number;
+  access_token?: string | undefined;
+  refresh_token?: string | undefined;
+  expiry_date?: number | undefined;
+}
+
+export interface IYoutubeChannel {
+  channelId: string;
+  channelName: string;
+  tokens: IYoutubeTokens;
 }
 
 import { PlanType } from '../config/plans';
@@ -19,9 +25,9 @@ export interface IUser extends Document {
   stripeCustomerId?: string;
   uploadLimitPerDay: number;
   uploadsUsedToday: number;
-  uploadsOnHold: number;
+  videosOnHold: number;
   lastUploadReset: Date;
-  youtubeTokens?: IYoutubeTokens;
+  youtubeChannels: IYoutubeChannel[];
   isYoutubeConnected: boolean;
   telegramChatId?: string;
   fcmToken?: string | undefined;
@@ -50,6 +56,15 @@ const YoutubeTokensSchema = new Schema<IYoutubeTokens>(
       get: (token: string) => decrypt(token),
     },
     expiry_date: { type: Number },
+  },
+  { _id: false, toJSON: { getters: true }, toObject: { getters: true } }
+);
+
+const YoutubeChannelSchema = new Schema<IYoutubeChannel>(
+  {
+    channelId: { type: String, required: true },
+    channelName: { type: String, required: true },
+    tokens: { type: YoutubeTokensSchema, required: true },
   },
   { _id: false, toJSON: { getters: true }, toObject: { getters: true } }
 );
@@ -96,7 +111,7 @@ const UserSchema = new Schema<IUser>(
       type: Number,
       default: 0,
     },
-    uploadsOnHold: {
+    videosOnHold: {
       type: Number,
       default: 0,
     },
@@ -104,8 +119,9 @@ const UserSchema = new Schema<IUser>(
       type: Date,
       default: Date.now,
     },
-    youtubeTokens: {
-      type: YoutubeTokensSchema,
+    youtubeChannels: {
+      type: [YoutubeChannelSchema],
+      default: [],
     },
     isYoutubeConnected: {
       type: Boolean,

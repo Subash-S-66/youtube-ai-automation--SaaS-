@@ -94,7 +94,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       const geminiPrompt = prompt.gemini_prompt;
 
       // 2. Get valid YouTube token
-      const youtubeToken = await getValidYouTubeToken(userId);
+      const youtubeToken = await getValidYouTubeToken(userId, settings.channelId);
       if (!youtubeToken) {
         throw new Error('Failed to obtain a valid YouTube token');
       }
@@ -256,11 +256,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
       throw error;
     } finally {
-      // Decrement uploadsOnHold safely when the job finishes regardless of success or failure
+      // Decrement videosOnHold safely when the job finishes regardless of success or failure
+      const videoCount = settings.videoCount || 1;
       await User.findOneAndUpdate(
-        { _id: userId, uploadsOnHold: { $gt: 0 } },
-        { $inc: { uploadsOnHold: -1 } }
-      ).catch((err) => console.error(`Failed to decrement uploadsOnHold for user ${userId}:`, err));
+        { _id: userId, videosOnHold: { $gte: videoCount } },
+        { $inc: { videosOnHold: -videoCount } }
+      ).catch((err) => console.error(`Failed to decrement videosOnHold for user ${userId}:`, err));
     }
   },
   {

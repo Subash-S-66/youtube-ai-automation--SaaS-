@@ -6,6 +6,8 @@ export interface IJob extends Document {
   status: 'pending' | 'running' | 'success' | 'failed';
   logs: string;
   acceptedYouTubeLimitWarning: boolean;
+  videoCount: number;
+  channelId: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -34,6 +36,14 @@ const JobSchema = new Schema<IJob>(
     acceptedYouTubeLimitWarning: {
       type: Boolean,
       default: false,
+    },
+    videoCount: {
+      type: Number,
+      default: 1,
+    },
+    channelId: {
+      type: String,
+      required: true,
     },
   },
   {

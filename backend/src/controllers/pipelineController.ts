@@ -45,14 +45,32 @@ export const startPipeline = asyncHandler(
       throw new AppError(limitCheck.message || 'Daily upload limit reached', 403);
     }
 
-    // Check for a running or pending job here to prevent multiple queued tasks
-    const existingJob = await Job.findOne({
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+
+    // Concurrent Job Limit Validation
+    const concurrentLimits = {
+      free: 1,
+      basic: 5,
+      pro: 10,
+      premium: 20,
+    };
+    const maxConcurrentJobs = concurrentLimits[user.plan] || 1;
+
+    const activeJobsCount = await Job.countDocuments({
       userId,
       status: { $in: ['pending', 'running'] }
     });
 
-    if (existingJob) {
-      throw new AppError('A process is already running', 400);
+    if (activeJobsCount >= maxConcurrentJobs) {
+      throw new AppError(`Maximum concurrent jobs reached for your plan (${maxConcurrentJobs}). Please wait for an existing job to finish.`, 400);
+    }
+
+    // Max videosOnHold limit validation
+    if (user.videosOnHold + settings.videoCount > 10) {
+        throw new AppError(`Cannot queue job. Your current videos on hold (${user.videosOnHold}) plus requested videos (${settings.videoCount}) exceeds the strict limit of 10.`, 400);
     }
 
     // Fetch prompt
@@ -68,13 +86,13 @@ export const startPipeline = asyncHandler(
     // Verify YouTube token exists before queueing
     let youtubeToken = '';
     try {
-        youtubeToken = await getValidYouTubeToken(userId);
-    } catch (error) {
-        throw new AppError('YouTube is not connected or token is invalid. Please connect your account first.', 400);
+        youtubeToken = await getValidYouTubeToken(userId, settings.channelId);
+    } catch (error: any) {
+        throw new AppError(error.message || 'YouTube channel is not connected or token is invalid. Please reconnect.', 400);
     }
 
     if (!youtubeToken) {
-        throw new AppError('YouTube is not connected or token is invalid. Please connect your account first.', 400);
+        throw new AppError('YouTube channel is not connected or token is invalid. Please reconnect.', 400);
     }
 
     if (settings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
@@ -103,10 +121,10 @@ export const startPipeline = asyncHandler(
       }
     }
 
-    // Increment uploadsOnHold for the user
+    // Increment videosOnHold for the user by videoCount
     const updatedUser = await User.findByIdAndUpdate(
       userId,
-      { $inc: { uploadsOnHold: 1 } },
+      { $inc: { videosOnHold: settings.videoCount } },
       { new: true }
     );
 
@@ -120,6 +138,8 @@ export const startPipeline = asyncHandler(
       status: 'pending',
       logs: 'Job added to queue...\n',
       acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
+      videoCount: settings.videoCount,
+      channelId: settings.channelId,
     });
 
     // Add job to BullMQ
@@ -136,7 +156,7 @@ export const startPipeline = asyncHandler(
       message: 'Job added to queue',
       plan: finalLimitCheck.plan,
       remainingUploads: finalLimitCheck.remainingUploads,
-      uploadsOnHold: finalLimitCheck.uploadsOnHold,
+      videosOnHold: finalLimitCheck.videosOnHold,
     };
 
     // Include warning if high volume is requested

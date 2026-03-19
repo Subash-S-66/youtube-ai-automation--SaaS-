@@ -2,8 +2,9 @@ import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
-import { getGoogleAuthUrl, exchangeCodeForTokens } from '../services/youtubeOAuthService';
+import { getGoogleAuthUrl, exchangeCodeForTokens, getGoogleOAuthClient } from '../services/youtubeOAuthService';
 import User from '../models/User';
+import { google } from 'googleapis';
 
 // Generate short-lived JWT for state parameter (5 minutes)
 const generateStateToken = (userId: string): string => {
@@ -61,14 +62,60 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
         throw new AppError('User not found', 404);
     }
 
+    // Fetch channel info
+    const oauth2Client = getGoogleOAuthClient();
+    oauth2Client.setCredentials(tokens);
+
+    const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
+
+    // Default values if we can't fetch channel
+    let channelId = `channel_${Date.now()}`;
+    let channelName = `YouTube Channel`;
+
+    try {
+      const channelResponse = await youtube.channels.list({
+        part: ['snippet'],
+        mine: true,
+      });
+
+      if (channelResponse.data.items && channelResponse.data.items.length > 0) {
+        channelId = channelResponse.data.items[0]!.id || channelId;
+        channelName = channelResponse.data.items[0]!.snippet?.title || channelName;
+      }
+    } catch (channelErr) {
+      console.error('Failed to fetch YouTube channel details:', channelErr);
+      // Fallback: Continue with default channel ID/Name if API fails
+    }
+
     // Save tokens in MongoDB
-    user.set('youtubeTokens', {
+    const existingChannelIndex = user.youtubeChannels.findIndex(c => c.channelId === channelId);
+    const newTokens = {
         access_token: tokens.access_token || undefined,
         refresh_token: tokens.refresh_token || undefined,
         expiry_date: tokens.expiry_date || undefined,
-    });
+    };
+
+    if (existingChannelIndex !== -1) {
+       // Update existing channel
+       if (user.youtubeChannels[existingChannelIndex]) {
+           user.youtubeChannels[existingChannelIndex].tokens = {
+               ...user.youtubeChannels[existingChannelIndex].tokens,
+               ...newTokens
+           };
+           user.youtubeChannels[existingChannelIndex].channelName = channelName; // Update name just in case
+       }
+    } else {
+       // Add new channel
+       user.youtubeChannels.push({
+           channelId,
+           channelName,
+           tokens: newTokens
+       });
+    }
+
     user.isYoutubeConnected = true;
 
+    user.markModified('youtubeChannels');
     await user.save();
 
     // Redirect to frontend (placeholder)
@@ -81,7 +128,7 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
 });
 
 // @desc    Disconnect YouTube account
-// @route   POST /api/youtube/disconnect
+// @route   POST /api/youtube/disconnect/:channelId?
 // @access  Private
 export const disconnectYouTube = asyncHandler(async (req: Request, res: Response) => {
   if (!req.user || !req.user.id) {
@@ -93,14 +140,27 @@ export const disconnectYouTube = asyncHandler(async (req: Request, res: Response
     throw new AppError('User not found', 404);
   }
 
-  // Remove tokens and update status
-  user.set('youtubeTokens', undefined);
-  user.isYoutubeConnected = false;
+  const channelId = req.params.channelId;
 
+  if (channelId) {
+    const initialLength = user.youtubeChannels.length;
+    user.youtubeChannels = user.youtubeChannels.filter(c => c.channelId !== channelId);
+
+    if (user.youtubeChannels.length === initialLength) {
+        throw new AppError(`Channel ${channelId} not found`, 404);
+    }
+  } else {
+    // Disconnect all
+    user.youtubeChannels = [];
+  }
+
+  user.isYoutubeConnected = user.youtubeChannels.length > 0;
+
+  user.markModified('youtubeChannels');
   await user.save();
 
   res.status(200).json({
     success: true,
-    message: 'YouTube account disconnected successfully',
+    message: 'YouTube account(s) disconnected successfully',
   });
 });
