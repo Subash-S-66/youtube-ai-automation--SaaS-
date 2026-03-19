@@ -303,11 +303,9 @@ def _map_edge_voice_to_gemini(edge_voice: str) -> str:
     else:
         return random.choice(["Kore", "Aoede"])
 
-def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not found")
+from .gemini_utils import execute_with_gemini_fallback
 
+def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
     gemini_voice = _map_edge_voice_to_gemini(voice)
 
     payload = {
@@ -324,15 +322,18 @@ def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
         }
     }
 
-    LOGGER.info(f"Calling Gemini 2.5 Flash Native Audio (Voice: {gemini_voice})...")
-    response = requests.post(
-        GEMINI_TTS_URL,
-        params={"key": api_key},
-        json=payload,
-        timeout=60
-    )
-    response.raise_for_status()
+    def operation(key: str) -> requests.Response:
+        LOGGER.info(f"Calling Gemini 2.5 Flash Native Audio (Voice: {gemini_voice})...")
+        response = requests.post(
+            GEMINI_TTS_URL,
+            params={"key": key},
+            json=payload,
+            timeout=60
+        )
+        response.raise_for_status()
+        return response
 
+    response = execute_with_gemini_fallback(operation)
     data = response.json()
 
     try:
@@ -407,7 +408,8 @@ def generate_voice(
             LOGGER.info(f"Successfully generated voice via Gemini Audio ({audio_file.stat().st_size} bytes)")
             return audio_file, True
     except Exception as gemini_err:
-        LOGGER.warning(f"Gemini Audio failed, falling back to Edge TTS: {gemini_err}")
+        LOGGER.warning(f"Gemini Audio failed, falling back to Edge TTS. Error: {gemini_err}")
+        LOGGER.info(f"FALLBACK TRIGGERED: Using Edge TTS for voice generation instead of Gemini Audio.")
 
     # --- Stage 2: Try Edge TTS with multiple voices (Fallback) ---
     if _EDGE_TTS_DISABLED_REASON:
