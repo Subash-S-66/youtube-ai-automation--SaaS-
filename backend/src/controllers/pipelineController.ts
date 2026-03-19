@@ -183,6 +183,7 @@ const planPriorities: Record<string, number> = {
       priority: jobPriority,
       jobId: job._id.toString(), // Ensure idempotency
       attempts: 3,               // Retry up to 3 times on failure
+      timeout: 30 * 60 * 1000,   // Force fail job if Azure Container App stalls for > 30 minutes
       backoff: {
         type: 'exponential',
         delay: 5000,             // Start with 5 seconds, then 25, 125...
