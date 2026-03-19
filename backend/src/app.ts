@@ -17,8 +17,26 @@ const app: Application = express();
 // Trust proxy for production hosting (e.g. Render, Railway, Azure)
 app.set('trust proxy', 1);
 
+import { globalLimiter } from './middleware/rateLimiter';
+
 // Security Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "https://api.stripe.com"],
+      frameSrc: ["'self'", "https://js.stripe.com"],
+      objectSrc: ["'self'", "https://js.stripe.com"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+
+// Apply generic API rate limiting
+app.use('/api', globalLimiter);
 
 // CORS Middleware
 const allowedOrigins = process.env.FRONTEND_URL
