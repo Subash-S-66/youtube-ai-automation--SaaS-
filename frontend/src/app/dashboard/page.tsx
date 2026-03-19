@@ -56,6 +56,10 @@ export default function Dashboard() {
 
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
+  const [showWarningModal, setShowWarningModal] = useState(false);
+  const [warningMessage, setWarningMessage] = useState('');
+  const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
+  const [pendingPromptContent, setPendingPromptContent] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -182,18 +186,41 @@ export default function Dashboard() {
         finalVoices = [AVAILABLE_VOICES[Math.floor(Math.random() * AVAILABLE_VOICES.length)].id];
       }
 
-      const pipelineRes = await pipelineService.runPipeline(promptId, {
+      await executePipeline(promptId, false, promptRes.data?.gemini_prompt, currentStoryId);
+    } catch (err: any) {
+      console.error(err);
+      if (err.response?.data?.warning) {
+        setWarningMessage(err.response.data.warning);
+        setShowWarningModal(true);
+      } else {
+        setMessage({ text: err.response?.data?.message || err.message || 'Failed to start pipeline', type: 'error' });
+      }
+      setGenerating(false);
+    }
+  };
+
+  const executePipeline = async (pId: string, acceptedWarning: boolean, newPromptContent?: string, executeStoryId?: string) => {
+    try {
+      if (acceptedWarning) {
+          setGenerating(true);
+      }
+      let finalVoices = selectedVoices;
+      if (randomVoice && AVAILABLE_VOICES.length > 0) {
+        finalVoices = [AVAILABLE_VOICES[Math.floor(Math.random() * AVAILABLE_VOICES.length)]!.id];
+      }
+
+      const pipelineRes = await pipelineService.runPipeline(pId, {
         targetDuration: duration,
         contentType,
         videoCount,
         channelId: selectedChannelId,
         storyMode,
-        storyId: currentStoryId,
+        storyId: executeStoryId || storyId,
         currentPart,
         recapEnabled,
         ctaEnabled,
         voices: finalVoices
-      });
+      }, acceptedWarning);
 
       if (pipelineRes.warning) {
           setMessage({ text: pipelineRes.warning, type: 'warning' });
@@ -205,7 +232,7 @@ export default function Dashboard() {
       if (storyMode) {
         setStoryContext(prevContext => {
           // ensure we only append the newly generated content, not the prompt with previous context already injected
-          const newContext = promptRes.data?.gemini_prompt || (inputMode === 'prompt' ? prompt : `Video about: ${selectedTopic === 'Custom' ? customTopic : selectedTopic}`);
+          const newContext = newPromptContent || (inputMode === 'prompt' ? prompt : `Video about: ${selectedTopic === 'Custom' ? customTopic : selectedTopic}`);
           return prevContext ? `${prevContext}\n\n[Part ${currentPart}]: ${newContext}` : `[Part 1]: ${newContext}`;
         });
         setCurrentPart(prev => prev + 1);
@@ -213,11 +240,36 @@ export default function Dashboard() {
 
       const jobsData = await pipelineService.getJobs();
       setJobs(jobsData.data);
+      setShowWarningModal(false);
+      setPendingPromptId(null);
+      setPendingPromptContent(null);
     } catch (err: any) {
-      setMessage({ text: err.response?.data?.message || 'Failed to generate video', type: 'error' });
+      console.error(err);
+      if (err.response?.data?.warning) {
+         setWarningMessage(err.response.data.warning);
+         setPendingPromptId(pId);
+         setPendingPromptContent(newPromptContent || null);
+         setShowWarningModal(true);
+      } else {
+         setMessage({ text: err.response?.data?.message || err.message || 'Failed to start pipeline', type: 'error' });
+      }
     } finally {
-      setGenerating(false);
+      if (acceptedWarning) {
+          setGenerating(false);
+      }
     }
+  };
+
+  const handleConfirmWarning = async () => {
+     if (pendingPromptId) {
+         await executePipeline(pendingPromptId, true, pendingPromptContent || undefined, storyId);
+     }
+  };
+
+  const handleCancelWarning = () => {
+     setShowWarningModal(false);
+     setPendingPromptId(null);
+     setPendingPromptContent(null);
   };
 
   if (loading) {
@@ -536,6 +588,47 @@ export default function Dashboard() {
           </motion.div>
         </div>
       </div>
+
+      {/* Warning Modal */}
+      {showWarningModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-[#111827] border border-yellow-500/30 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+          >
+            <div className="p-6">
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center border border-yellow-500/20">
+                  <ShieldAlert className="h-5 w-5 text-yellow-500" />
+                </div>
+                <h3 className="text-lg font-bold text-white tracking-tight">Limit Warning</h3>
+              </div>
+              <p className="text-slate-300 text-sm mb-6 leading-relaxed">
+                {warningMessage}
+              </p>
+              <div className="flex items-center justify-end space-x-3">
+                <button
+                  onClick={handleCancelWarning}
+                  disabled={generating}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmWarning}
+                  disabled={generating}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-yellow-600 hover:bg-yellow-500 shadow-lg shadow-yellow-500/20 transition-all flex items-center disabled:opacity-50"
+                >
+                  {generating ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : null}
+                  Proceed Anyway
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
     </DashboardLayout>
   );
 }

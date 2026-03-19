@@ -193,7 +193,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
          const finalDbJob = await JobModel.findById(jobId);
          const finalLogs = finalDbJob?.logs || '';
 
-         if (finalLogs.includes('PIPELINE_STATUS:YOUTUBE_REJECTED')) {
+         if (
+             finalLogs.includes('PIPELINE_STATUS:YOUTUBE_REJECTED') ||
+             finalLogs.includes('uploadLimitExceeded') ||
+             finalLogs.includes('quotaExceeded') ||
+             finalLogs.includes('dailyLimitExceeded')
+         ) {
              finalStatusMarker = 'YOUTUBE_REJECTED';
          } else if (finalLogs.includes('PIPELINE_STATUS:SUCCESS')) {
              finalStatusMarker = 'SUCCESS';
@@ -229,9 +234,8 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
          } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
-            if (acceptedLimitWarning) {
-                await incrementUploadCount(userId).catch(console.error);
-            } // Else: release upload (do not increment)
+            // Always consume upload on YouTube rejection (per updated specs)
+            await incrementUploadCount(userId).catch(console.error);
 
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);

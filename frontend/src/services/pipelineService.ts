@@ -1,8 +1,8 @@
 import api from '../lib/api';
 
 export const pipelineService = {
-  async runPipeline(promptId: string, settings: any) {
-    const response = await api.post('/pipeline/run', { promptId, settings });
+  async runPipeline(promptId: string, settings: any, acceptedYouTubeLimitWarning: boolean = false) {
+    const response = await api.post('/pipeline/run', { promptId, settings, acceptedYouTubeLimitWarning });
     return response.data;
   },
 

@@ -101,11 +101,21 @@ export const startPipeline = asyncHandler(
         throw new AppError('YouTube channel is not connected or token is invalid. Please reconnect.', 400);
     }
 
-    if (settings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
+    // Check uploads in the last 24 hours for this channel (Soft Limit)
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recentJobs = await Job.find({
+        userId,
+        channelId: settings.channelId,
+        status: 'success',
+        createdAt: { $gte: oneDayAgo }
+    });
+    const uploadsLast24h = recentJobs.reduce((sum, job) => sum + (job.videoCount || 1), 0);
+
+    if (uploadsLast24h + settings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
       return res.status(400).json({
         success: false,
-        message: 'YouTube allows ~10 uploads per 24 hours. This may fail.',
-        warning: 'YouTube allows ~10 uploads per 24 hours. This may fail.',
+        message: 'YouTube allows ~10 uploads per 24 hours. This may affect uploads. Proceed?',
+        warning: 'YouTube allows ~10 uploads per 24 hours. This may affect uploads. Proceed?',
       });
     }
 
@@ -171,8 +181,8 @@ export const startPipeline = asyncHandler(
     };
 
     // Include warning if high volume is requested
-    if (settings.videoCount > 10) {
-      responsePayload.warning = 'YouTube allows ~10 uploads per 24 hours. This may fail.';
+    if (uploadsLast24h + settings.videoCount > 10) {
+      responsePayload.warning = 'YouTube allows ~10 uploads per 24 hours. This may affect uploads. Proceed?';
     }
 
     res.status(200).json(responsePayload);
