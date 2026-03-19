@@ -82,7 +82,7 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
 
         if (userId) {
           const subscriptionExpiresAt = new Date();
-          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
+          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 28);
 
           await User.findByIdAndUpdate(userId, {
             stripeCustomerId: session.customer as string,
@@ -101,7 +101,7 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
 
         if (customerId) {
           const subscriptionExpiresAt = new Date();
-          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
+          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 28);
 
           await User.findOneAndUpdate(
             { stripeCustomerId: customerId },

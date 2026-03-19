@@ -50,6 +50,17 @@ export const startPipeline = asyncHandler(
       throw new AppError('Daily upload limit reached', 403);
     }
 
+    if (limitCheck.plan === 'free') {
+        if (settings.storyMode) {
+            throw new AppError('Story Mode is not available on the Free plan. Please upgrade to Basic or higher.', 403);
+        }
+        // Assuming a scheduledAt or similar setting exists, block it here
+        if ((settings as any).scheduledAt || (settings as any).scheduleEnabled) {
+            throw new AppError('Scheduling is not available on the Free plan. Please upgrade to Basic or higher.', 403);
+        }
+    }
+
+
     if (limitCheck.remainingUploads < settings.videoCount) {
       throw new AppError(`Not enough uploads remaining. You requested ${settings.videoCount} videos but only have ${limitCheck.remainingUploads} uploads available today.`, 400);
     }
@@ -62,7 +73,7 @@ export const startPipeline = asyncHandler(
     // Concurrent Job Limit Validation
     const concurrentLimits = {
       free: 1,
-      basic: 5,
+      basic: 3,
       pro: 10,
       premium: 20,
     };

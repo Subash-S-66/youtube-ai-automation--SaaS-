@@ -358,6 +358,23 @@ function Dashboard() {
      }
   };
 
+  const handleStoryModeToggle = () => {
+    if (user?.plan === 'free') {
+      setModalConfig({
+        isOpen: true,
+        title: 'Upgrade Required',
+        description: 'Story Mode is only available on Basic, Pro, and Premium plans. Upgrade to unlock this feature.',
+        type: 'warning',
+        confirmText: 'Upgrade Now',
+        cancelText: 'Dismiss',
+        onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
+        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+      return;
+    }
+    setStoryMode(!storyMode);
+  };
+
   const executePipeline = async (pId: string, acceptedWarning: boolean, newPromptContent?: string, executeStoryId?: string) => {
     try {
       if (acceptedWarning) {
@@ -569,7 +586,7 @@ function Dashboard() {
                     <h3 className="text-sm font-semibold text-white">Story Mode</h3>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={storyMode} onChange={() => setStoryMode(!storyMode)} />
+                    <input type="checkbox" className="sr-only peer" checked={storyMode} onChange={handleStoryModeToggle} />
                     <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>

@@ -7,6 +7,7 @@ import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, Hi
 import { adminService } from '../../services/adminService';
 import { authService } from '../../services/authService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import AppModal, { AppModalType } from '../../components/ui/AppModal';
 import { cn } from '../../lib/utils';
 
 interface AdminStats {
@@ -69,6 +70,22 @@ export default function AdminDashboard() {
 
   const [betaMode, setBetaMode] = useState(false);
   const [updatingConfig, setUpdatingConfig] = useState(false);
+
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    type: AppModalType;
+    onConfirm?: () => void;
+    onCancel?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    type: 'info',
+  });
 
   useEffect(() => {
     const fetchConfig = async () => {
@@ -133,28 +150,63 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleUpdateConfig = async (newBetaMode: boolean) => {
-    if (newBetaMode) {
-      const confirm1 = window.confirm("Are you sure you want to enable Beta Mode? This will instantly grant ALL users PRO privileges.");
-      if (!confirm1) return;
-      const confirm2 = window.confirm("Are you ABSOLUTELY sure? This overrides all limits globally.");
-      if (!confirm2) return;
-    } else {
-      const confirmOff = window.confirm("Are you sure you want to disable Beta Mode? Users will instantly revert to their normal plans.");
-      if (!confirmOff) return;
-    }
-
+  const executeUpdateConfig = async (newBetaMode: boolean) => {
     setUpdatingConfig(true);
     try {
-            await adminService.updateSystemConfig({ betaMode: newBetaMode });
+      await adminService.updateSystemConfig({ betaMode: newBetaMode });
       setBetaMode(newBetaMode);
-      alert(`Beta Mode ${newBetaMode ? 'ENABLED' : 'DISABLED'} successfully.`);
-      window.location.reload(); // Force refresh to update all limits/user context instantly
+      setModalConfig({
+         isOpen: true,
+         title: 'Success',
+         description: `Beta Mode ${newBetaMode ? 'ENABLED' : 'DISABLED'} successfully.`,
+         type: 'success',
+         confirmText: 'OK',
+         onConfirm: () => window.location.reload()
+      });
     } catch (err) {
       console.error(err);
-      alert('Failed to update system config.');
+      setModalConfig({
+         isOpen: true,
+         title: 'Error',
+         description: 'Failed to update system config.',
+         type: 'error',
+         confirmText: 'Dismiss',
+         onConfirm: () => setModalConfig(prev => ({...prev, isOpen: false}))
+      });
     } finally {
       setUpdatingConfig(false);
+    }
+  };
+
+  const handleUpdateConfig = (newBetaMode: boolean) => {
+    if (newBetaMode) {
+      setModalConfig({
+         isOpen: true,
+         title: 'Enable Beta Mode',
+         description: 'Are you ABSOLUTELY sure you want to enable Beta Mode? This will instantly grant ALL users PRO privileges globally.',
+         type: 'warning',
+         confirmText: 'Enable globally',
+         cancelText: 'Cancel',
+         onConfirm: () => {
+             setModalConfig(prev => ({...prev, isOpen: false}));
+             executeUpdateConfig(newBetaMode);
+         },
+         onCancel: () => setModalConfig(prev => ({...prev, isOpen: false}))
+      });
+    } else {
+      setModalConfig({
+         isOpen: true,
+         title: 'Disable Beta Mode',
+         description: 'Are you sure you want to disable Beta Mode? Users will instantly revert to their normal plans.',
+         type: 'warning',
+         confirmText: 'Disable',
+         cancelText: 'Cancel',
+         onConfirm: () => {
+             setModalConfig(prev => ({...prev, isOpen: false}));
+             executeUpdateConfig(newBetaMode);
+         },
+         onCancel: () => setModalConfig(prev => ({...prev, isOpen: false}))
+      });
     }
   };
 
@@ -166,20 +218,45 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleDeleteUser = async () => {
+const handleDeleteUser = () => {
     if (!selectedUserId) return;
-    const confirm = window.confirm('Are you absolutely sure you want to delete this user? This action cannot be undone.');
-    if (!confirm) return;
-    try {
-      await adminService.deleteUser(selectedUserId);
-      alert('User deleted successfully.');
-      setSelectedUserId(null);
-      const usersData = await adminService.getUsers();
-      setUsers(usersData.data);
-    } catch (err) {
-      console.error(err);
-      alert('Failed to delete user.');
-    }
+
+    setModalConfig({
+       isOpen: true,
+       title: 'Delete User',
+       description: 'Are you absolutely sure you want to delete this user? This action cannot be undone.',
+       type: 'error',
+       confirmText: 'Delete Permanently',
+       cancelText: 'Cancel',
+       onConfirm: async () => {
+           setModalConfig(prev => ({...prev, isOpen: false}));
+           try {
+             await adminService.deleteUser(selectedUserId);
+             setModalConfig({
+                isOpen: true,
+                title: 'Success',
+                description: 'User deleted successfully.',
+                type: 'success',
+                confirmText: 'OK',
+                onConfirm: () => setModalConfig(prev => ({...prev, isOpen: false}))
+             });
+             setSelectedUserId(null);
+             const usersData = await adminService.getUsers();
+             setUsers(usersData.data);
+           } catch (err) {
+             console.error(err);
+             setModalConfig({
+                isOpen: true,
+                title: 'Error',
+                description: 'Failed to delete user.',
+                type: 'error',
+                confirmText: 'Dismiss',
+                onConfirm: () => setModalConfig(prev => ({...prev, isOpen: false}))
+             });
+           }
+       },
+       onCancel: () => setModalConfig(prev => ({...prev, isOpen: false}))
+    });
   };
 
   useEffect(() => {
@@ -359,7 +436,7 @@ if (loading) {
                 <div className="p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between">
                   <div>
                     <p className="text-white font-bold">Beta Mode</p>
-                    <p className="text-sm text-slate-400">When enabled, all users temporarily receive "Pro" plan limits. Does not modify their database record.</p>
+                    <p className="text-sm text-slate-400">When enabled, all users temporarily receive &quot;Pro&quot; plan limits. Does not modify their database record.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
@@ -520,6 +597,16 @@ if (loading) {
           </motion.div>
         )}
       </div>
+      <AppModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        description={modalConfig.description}
+        type={modalConfig.type}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={modalConfig.onCancel}
+        confirmText={modalConfig.confirmText}
+        cancelText={modalConfig.cancelText}
+      />
     </DashboardLayout>
   );
 }

@@ -112,9 +112,9 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
 
        const channelLimits = {
          free: 1,
-         basic: 2,
-         pro: 4,
-         premium: 8,
+         basic: 3,
+         pro: 10,
+         premium: 50,
        };
        const maxChannels = (channelLimits as any)[effectivePlan] || 1;
 
