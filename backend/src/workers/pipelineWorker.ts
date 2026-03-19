@@ -387,7 +387,9 @@ pipelineWorker.on('failed', (job, err) => {
 const shutdown = async (signal: string) => {
   console.log(`Received ${signal}, closing worker gracefully...`);
   await pipelineWorker.close();
-  await connection.quit();
+  if (connection) {
+    await connection.quit();
+  }
   await mongoose.connection.close();
   console.log('Worker closed. Exiting process.');
   process.exit(0);
