@@ -165,6 +165,14 @@ export const startPipeline = asyncHandler(
       channelId: settings.channelId,
     });
 
+const planPriorities: Record<string, number> = {
+      premium: 1,
+      pro: 2,
+      basic: 3,
+      free: 4,
+    };
+    const jobPriority = planPriorities[finalLimitCheck.plan] || 4;
+
     // Add job to BullMQ
     await pipelineQueue.add('runPipeline', {
       userId,
@@ -172,6 +180,7 @@ export const startPipeline = asyncHandler(
       jobId: job._id.toString(),
       settings,
     }, {
+      priority: jobPriority,
       jobId: job._id.toString(), // Ensure idempotency
       attempts: 3,               // Retry up to 3 times on failure
       backoff: {
