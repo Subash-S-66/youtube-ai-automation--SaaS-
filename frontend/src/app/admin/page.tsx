@@ -54,6 +54,7 @@ export default function AdminDashboard() {
 
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(true);
+  const [bannerType, setBannerType] = useState('info');
   const [bannering, setBannering] = useState(false);
 
   const handleCreateNotification = async (e: React.FormEvent) => {
@@ -86,7 +87,8 @@ export default function AdminDashboard() {
     try {
       await adminService.setGlobalBanner({
         message: bannerMessage,
-        isActive: bannerActive
+        isActive: bannerActive,
+        type: bannerType
       });
       alert('Banner updated successfully!');
       setBannerMessage('');
@@ -259,9 +261,16 @@ export default function AdminDashboard() {
                   <div>
                     <textarea placeholder="Banner Message" value={bannerMessage} onChange={(e) => setBannerMessage(e.target.value)} required rows={3} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none resize-none"></textarea>
                   </div>
+                  <div>
+                    <select value={bannerType} onChange={(e) => setBannerType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none">
+                      <option value="info">Info (Blue)</option>
+                      <option value="warning">Warning (Amber)</option>
+                      <option value="critical">Critical (Red)</option>
+                    </select>
+                  </div>
                   <label className="flex items-center cursor-pointer">
                     <input type="checkbox" checked={bannerActive} onChange={(e) => setBannerActive(e.target.checked)} className="rounded border-slate-700 bg-slate-800 text-[#00D4FF] focus:ring-[#00D4FF]" />
-                    <span className="ml-2 text-sm text-slate-300">Activate instantly (disables others)</span>
+                    <span className="ml-2 text-sm text-slate-300">Is Active</span>
                   </label>
                   <button type="submit" disabled={bannering} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-black font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
                     {bannering ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Update Banner'}

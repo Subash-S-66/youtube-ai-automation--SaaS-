@@ -31,7 +31,7 @@ export const adminService = {
     return response.data;
   },
 
-  async setGlobalBanner(data: { message: string, isActive: boolean }) {
+  async setGlobalBanner(data: { message: string, isActive: boolean, type: string }) {
     const response = await api.post('/admin/banner', data);
     return response.data;
   }

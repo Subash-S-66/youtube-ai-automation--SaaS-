@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function GlobalBanner() {
-  const [banner, setBanner] = useState<{ message: string; isActive: boolean } | null>(null);
+  const [banner, setBanner] = useState<{ message: string; isActive: boolean; type: 'info'|'warning'|'critical' } | null>(null);
 
   useEffect(() => {
     const fetchBanner = async () => {
@@ -23,12 +23,14 @@ export default function GlobalBanner() {
 
     fetchBanner();
 
-    // Poll every 60 seconds
-    const intervalId = setInterval(fetchBanner, 60000);
+    // Poll every 15 seconds
+    const intervalId = setInterval(fetchBanner, 15000);
     return () => clearInterval(intervalId);
   }, []);
 
   if (!banner || !banner.isActive) return null;
+
+  const currentStyle = banner.type === 'critical' ? 'banner-critical' : banner.type === 'warning' ? 'banner-warning' : 'banner-info';
 
   return (
     <AnimatePresence>
@@ -36,7 +38,7 @@ export default function GlobalBanner() {
         initial={{ opacity: 0, height: 0 }}
         animate={{ opacity: 1, height: '32px' }}
         exit={{ opacity: 0, height: 0 }}
-        className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white font-medium overflow-hidden z-[100] relative"
+        className={`w-full font-medium overflow-hidden z-[100] relative ${currentStyle}`}
       >
         <div className="relative w-full h-8 flex items-center overflow-hidden">
           <motion.div

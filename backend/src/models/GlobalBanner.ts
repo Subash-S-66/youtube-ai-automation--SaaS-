@@ -3,7 +3,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IGlobalBanner extends Document {
   message: string;
   isActive: boolean;
-  createdAt: Date;
+  type: 'info' | 'warning' | 'critical';
   updatedAt: Date;
 }
 
@@ -17,6 +17,11 @@ const GlobalBannerSchema = new Schema<IGlobalBanner>(
     isActive: {
       type: Boolean,
       default: false,
+    },
+    type: {
+      type: String,
+      enum: ['info', 'warning', 'critical'],
+      default: 'info',
     },
   },
   {

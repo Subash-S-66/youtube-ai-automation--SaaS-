@@ -90,6 +90,7 @@ const bannerSchema = z.object({
   body: z.object({
     message: z.string().min(1, 'Banner message is required'),
     isActive: z.boolean().default(true),
+    type: z.enum(['info', 'warning', 'critical']).default('info'),
   }),
 });
 
@@ -100,18 +101,24 @@ export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) 
     throw new AppError(errorMessages, 400);
   }
 
-  const { message, isActive } = validation.data.body;
+  const { message, isActive, type } = validation.data.body;
 
-  if (isActive) {
-    await GlobalBanner.updateMany({}, { isActive: false });
+  let banner = await GlobalBanner.findOne();
+
+  if (banner) {
+    banner.message = message;
+    banner.isActive = isActive;
+    banner.type = type;
+    await banner.save();
+  } else {
+    banner = await GlobalBanner.create({
+      message,
+      isActive,
+      type,
+    });
   }
 
-  const banner = await GlobalBanner.create({
-    message,
-    isActive,
-  });
-
-  res.status(201).json({
+  res.status(200).json({
     success: true,
     message: 'Global banner updated successfully',
     data: banner,
