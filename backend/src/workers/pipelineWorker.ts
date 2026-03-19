@@ -308,10 +308,15 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
             if (user) {
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
-         } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
+                  } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
             await JobModel.findByIdAndUpdate(jobId, { status: 'failed' });
-            // Always consume upload on YouTube rejection (per updated specs)
-            await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
+
+            const dbJobCheck = await JobModel.findById(jobId);
+            const acceptedWarning = dbJobCheck?.acceptedYouTubeLimitWarning || false;
+
+            if (acceptedWarning) {
+              await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
+            }
 
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
@@ -350,19 +355,19 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       // 'failed' is also a completed state in this context (e.g. graceful failure without throwing error back to BullMQ)
       const isCompletedState = dbJob?.status === 'success' || dbJob?.status === 'skipped_due_to_limit' || dbJob?.status === 'failed';
 
-      if (isCompletedState || isFinalAttempt) {
-        const decrementCount = -(settings.videoCount || 1);
+if (isCompletedState || isFinalAttempt) {
+        const decrementCount = settings.videoCount || 1;
 
-        // Safely decrement the global user uploadsOnHold
+        // Safely decrement the global user uploadsOnHold (never below 0)
         await User.updateOne(
-          { _id: userId },
-          { $inc: { uploadsOnHold: decrementCount } }
+          { _id: userId, uploadsOnHold: { $gte: decrementCount } },
+          { $inc: { uploadsOnHold: -decrementCount } }
         ).catch((err) => console.error(`Failed to decrement global holds for user ${userId}:`, err));
 
         // Safely decrement the channel specific videosOnHold
         await User.updateOne(
-          { _id: userId, 'youtubeChannels.channelId': settings.channelId },
-          { $inc: { 'youtubeChannels.$.videosOnHold': decrementCount } }
+          { _id: userId, 'youtubeChannels.channelId': settings.channelId, 'youtubeChannels.videosOnHold': { $gte: decrementCount } },
+          { $inc: { 'youtubeChannels.$.videosOnHold': -decrementCount } }
         ).catch((err) => console.error(`Failed to decrement channel holds for user ${userId}:`, err));
       } else {
         console.log(`Job ${jobId} failed but will retry (attempt ${attemptsMade + 1}/${maxAttempts}). Holds maintained.`);
@@ -387,7 +392,9 @@ pipelineWorker.on('failed', (job, err) => {
 const shutdown = async (signal: string) => {
   console.log(`Received ${signal}, closing worker gracefully...`);
   await pipelineWorker.close();
-  await connection.quit();
+  if (connection) {
+    await connection.quit();
+  }
   await mongoose.connection.close();
   console.log('Worker closed. Exiting process.');
   process.exit(0);
