@@ -13,6 +13,7 @@ import { promptService } from '../../services/promptService';
 import { pipelineService } from '../../services/pipelineService';
 import { paymentService } from '../../services/paymentService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import AppModal, { AppModalType } from '../../components/ui/AppModal';
 import { usePersistentSettings } from '../../hooks/usePersistentSettings';
 import { requestNotificationPermission } from '../../lib/notifications';
 import { cn } from '../../lib/utils';
@@ -56,8 +57,22 @@ export default function Dashboard() {
 
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
-  const [showWarningModal, setShowWarningModal] = useState(false);
-  const [warningMessage, setWarningMessage] = useState('');
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    type: AppModalType;
+    onConfirm?: () => void;
+    onCancel?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    type: 'info',
+  });
+
   const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
   const [pendingPromptContent, setPendingPromptContent] = useState<string | null>(null);
 
@@ -73,6 +88,26 @@ export default function Dashboard() {
 
         const jobsData = await pipelineService.getJobs();
         setJobs(jobsData.data);
+
+        // Parse URL params for auth callback errors
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlError = urlParams.get('error');
+        if (urlError === 'channel_limit_reached') {
+            setModalConfig({
+                isOpen: true,
+                title: 'Channel Limit Reached',
+                description: 'You have reached the maximum number of connected YouTube channels allowed for your current plan. Please upgrade to connect more.',
+                type: 'error',
+                confirmText: 'Upgrade',
+                onConfirm: () => {
+                    window.location.href = '/settings';
+                },
+                cancelText: 'Close',
+                onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+            });
+            // Clean URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
 
         // Request notification permission once user is loaded
         requestNotificationPermission();
@@ -91,7 +126,39 @@ export default function Dashboard() {
         interval = setInterval(async () => {
             try {
                 const jobsData = await pipelineService.getJobs();
-                setJobs(jobsData.data);
+
+            // Check for newly completed/failed jobs to notify the user
+            const currentJobs = jobsData.data || [];
+            const seenJobNotifications = JSON.parse(localStorage.getItem('seenJobNotifications') || '[]');
+
+            for (const job of currentJobs) {
+                if ((job.status === 'success' || job.status === 'failed') && !seenJobNotifications.includes(job._id)) {
+                    seenJobNotifications.push(job._id);
+                    localStorage.setItem('seenJobNotifications', JSON.stringify(seenJobNotifications));
+
+                    if (job.status === 'success') {
+                        setModalConfig({
+                            isOpen: true,
+                            title: 'Job Completed',
+                            description: 'Your video generation and upload has completed successfully!',
+                            type: 'success',
+                            confirmText: 'Awesome',
+                            onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+                        });
+                    } else if (job.status === 'failed') {
+                        setModalConfig({
+                            isOpen: true,
+                            title: 'Job Failed',
+                            description: 'A background job failed to complete. You can view the logs in your history.',
+                            type: 'error',
+                            confirmText: 'Dismiss',
+                            onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+                        });
+                    }
+                }
+            }
+
+            setJobs(currentJobs);
             } catch (err) {
                 // Silently ignore polling errors
             }
@@ -128,7 +195,19 @@ export default function Dashboard() {
   const handleGenerateAndRun = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.isYoutubeConnected) {
-      setMessage({ text: 'Please connect YouTube first', type: 'error' });
+      setModalConfig({
+        isOpen: true,
+        title: 'Connection Required',
+        description: 'Please connect your YouTube channel first before generating videos.',
+        type: 'error',
+        confirmText: 'Connect Now',
+        onConfirm: () => {
+          setModalConfig(prev => ({ ...prev, isOpen: false }));
+          handleConnectYouTube();
+        },
+        cancelText: 'Cancel',
+        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+      });
       return;
     }
 
@@ -142,6 +221,27 @@ export default function Dashboard() {
       return;
     }
 
+    if (videoCount >= 7) {
+      setModalConfig({
+         isOpen: true,
+         title: 'High Volume Warning',
+         description: `You are requesting ${videoCount} videos at once. This is a high volume and may take significant time to process. Do you want to proceed?`,
+         type: 'warning',
+         confirmText: 'Proceed',
+         cancelText: 'Cancel',
+         onConfirm: () => {
+             setModalConfig(prev => ({ ...prev, isOpen: false }));
+             runPipelineGeneration();
+         },
+         onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+      });
+      return;
+    }
+
+    runPipelineGeneration();
+  };
+
+  const runPipelineGeneration = async () => {
     setGenerating(true);
     setMessage(null);
     try {
@@ -190,13 +290,60 @@ export default function Dashboard() {
     } catch (err: any) {
       console.error(err);
       if (err.response?.data?.warning) {
-        setWarningMessage(err.response.data.warning);
-        setShowWarningModal(true);
+        setModalConfig({
+          isOpen: true,
+          title: 'Limit Warning',
+          description: err.response.data.warning,
+          type: 'warning',
+          confirmText: 'Proceed Anyway',
+          cancelText: 'Cancel',
+          onConfirm: () => handleConfirmWarning(),
+          onCancel: () => handleCancelWarning(),
+        });
       } else {
-        setMessage({ text: err.response?.data?.message || err.message || 'Failed to start pipeline', type: 'error' });
+        handleApiError(err);
       }
       setGenerating(false);
     }
+  };
+
+  const handleApiError = (err: any) => {
+     const errorMsg = err.response?.data?.message || err.message || 'An unknown error occurred.';
+
+     if (errorMsg.includes('youtube_token_expired') || errorMsg.includes('YouTube channel is not connected or token is invalid')) {
+         setModalConfig({
+             isOpen: true,
+             title: 'YouTube Reconnect Required',
+             description: 'Your YouTube token has expired or is invalid. Please reconnect your account to continue.',
+             type: 'error',
+             confirmText: 'Reconnect',
+             onConfirm: handleConnectYouTube,
+             cancelText: 'Close',
+             onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+         });
+     } else if (errorMsg.includes('Maximum concurrent jobs reached') || errorMsg.includes('videos running/pending') || errorMsg.includes('Not enough uploads remaining') || errorMsg.includes('exceeds the strict limit')) {
+         setModalConfig({
+             isOpen: true,
+             title: 'Upload Limit Reached',
+             description: errorMsg,
+             type: 'error',
+             confirmText: 'Upgrade Plan',
+             onConfirm: () => {
+                window.location.href = '/pricing';
+             },
+             cancelText: 'Dismiss',
+             onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+         });
+     } else {
+         setModalConfig({
+             isOpen: true,
+             title: 'Action Failed',
+             description: errorMsg,
+             type: 'error',
+             confirmText: 'Dismiss',
+             onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+         });
+     }
   };
 
   const executePipeline = async (pId: string, acceptedWarning: boolean, newPromptContent?: string, executeStoryId?: string) => {
@@ -240,18 +387,26 @@ export default function Dashboard() {
 
       const jobsData = await pipelineService.getJobs();
       setJobs(jobsData.data);
-      setShowWarningModal(false);
+      setModalConfig(prev => ({ ...prev, isOpen: false }));
       setPendingPromptId(null);
       setPendingPromptContent(null);
     } catch (err: any) {
       console.error(err);
       if (err.response?.data?.warning) {
-         setWarningMessage(err.response.data.warning);
          setPendingPromptId(pId);
          setPendingPromptContent(newPromptContent || null);
-         setShowWarningModal(true);
+         setModalConfig({
+            isOpen: true,
+            title: 'Limit Warning',
+            description: err.response.data.warning,
+            type: 'warning',
+            confirmText: 'Proceed Anyway',
+            cancelText: 'Cancel',
+            onConfirm: () => handleConfirmWarning(),
+            onCancel: () => handleCancelWarning(),
+         });
       } else {
-         setMessage({ text: err.response?.data?.message || err.message || 'Failed to start pipeline', type: 'error' });
+         handleApiError(err);
       }
     } finally {
       if (acceptedWarning) {
@@ -267,7 +422,7 @@ export default function Dashboard() {
   };
 
   const handleCancelWarning = () => {
-     setShowWarningModal(false);
+     setModalConfig(prev => ({ ...prev, isOpen: false }));
      setPendingPromptId(null);
      setPendingPromptContent(null);
   };
@@ -589,45 +744,17 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Warning Modal */}
-      {showWarningModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-[#111827] border border-yellow-500/30 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
-          >
-            <div className="p-6">
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center border border-yellow-500/20">
-                  <ShieldAlert className="h-5 w-5 text-yellow-500" />
-                </div>
-                <h3 className="text-lg font-bold text-white tracking-tight">Limit Warning</h3>
-              </div>
-              <p className="text-slate-300 text-sm mb-6 leading-relaxed">
-                {warningMessage}
-              </p>
-              <div className="flex items-center justify-end space-x-3">
-                <button
-                  onClick={handleCancelWarning}
-                  disabled={generating}
-                  className="px-4 py-2 rounded-lg text-sm font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConfirmWarning}
-                  disabled={generating}
-                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-yellow-600 hover:bg-yellow-500 shadow-lg shadow-yellow-500/20 transition-all flex items-center disabled:opacity-50"
-                >
-                  {generating ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : null}
-                  Proceed Anyway
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      )}
+      <AppModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        description={modalConfig.description}
+        type={modalConfig.type}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={modalConfig.onCancel}
+        confirmText={modalConfig.confirmText}
+        cancelText={modalConfig.cancelText}
+        isLoading={generating}
+      />
 
     </DashboardLayout>
   );

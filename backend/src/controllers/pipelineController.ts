@@ -98,11 +98,11 @@ export const startPipeline = asyncHandler(
     try {
         youtubeToken = await getValidYouTubeToken(userId, settings.channelId);
     } catch (error: any) {
-        throw new AppError(error.message || 'YouTube channel is not connected or token is invalid. Please reconnect.', 400);
+        throw new AppError('youtube_token_expired', 400);
     }
 
     if (!youtubeToken) {
-        throw new AppError('YouTube channel is not connected or token is invalid. Please reconnect.', 400);
+        throw new AppError('youtube_token_expired', 400);
     }
 
     // Check uploads in the last 24 hours for this channel (Soft Limit)

@@ -7,6 +7,7 @@ import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
 import { userService } from '../../services/userService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import AppModal, { AppModalType } from '../../components/ui/AppModal';
 import { usePersistentSettings } from '../../hooks/usePersistentSettings';
 import { cn } from '../../lib/utils';
 
@@ -23,6 +24,21 @@ export default function SettingsPage() {
   const [emailNotifs, setEmailNotifs] = useState(true);
   const [telegramNotifs, setTelegramNotifs] = useState(true);
   const [pushNotifs, setPushNotifs] = useState(true);
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    type: AppModalType;
+    onConfirm?: () => void;
+    onCancel?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    type: 'info',
+  });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -61,8 +77,21 @@ export default function SettingsPage() {
   };
 
   const handleResetMemory = () => {
-    setStoryPart(1);
-    setMessage({ text: 'Story memory has been reset to Part 1', type: 'success' });
+    setModalConfig({
+        isOpen: true,
+        title: 'Reset Story Memory',
+        description: 'Are you sure you want to completely erase your Story memory? You will start over at Part 1 on your next generation. This cannot be undone.',
+        type: 'warning',
+        confirmText: 'Erase Memory',
+        onConfirm: () => {
+            setStoryPart(1);
+            setMessage({ text: 'Story memory has been reset to Part 1', type: 'success' });
+            setModalConfig(prev => ({ ...prev, isOpen: false }));
+            setTimeout(() => setMessage(null), 3000);
+        },
+        cancelText: 'Cancel',
+        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+    });
   };
 
   const handleSaveSettings = async () => {
@@ -256,6 +285,18 @@ export default function SettingsPage() {
 
         </div>
       </div>
+
+      <AppModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        description={modalConfig.description}
+        type={modalConfig.type}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={modalConfig.onCancel}
+        confirmText={modalConfig.confirmText}
+        cancelText={modalConfig.cancelText}
+      />
+
     </DashboardLayout>
   );
 }
