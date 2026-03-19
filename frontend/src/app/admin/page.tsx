@@ -186,7 +186,7 @@ export default function AdminDashboard() {
       try {
         const me = await authService.getMe();
         if (me?.data?.user?.role !== 'admin') {
-          router.push('/dashboard');
+          router.push('/admin-login');
           return;
         }
 
@@ -201,7 +201,7 @@ export default function AdminDashboard() {
         setUsers(usersData.data);
       } catch (error) {
         console.error("Admin init error", error);
-        router.push('/dashboard');
+        router.push('/admin-login');
       } finally {
         setLoading(false);
       }

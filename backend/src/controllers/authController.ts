@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import User from '../models/User';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
-import { RegisterInput, LoginInput, ForgotPasswordInput, ResetPasswordInput, ResendVerificationInput } from '../utils/validators/authValidators';
+import { RegisterInput, LoginInput, AdminLoginInput, ForgotPasswordInput, ResetPasswordInput, ResendVerificationInput } from '../utils/validators/authValidators';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
@@ -165,6 +165,42 @@ export const login = asyncHandler(
     res.json({
       success: true,
       message: 'User logged in successfully',
+      data: {
+        _id: user.id,
+        email: user.email,
+        role: user.role,
+        plan: user.plan,
+        token,
+      },
+    });
+  }
+);
+
+// @desc    Authenticate an admin user
+// @route   POST /api/auth/admin-login
+// @access  Public
+export const adminLogin = asyncHandler(
+  async (req: Request<unknown, unknown, AdminLoginInput>, res: Response) => {
+    const { username, password } = req.body;
+
+    const user = await User.findOne({ email: username, role: 'admin' });
+
+    if (!user || !user.password) {
+      throw new AppError('Invalid credentials', 401);
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      throw new AppError('Invalid credentials', 401);
+    }
+
+    const token = generateToken(user.id);
+    setTokenCookie(res, token);
+
+    res.json({
+      success: true,
+      message: 'Admin logged in successfully',
       data: {
         _id: user.id,
         email: user.email,

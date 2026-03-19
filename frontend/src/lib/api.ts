@@ -24,10 +24,12 @@ api.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       if (typeof window !== 'undefined') {
+        const path = window.location.pathname;
+        const isAdminArea = path.startsWith('/admin');
         // Prevent redirect loop if already on login page
-        if (!window.location.pathname.includes('/login')) {
+        if (!path.includes('/login')) {
           localStorage.removeItem('token');
-          window.location.href = '/login';
+          window.location.href = isAdminArea ? '/admin-login' : '/login';
         }
       }
     }

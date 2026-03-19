@@ -1,16 +1,16 @@
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import app from './app';
 import connectDB from './config/db';
 import { initializeFirebaseAdmin } from './config/firebaseAdmin';
-
-// Load environment variables
-dotenv.config();
+import { ensureAdminUser } from './utils/ensureAdminUser';
 
 // Initialize Firebase Admin
 initializeFirebaseAdmin();
 
 // Connect to Database
-connectDB();
+connectDB().then(() => ensureAdminUser()).catch((err) => {
+  console.error('Failed to ensure admin user', err);
+});
 
 const PORT = process.env.PORT || 5000;
 

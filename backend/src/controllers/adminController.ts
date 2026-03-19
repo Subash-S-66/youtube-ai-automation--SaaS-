@@ -10,13 +10,10 @@ import DeletedUser from '../models/DeletedUser';
 import SystemConfig from '../models/SystemConfig';
 import { z } from 'zod';
 import { planLimits } from '../config/plans';
-import Stripe from 'stripe';
 import { emailQueue } from '../queues/emailQueue';
 import { pipelineQueue } from '../queues/pipelineQueue';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-  apiVersion: '2025-01-27.acacia' as any,
-});
+// Stripe disabled. Using Razorpay for payments.
 
 export const getAdminStats = asyncHandler(async (req: Request, res: Response) => {
   const totalUsers = await User.countDocuments();
@@ -204,20 +201,7 @@ export const deleteUserByAdmin = asyncHandler(async (req: Request, res: Response
     throw new AppError('User not found', 404);
   }
 
-  // Cancel Stripe subscription
-  if (user.stripeCustomerId && user.subscriptionStatus === 'active') {
-    try {
-      const subscriptions = await stripe.subscriptions.list({
-        customer: user.stripeCustomerId,
-        status: 'active',
-      });
-      for (const sub of subscriptions.data) {
-        await stripe.subscriptions.cancel(sub.id);
-      }
-    } catch (error) {
-      console.error('Failed to cancel Stripe subscription during admin deletion:', error);
-    }
-  }
+  // Stripe disabled. If you need Razorpay cancellation, implement it here.
 
   // Store in DeletedUsers collection
   await DeletedUser.create({
