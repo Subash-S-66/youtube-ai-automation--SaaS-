@@ -257,15 +257,15 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       throw error;
     } finally {
       // Decrement uploadsOnHold safely when the job finishes regardless of success or failure
-      await User.findOneAndUpdate(
-        { _id: userId, uploadsOnHold: { $gt: 0 } },
+      await User.updateOne(
+        { _id: userId },
         { $inc: { uploadsOnHold: -1 } }
       ).catch((err) => console.error(`Failed to decrement uploadsOnHold for user ${userId}:`, err));
     }
   },
   {
     connection: connection as any, // Cast to any to bypass strict type matching
-    concurrency: 1, // Limit concurrency to 1 jobs at a time
+    concurrency: 5, // Limit concurrency to 5 jobs at a time to improve performance
   }
 );
 
