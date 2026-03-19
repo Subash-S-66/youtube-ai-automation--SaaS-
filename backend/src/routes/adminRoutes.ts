@@ -6,6 +6,9 @@ import {
   getAllUsers,
   getUserDetails,
   updateUserPlan,
+  createNotification,
+  setGlobalBanner,
+  deleteUserByAdmin,
 } from '../controllers/adminController';
 
 const router = express.Router();
@@ -18,5 +21,8 @@ router.get('/stats', getAdminStats);
 router.get('/users', getAllUsers);
 router.get('/users/:id', getUserDetails);
 router.put('/users/:id/plan', updateUserPlan);
+router.delete('/users/:id', deleteUserByAdmin);
+router.post('/notify', createNotification);
+router.post('/banner', setGlobalBanner);
 
 export default router;

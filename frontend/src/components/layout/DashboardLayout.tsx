@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
 import InstallPwaButton from '../InstallPwaButton';
+import InAppNotifications from './InAppNotifications';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -145,6 +146,9 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
           </motion.div>
         </main>
       </div>
+
+      {/* Notifications */}
+      <InAppNotifications />
     </div>
   );
 }
