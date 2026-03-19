@@ -16,7 +16,15 @@ import { FirebaseApp } from 'firebase/app';
 let app: FirebaseApp | undefined;
 let messaging: Messaging | null = null;
 
-if (typeof window !== 'undefined') {
+const hasFirebaseConfig =
+  !!firebaseConfig.apiKey &&
+  !!firebaseConfig.authDomain &&
+  !!firebaseConfig.projectId &&
+  !!firebaseConfig.storageBucket &&
+  !!firebaseConfig.messagingSenderId &&
+  !!firebaseConfig.appId;
+
+if (typeof window !== 'undefined' && hasFirebaseConfig) {
   try {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
@@ -31,6 +39,10 @@ if (typeof window !== 'undefined') {
   } catch (error) {
     console.error('Firebase initialization error', error);
   }
+} else if (typeof window !== 'undefined' && !hasFirebaseConfig) {
+  console.warn(
+    'Firebase config is missing. Set NEXT_PUBLIC_FIREBASE_* env vars to enable Firebase.'
+  );
 }
 
 export { app, messaging };
