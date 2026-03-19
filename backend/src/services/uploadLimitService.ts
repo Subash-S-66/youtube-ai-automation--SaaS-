@@ -67,20 +67,20 @@ export const canUserUpload = async (userId: string): Promise<UploadCheckResult> 
   };
 };
 
-export const incrementUploadCount = async (userId: string): Promise<void> => {
+export const incrementUploadCount = async (userId: string, count: number = 1): Promise<void> => {
   const now = new Date();
   const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
   // We can do this in a single atomic findOneAndUpdate.
   // We check if lastUploadReset is LESS than the start of the current UTC day.
-  // If it is, that means we haven't reset today yet, so we reset to 1 and update lastUploadReset.
+  // If it is, that means we haven't reset today yet, so we reset to count and update lastUploadReset.
   const user = await User.findOneAndUpdate(
     {
       _id: userId,
       lastUploadReset: { $lt: startOfUTCDay }
     },
     {
-      $set: { uploadsUsedToday: 1, lastUploadReset: now }
+      $set: { uploadsUsedToday: count, lastUploadReset: now }
     },
     { new: true }
   );
@@ -90,7 +90,7 @@ export const incrementUploadCount = async (userId: string): Promise<void> => {
   if (!user) {
     await User.updateOne(
       { _id: userId },
-      { $inc: { uploadsUsedToday: 1 } }
+      { $inc: { uploadsUsedToday: count } }
     );
   }
 };

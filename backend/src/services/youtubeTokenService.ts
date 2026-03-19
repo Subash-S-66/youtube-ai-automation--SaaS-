@@ -2,18 +2,27 @@ import User from '../models/User';
 import { getGoogleOAuthClient } from './youtubeOAuthService';
 import { notifyUser } from './notificationService';
 
-export const getValidYouTubeToken = async (userId: string): Promise<string> => {
+export const getValidYouTubeToken = async (userId: string, channelId: string): Promise<string> => {
   const user = await User.findById(userId);
 
   if (!user) {
     throw new Error('User not found');
   }
 
-  if (!user.isYoutubeConnected || !user.youtubeTokens) {
+  if (!user.isYoutubeConnected || !user.youtubeChannels || user.youtubeChannels.length === 0) {
     throw new Error('User has not connected their YouTube account');
   }
 
-  const { access_token, refresh_token, expiry_date } = user.youtubeTokens;
+  const channelIndex = user.youtubeChannels.findIndex(c => c.channelId === channelId);
+  if (channelIndex === -1) {
+    throw new Error(`YouTube channel with ID ${channelId} not found`);
+  }
+
+  const channel = user.youtubeChannels[channelIndex];
+  if (!channel) {
+    throw new Error(`YouTube channel with ID ${channelId} not found`);
+  }
+  const { access_token, refresh_token, expiry_date } = channel.tokens;
 
   // Check if token is present and valid
   // Consider token expired if less than 5 minutes remain
@@ -25,14 +34,11 @@ export const getValidYouTubeToken = async (userId: string): Promise<string> => {
 
   if (!refresh_token) {
     // If we reach here, we don't have a valid access token and no refresh token
-    const wasConnected = user.isYoutubeConnected;
-    user.isYoutubeConnected = false;
-    user.set('youtubeTokens', undefined);
+    user.youtubeChannels.splice(channelIndex, 1);
+    user.isYoutubeConnected = user.youtubeChannels.length > 0;
     await user.save();
 
-    if (wasConnected) {
-        await notifyUser(user, 'Action Required: Reconnect YouTube', '⚠️ Your YouTube connection expired. Please reconnect.').catch(console.error);
-    }
+    await notifyUser(user, 'Action Required: Reconnect YouTube', `⚠️ Your YouTube connection for channel ${channel.channelName} expired. Please reconnect.`).catch(console.error);
     throw new Error('No valid token and no refresh token available');
   }
 
@@ -45,37 +51,35 @@ export const getValidYouTubeToken = async (userId: string): Promise<string> => {
     const res = await oauth2Client.refreshAccessToken();
     const newTokens = res.credentials;
 
-    // Update tokens in MongoDB
-    user.set('youtubeTokens', {
-      access_token: newTokens.access_token || access_token || '', // Keep the old one if it wasn't returned
-      refresh_token: newTokens.refresh_token || refresh_token,
-      expiry_date: newTokens.expiry_date || undefined,
-    });
+    const channelToUpdate = user.youtubeChannels[channelIndex];
+    if (channelToUpdate) {
+      // Update tokens in MongoDB
+      channelToUpdate.tokens = {
+        access_token: newTokens.access_token || access_token || '', // Keep the old one if it wasn't returned
+        refresh_token: newTokens.refresh_token || refresh_token,
+        expiry_date: newTokens.expiry_date || undefined,
+      };
 
-    await user.save();
+      user.markModified('youtubeChannels');
+      await user.save();
 
-    const access = user.youtubeTokens?.access_token;
-    if (!access) {
-        throw new Error('Failed to obtain new access token');
+      const access = channelToUpdate.tokens.access_token;
+      if (!access) {
+          throw new Error('Failed to obtain new access token');
+      }
+
+      return access;
     }
-
-    return access;
+    throw new Error('Failed to obtain new access token');
   } catch (error) {
     // If refresh fails (e.g., user revoked access)
     console.error('Failed to refresh YouTube access token:', error);
 
-    const wasConnected = user.isYoutubeConnected;
-
-    // Revoke access on our end
-    user.isYoutubeConnected = false;
-    user.set('youtubeTokens', undefined);
+    user.youtubeChannels.splice(channelIndex, 1);
+    user.isYoutubeConnected = user.youtubeChannels.length > 0;
     await user.save();
 
-    // Trigger notification ONLY once per failure event (when transitioning from connected to disconnected)
-    if (wasConnected) {
-      // Notify user of token expiry
-      await notifyUser(user, 'Action Required: Reconnect YouTube', '⚠️ Your YouTube connection expired. Please reconnect.').catch(console.error);
-    }
+    await notifyUser(user, 'Action Required: Reconnect YouTube', `⚠️ Your YouTube connection for channel ${channel.channelName} expired. Please reconnect.`).catch(console.error);
 
     throw new Error('YouTube authentication expired. Please reconnect your account.');
   }

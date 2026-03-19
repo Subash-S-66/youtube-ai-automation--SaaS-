@@ -11,6 +11,9 @@ export const runPipelineSchema = z.object({
       contentType: z.enum(['clips', 'images', 'mixed']).optional().default('clips'),
       videoCount: z.number({
         message: 'videoCount is required',
+      }).max(10, 'Maximum 10 videos per request'),
+      channelId: z.string({
+        message: 'channelId is required',
       }),
       storyMode: z.boolean().optional(),
       storyId: z.string().optional(),

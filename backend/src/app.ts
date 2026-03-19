@@ -12,14 +12,46 @@ import adminRoutes from './routes/adminRoutes';
 import userRoutes from './routes/userRoutes';
 import bannerRoutes from './routes/bannerRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
+import * as Sentry from '@sentry/node';
+import { nodeProfilingIntegration } from '@sentry/profiling-node';
 
 const app: Application = express();
+
+// Initialize Sentry if DSN is provided
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [
+      nodeProfilingIntegration(),
+    ],
+    tracesSampleRate: 1.0,
+    profilesSampleRate: 1.0,
+  });
+}
 
 // Trust proxy for production hosting (e.g. Render, Railway, Azure)
 app.set('trust proxy', 1);
 
+import { globalLimiter } from './middleware/rateLimiter';
+
 // Security Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "https://api.stripe.com"],
+      frameSrc: ["'self'", "https://js.stripe.com"],
+      objectSrc: ["'self'", "https://js.stripe.com"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+
+// Apply generic API rate limiting
+app.use('/api', globalLimiter);
 
 // CORS Middleware
 const allowedOrigins = process.env.FRONTEND_URL
@@ -72,6 +104,10 @@ app.get('/', (req: Request, res: Response) => {
 app.all('*', (req: Request, res: Response, next: NextFunction) => {
   next(new AppError(`Can't find ${req.originalUrl} on this server`, 404));
 });
+
+if (process.env.SENTRY_DSN) {
+  Sentry.setupExpressErrorHandler(app);
+}
 
 // Global Error Handler
 app.use(errorHandler);

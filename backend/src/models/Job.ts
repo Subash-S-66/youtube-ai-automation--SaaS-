@@ -3,9 +3,11 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IJob extends Document {
   userId: mongoose.Types.ObjectId;
   promptId: mongoose.Types.ObjectId;
-  status: 'pending' | 'running' | 'success' | 'failed';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'paused_due_to_limit' | 'skipped_due_to_limit';
   logs: string;
   acceptedYouTubeLimitWarning: boolean;
+  videoCount: number;
+  channelId: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -24,7 +26,7 @@ const JobSchema = new Schema<IJob>(
     },
     status: {
       type: String,
-      enum: ['pending', 'running', 'success', 'failed'],
+      enum: ['pending', 'running', 'success', 'failed', 'paused_due_to_limit', 'skipped_due_to_limit'],
       default: 'pending',
     },
     logs: {
@@ -34,6 +36,14 @@ const JobSchema = new Schema<IJob>(
     acceptedYouTubeLimitWarning: {
       type: Boolean,
       default: false,
+    },
+    videoCount: {
+      type: Number,
+      default: 1,
+    },
+    channelId: {
+      type: String,
+      required: true,
     },
   },
   {

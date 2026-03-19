@@ -11,8 +11,16 @@ import { cn } from '../../lib/utils';
 
 interface AdminStats {
   totalUsers: number;
+  activeUsers: number;
   totalActiveSubscriptions: number;
   totalEarnings: number;
+  jobs: {
+    total: number;
+    successful: number;
+    failed: number;
+    successRate: string;
+    failureRate: string;
+  };
 }
 
 interface UserSummary {
@@ -367,8 +375,8 @@ export default function AdminDashboard() {
                 <div><p className="text-slate-400 text-sm font-medium">Active Subscriptions</p><p className="text-2xl font-bold text-white">{stats?.totalActiveSubscriptions || 0}</p></div>
               </div>
               <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
-                <div className="p-4 rounded-xl bg-green-500/10 text-green-500 mr-4"><DollarSign className="h-6 w-6" /></div>
-                <div><p className="text-slate-400 text-sm font-medium">Est. MRR</p><p className="text-2xl font-bold text-white">${stats?.totalEarnings || 0}</p></div>
+                <div className="p-4 rounded-xl bg-green-500/10 text-green-500 mr-4"><CheckCircle className="h-6 w-6" /></div>
+                <div><p className="text-slate-400 text-sm font-medium">Success Rate</p><p className="text-2xl font-bold text-white">{stats?.jobs?.successRate || '0%'}</p></div>
               </div>
             </div>
 
