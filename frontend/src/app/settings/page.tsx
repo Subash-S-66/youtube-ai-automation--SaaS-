@@ -152,7 +152,7 @@ export default function SettingsPage() {
                 <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Upload Limits</p>
                 <div className="flex items-end justify-between">
                   <span className="text-2xl font-bold text-[#00D4FF]">{user?.remainingUploads} <span className="text-sm text-slate-400 font-normal">/ {user?.uploadLimit}</span></span>
-                  <span className="text-xs text-yellow-400 font-medium">{user?.videosOnHold} on hold</span>
+                  <span className="text-xs text-yellow-400 font-medium">{user?.uploadsOnHold} on hold</span>
                 </div>
               </div>
             </div>

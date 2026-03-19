@@ -256,17 +256,42 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
       throw error;
     } finally {
-      // Decrement videosOnHold safely when the job finishes regardless of success or failure
+      // Decrement uploadsOnHold (global) and videosOnHold (channel) safely when the job finishes
       const videoCount = settings.videoCount || 1;
-      await User.findOneAndUpdate(
-        { _id: userId, videosOnHold: { $gte: videoCount } },
-        { $inc: { videosOnHold: -videoCount } }
-      ).catch((err) => console.error(`Failed to decrement videosOnHold for user ${userId}:`, err));
+      const channelId = settings.channelId;
+
+      if (channelId) {
+        // Find user first to check current values to prevent negative numbers
+        try {
+          const user = await User.findById(userId);
+          if (user) {
+             const actualUploadsHold = Math.max(0, user.uploadsOnHold - videoCount);
+
+             let channelUpdateQuery: any = { uploadsOnHold: actualUploadsHold };
+
+             const channel = user.youtubeChannels.find((c: any) => c.channelId === channelId);
+             if (channel) {
+                const actualChannelHold = Math.max(0, channel.videosOnHold - videoCount);
+                channelUpdateQuery = {
+                   uploadsOnHold: actualUploadsHold,
+                   'youtubeChannels.$.videosOnHold': actualChannelHold
+                };
+             }
+
+             await User.findOneAndUpdate(
+               { _id: userId, 'youtubeChannels.channelId': channelId },
+               { $set: channelUpdateQuery }
+             );
+          }
+        } catch (err) {
+           console.error(`Failed to decrement hold counters for user ${userId}:`, err);
+        }
+      }
     }
   },
   {
     connection: connection as any, // Cast to any to bypass strict type matching
-    concurrency: 1, // Limit concurrency to 1 jobs at a time
+    concurrency: 10, // Increase concurrency to allow parallel execution across channels
   }
 );
 

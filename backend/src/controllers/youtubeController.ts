@@ -105,11 +105,26 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
            user.youtubeChannels[existingChannelIndex].channelName = channelName; // Update name just in case
        }
     } else {
+       // Enforce Channel Limits
+       const channelLimits = {
+         free: 1,
+         basic: 2,
+         pro: 4,
+         premium: 8,
+       };
+       const maxChannels = channelLimits[user.plan] || 1;
+
+       if (user.youtubeChannels.length >= maxChannels) {
+           const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+           return res.redirect(`${frontendUrl}/dashboard?error=channel_limit_reached`);
+       }
+
        // Add new channel
        user.youtubeChannels.push({
            channelId,
            channelName,
-           tokens: newTokens
+           tokens: newTokens,
+           videosOnHold: 0,
        });
     }
 

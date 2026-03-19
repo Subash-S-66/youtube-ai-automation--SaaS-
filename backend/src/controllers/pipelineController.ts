@@ -68,9 +68,15 @@ export const startPipeline = asyncHandler(
       throw new AppError(`Maximum concurrent jobs reached for your plan (${maxConcurrentJobs}). Please wait for an existing job to finish.`, 400);
     }
 
-    // Max videosOnHold limit validation
-    if (user.videosOnHold + settings.videoCount > 10) {
-        throw new AppError(`Cannot queue job. Your current videos on hold (${user.videosOnHold}) plus requested videos (${settings.videoCount}) exceeds the strict limit of 10.`, 400);
+    // Find the specific channel
+    const channel = user.youtubeChannels.find(c => c.channelId === settings.channelId);
+    if (!channel) {
+        throw new AppError(`YouTube channel with ID ${settings.channelId} not found`, 404);
+    }
+
+    // Max videosOnHold per channel limit validation
+    if (channel.videosOnHold + settings.videoCount > 10) {
+        throw new AppError(`Cannot queue job. This channel currently has ${channel.videosOnHold} videos running/pending. Requesting ${settings.videoCount} more exceeds the strict limit of 10 per channel.`, 400);
     }
 
     // Fetch prompt
@@ -121,10 +127,15 @@ export const startPipeline = asyncHandler(
       }
     }
 
-    // Increment videosOnHold for the user by videoCount
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { $inc: { videosOnHold: settings.videoCount } },
+    // Increment uploadsOnHold (global) and channel.videosOnHold by videoCount
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, 'youtubeChannels.channelId': settings.channelId },
+      {
+        $inc: {
+          uploadsOnHold: settings.videoCount,
+          'youtubeChannels.$.videosOnHold': settings.videoCount
+        }
+      },
       { new: true }
     );
 
@@ -156,7 +167,7 @@ export const startPipeline = asyncHandler(
       message: 'Job added to queue',
       plan: finalLimitCheck.plan,
       remainingUploads: finalLimitCheck.remainingUploads,
-      videosOnHold: finalLimitCheck.videosOnHold,
+      uploadsOnHold: finalLimitCheck.uploadsOnHold,
     };
 
     // Include warning if high volume is requested

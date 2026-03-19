@@ -28,7 +28,7 @@ export const getAdminStats = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const getAllUsers = asyncHandler(async (req: Request, res: Response) => {
-  const users = await User.find({}).select('email plan uploadsUsedToday videosOnHold subscriptionExpiresAt').sort({ createdAt: -1 });
+  const users = await User.find({}).select('email plan uploadsUsedToday uploadsOnHold subscriptionExpiresAt').sort({ createdAt: -1 });
 
   res.status(200).json({
     success: true,

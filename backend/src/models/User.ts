@@ -11,6 +11,7 @@ export interface IYoutubeChannel {
   channelId: string;
   channelName: string;
   tokens: IYoutubeTokens;
+  videosOnHold: number;
 }
 
 import { PlanType } from '../config/plans';
@@ -25,7 +26,7 @@ export interface IUser extends Document {
   stripeCustomerId?: string;
   uploadLimitPerDay: number;
   uploadsUsedToday: number;
-  videosOnHold: number;
+  uploadsOnHold: number;
   lastUploadReset: Date;
   youtubeChannels: IYoutubeChannel[];
   isYoutubeConnected: boolean;
@@ -65,6 +66,7 @@ const YoutubeChannelSchema = new Schema<IYoutubeChannel>(
     channelId: { type: String, required: true },
     channelName: { type: String, required: true },
     tokens: { type: YoutubeTokensSchema, required: true },
+    videosOnHold: { type: Number, default: 0 },
   },
   { _id: false, toJSON: { getters: true }, toObject: { getters: true } }
 );
@@ -111,7 +113,7 @@ const UserSchema = new Schema<IUser>(
       type: Number,
       default: 0,
     },
-    videosOnHold: {
+    uploadsOnHold: {
       type: Number,
       default: 0,
     },
