@@ -84,50 +84,70 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     const { userId, promptId, jobId, settings } = job.data;
     console.log(`Processing job ${jobId} for user ${userId}`);
 
-    let isPaused = false;
+    let isSkipped = false;
 
     await appendLogSafe(jobId, 'Starting pipeline execution...\n', 'running');
 
     try {
-      // Check for blocked channels before processing
+      // 1. Check Rolling Limit
       if (settings.channelId) {
-         const u = await User.findById(userId);
-         if (u) {
-            const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
-            if (ch && ch.blockedUntil && Date.now() < ch.blockedUntil.getTime()) {
-               isPaused = true;
-               await appendLogSafe(jobId, `\nJob paused. Channel is blocked due to limits until ${ch.blockedUntil.toISOString()}.\n`, 'paused_due_to_limit');
+         const recentJobs = await JobModel.find({
+            userId,
+            channelId: settings.channelId,
+            status: 'success'
+         }).sort({ createdAt: -1 }).limit(10);
 
-               // Re-add to queue with delay
-               const delay = ch.blockedUntil.getTime() - Date.now();
-               await pipelineQueue.add('runPipeline', job.data, { delay });
+         // We check length against 10 (or whatever max we consider, the instructions state if >= 10 get 10th item).
+         // Actually the soft limit is 10 uploads. Since a job can contain multiple videos,
+         // we need to sum up to the 10-video limit. But instructions simply said:
+         // "If uploads >= 10: get oldest upload (10th item). nextAllowedAt = oldest.createdAt + 24 hours"
+         if (recentJobs.length >= 10) {
+            const oldest = recentJobs[9];
+            if (oldest) {
+               const nextAllowedAt = new Date(oldest.createdAt.getTime() + 24 * 60 * 60 * 1000);
 
-               return; // Exit early
-            } else if (ch && ch.blockedUntil && Date.now() >= ch.blockedUntil.getTime()) {
-               // Resume automatically
-               await User.findOneAndUpdate(
-                 { _id: userId, 'youtubeChannels.channelId': settings.channelId },
-                 { $unset: { 'youtubeChannels.$.blockedUntil': "" } }
-               );
-               await notifyUser(u, 'Uploads Resumed', '✅ Uploads resumed. Scheduled videos will continue.').catch(console.error);
+               const dbJob = await JobModel.findById(jobId);
+               const jobScheduledAt = dbJob?.createdAt || new Date();
+
+               if (jobScheduledAt.getTime() < nextAllowedAt.getTime()) {
+                  isSkipped = true;
+                  await appendLogSafe(jobId, `\nJob skipped due to YouTube 24-hour upload limit. Will not execute pipeline.\n`, 'skipped_due_to_limit');
+
+                  // Notify user only once per limit window
+                  const u = await User.findById(userId);
+                  if (u) {
+                     const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
+                     if (ch) {
+                        const lastWarning = ch.lastLimitWarningSentAt;
+                        if (!lastWarning || lastWarning.getTime() < oldest.createdAt.getTime()) {
+                           await User.findOneAndUpdate(
+                              { _id: userId, 'youtubeChannels.channelId': settings.channelId },
+                              { $set: { 'youtubeChannels.$.lastLimitWarningSentAt': new Date() } }
+                           );
+                           await notifyUser(u, 'Scheduled Videos Skipped', '⚠️ Some scheduled videos were skipped due to YouTube 24-hour upload limit. Uploads will continue automatically.').catch(console.error);
+                        }
+                     }
+                  }
+                  return; // Do not consume upload, release hold in finally block
+               }
             }
          }
       }
 
-      // 1. Fetch Prompt to get gemini_prompt
+      // 2. Fetch Prompt to get gemini_prompt
       const prompt = await Prompt.findById(promptId);
       if (!prompt) {
         throw new Error(`Prompt ${promptId} not found`);
       }
       const geminiPrompt = prompt.gemini_prompt;
 
-      // 2. Get valid YouTube token
+      // 3. Get valid YouTube token
       const youtubeToken = await getValidYouTubeToken(userId, settings.channelId);
       if (!youtubeToken) {
         throw new Error('Failed to obtain a valid YouTube token');
       }
 
-      // 3. Trigger Azure Container App Job instead of local spawn
+      // 4. Trigger Azure Container App Job instead of local spawn
       const AZURE_JOB_NAME = process.env.AZURE_JOB_NAME;
       const AZURE_RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP;
       const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
@@ -262,33 +282,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
          } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
-            // Check if we need to block the channel
-            if (
-                finalLogs.includes('uploadLimitExceeded') ||
-                finalLogs.includes('quotaExceeded') ||
-                finalLogs.includes('dailyLimitExceeded')
-            ) {
-               await JobModel.findByIdAndUpdate(jobId, { status: 'failed' });
-               const u = await User.findById(userId);
-               if (u && settings.channelId) {
-                  const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
-                  if (ch && !ch.blockedUntil) {
-                     const blockUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
-                     await User.findOneAndUpdate(
-                       { _id: userId, 'youtubeChannels.channelId': settings.channelId },
-                       { $set: { 'youtubeChannels.$.blockedUntil': blockUntil } }
-                     );
-                     await notifyUser(u, 'YouTube Limit Reached', '⚠️ YouTube upload limit reached. Remaining scheduled videos are paused for 24 hours.').catch(console.error);
-                  }
-               }
-            } else {
-               if (user) {
-                 await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
-               }
-            }
-
             // Always consume upload on YouTube rejection (per updated specs)
             await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
+
+            if (user) {
+              await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
+            }
          } else {
             // FAILED (normal) - do not increment usage
             if (user) {
@@ -309,38 +308,35 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
       throw error;
     } finally {
-      // If the job is merely paused and re-queued, do not release the hold yet
-      if (!isPaused) {
-        // Decrement uploadsOnHold (global) and videosOnHold (channel) safely when the job finishes
-        const videoCount = settings.videoCount || 1;
-        const channelId = settings.channelId;
+      // Decrement uploadsOnHold (global) and videosOnHold (channel) safely when the job finishes or is skipped
+      const videoCount = settings.videoCount || 1;
+      const channelId = settings.channelId;
 
-        if (channelId) {
-          // Find user first to check current values to prevent negative numbers
-          try {
-            const user = await User.findById(userId);
-            if (user) {
-               const actualUploadsHold = Math.max(0, user.uploadsOnHold - videoCount);
+      if (channelId) {
+        // Find user first to check current values to prevent negative numbers
+        try {
+          const user = await User.findById(userId);
+          if (user) {
+             const actualUploadsHold = Math.max(0, user.uploadsOnHold - videoCount);
 
-               let channelUpdateQuery: any = { uploadsOnHold: actualUploadsHold };
+             let channelUpdateQuery: any = { uploadsOnHold: actualUploadsHold };
 
-               const channel = user.youtubeChannels.find((c: any) => c.channelId === channelId);
-               if (channel) {
-                  const actualChannelHold = Math.max(0, channel.videosOnHold - videoCount);
-                  channelUpdateQuery = {
-                     uploadsOnHold: actualUploadsHold,
-                     'youtubeChannels.$.videosOnHold': actualChannelHold
-                  };
-               }
+             const channel = user.youtubeChannels.find((c: any) => c.channelId === channelId);
+             if (channel) {
+                const actualChannelHold = Math.max(0, channel.videosOnHold - videoCount);
+                channelUpdateQuery = {
+                   uploadsOnHold: actualUploadsHold,
+                   'youtubeChannels.$.videosOnHold': actualChannelHold
+                };
+             }
 
-               await User.findOneAndUpdate(
-                 { _id: userId, 'youtubeChannels.channelId': channelId },
-                 { $set: channelUpdateQuery }
-               );
-            }
-          } catch (err) {
-             console.error(`Failed to decrement hold counters for user ${userId}:`, err);
+             await User.findOneAndUpdate(
+               { _id: userId, 'youtubeChannels.channelId': channelId },
+               { $set: channelUpdateQuery }
+             );
           }
+        } catch (err) {
+           console.error(`Failed to decrement hold counters for user ${userId}:`, err);
         }
       }
     }

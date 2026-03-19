@@ -3,7 +3,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IJob extends Document {
   userId: mongoose.Types.ObjectId;
   promptId: mongoose.Types.ObjectId;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'paused_due_to_limit';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'paused_due_to_limit' | 'skipped_due_to_limit';
   logs: string;
   acceptedYouTubeLimitWarning: boolean;
   videoCount: number;
@@ -26,7 +26,7 @@ const JobSchema = new Schema<IJob>(
     },
     status: {
       type: String,
-      enum: ['pending', 'running', 'success', 'failed', 'paused_due_to_limit'],
+      enum: ['pending', 'running', 'success', 'failed', 'paused_due_to_limit', 'skipped_due_to_limit'],
       default: 'pending',
     },
     logs: {

@@ -12,7 +12,7 @@ export interface IYoutubeChannel {
   channelName: string;
   tokens: IYoutubeTokens;
   videosOnHold: number;
-  blockedUntil?: Date;
+  lastLimitWarningSentAt?: Date;
 }
 
 import { PlanType } from '../config/plans';
@@ -68,7 +68,7 @@ const YoutubeChannelSchema = new Schema<IYoutubeChannel>(
     channelName: { type: String, required: true },
     tokens: { type: YoutubeTokensSchema, required: true },
     videosOnHold: { type: Number, default: 0 },
-    blockedUntil: { type: Date },
+    lastLimitWarningSentAt: { type: Date },
   },
   { _id: false, toJSON: { getters: true }, toObject: { getters: true } }
 );
