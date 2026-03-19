@@ -31,6 +31,11 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
 // @access  Private
 export const startPipeline = asyncHandler(
   async (req: Request<unknown, unknown, RunPipelineInput>, res: Response) => {
+    // Global Emergency Stop for cost control / safety
+    if (process.env.EMERGENCY_STOP === 'true') {
+        throw new AppError('Pipeline generation is temporarily paused for maintenance.', 503);
+    }
+
     const { promptId, settings, acceptedYouTubeLimitWarning } = req.body;
 
     if (!req.user || !req.user.id) {
@@ -173,6 +178,13 @@ export const startPipeline = asyncHandler(
       promptId,
       jobId: job._id.toString(),
       settings,
+    }, {
+      jobId: job._id.toString(), // Ensure idempotency
+      attempts: 3,               // Retry up to 3 times on failure
+      backoff: {
+        type: 'exponential',
+        delay: 5000,             // Start with 5 seconds, then 25, 125...
+      }
     });
 
     const responsePayload: any = {

@@ -16,6 +16,8 @@
   "type": "commonjs",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@sentry/node": "^10.44.0",
+    "@sentry/profiling-node": "^10.44.0",
     "bcrypt": "^6.0.0",
     "bullmq": "^5.71.0",
     "cookie-parser": "^1.4.7",

@@ -14,6 +14,16 @@ export const getAdminStats = asyncHandler(async (req: Request, res: Response) =>
     subscriptionExpiresAt: { $gt: new Date() },
   });
 
+  // Active users can be defined as users who have a non-free plan, OR have connected youtube accounts recently. Let's just track connected ones.
+  const activeUsers = await User.countDocuments({ isYoutubeConnected: true });
+
+  const totalJobs = await Job.countDocuments();
+  const successfulJobs = await Job.countDocuments({ status: 'success' });
+  const failedJobs = await Job.countDocuments({ status: 'failed' });
+
+  const successRate = totalJobs > 0 ? ((successfulJobs / totalJobs) * 100).toFixed(2) + '%' : '0%';
+  const failureRate = totalJobs > 0 ? ((failedJobs / totalJobs) * 100).toFixed(2) + '%' : '0%';
+
   // Placeholder calculation
   const totalEarnings = totalActiveSubscriptions * 10;
 
@@ -21,8 +31,16 @@ export const getAdminStats = asyncHandler(async (req: Request, res: Response) =>
     success: true,
     data: {
       totalUsers,
+      activeUsers,
       totalActiveSubscriptions,
       totalEarnings,
+      jobs: {
+        total: totalJobs,
+        successful: successfulJobs,
+        failed: failedJobs,
+        successRate,
+        failureRate
+      }
     },
   });
 });

@@ -9,6 +9,17 @@ import User from '../models/User';
 import Prompt from '../models/Prompt';
 import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
+import * as Sentry from '@sentry/node';
+import { nodeProfilingIntegration } from '@sentry/profiling-node';
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [nodeProfilingIntegration()],
+    tracesSampleRate: 1.0,
+    profilesSampleRate: 1.0,
+  });
+}
 import { PipelineJobPayload } from '../queues/pipelineQueue';
 import { incrementUploadCount } from '../services/uploadLimitService';
 import { notifyUser } from '../services/notificationService';
@@ -301,6 +312,10 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
     } catch (error: any) {
       console.error(`Error processing job ${jobId}:`, error);
+
+      if (process.env.SENTRY_DSN) {
+        Sentry.captureException(error, { extra: { jobId, userId } });
+      }
 
       // Attempt to record failure in DB if not already captured
       const errorMsg = `\nWorker Error: ${error.message}`;
