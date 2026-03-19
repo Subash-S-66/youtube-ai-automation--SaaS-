@@ -50,7 +50,7 @@ export default function GlobalBanner() {
         initial={{ opacity: 0, height: 0 }}
         animate={{ opacity: 1, height: '40px' }}
         exit={{ opacity: 0, height: 0 }}
-        className={`w-full font-medium overflow-hidden z-[100] fixed top-0 left-0 flex items-center shadow-md ${currentStyle}`}
+        className={`w-full font-medium overflow-hidden z-[999] fixed top-0 left-0 flex items-center shadow-md ${currentStyle}`}
       >
         <div className="relative w-full h-full flex items-center overflow-hidden">
           <motion.div
