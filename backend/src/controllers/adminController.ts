@@ -88,7 +88,10 @@ export const createNotification = asyncHandler(async (req: Request, res: Respons
 
 const bannerSchema = z.object({
   body: z.object({
-    message: z.string().min(1, 'Banner message is required'),
+    message: z.string()
+      .min(1, 'Banner message is required')
+      .max(200, 'Banner message must be at most 200 characters')
+      .refine(s => !s.includes('\n'), { message: 'Banner message must be a single line (no newlines)' }),
     isActive: z.boolean().default(true),
     type: z.enum(['info', 'warning', 'critical']).default('info'),
   }),

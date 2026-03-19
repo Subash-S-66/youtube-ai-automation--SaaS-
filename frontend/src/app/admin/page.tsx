@@ -259,7 +259,7 @@ export default function AdminDashboard() {
                 </div>
                 <form onSubmit={handleSetBanner} className="space-y-4">
                   <div>
-                    <textarea placeholder="Banner Message" value={bannerMessage} onChange={(e) => setBannerMessage(e.target.value)} required rows={3} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none resize-none"></textarea>
+                    <input type="text" placeholder="Banner Message (Max 200 chars)" value={bannerMessage} onChange={(e) => setBannerMessage(e.target.value)} required maxLength={200} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none" />
                   </div>
                   <div>
                     <select value={bannerType} onChange={(e) => setBannerType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none">

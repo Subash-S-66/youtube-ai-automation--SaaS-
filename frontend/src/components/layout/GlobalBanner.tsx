@@ -7,6 +7,18 @@ export default function GlobalBanner() {
   const [banner, setBanner] = useState<{ message: string; isActive: boolean; type: 'info'|'warning'|'critical' } | null>(null);
 
   useEffect(() => {
+    if (banner && banner.isActive) {
+      document.body.classList.add('has-global-banner');
+    } else {
+      document.body.classList.remove('has-global-banner');
+    }
+
+    return () => {
+      document.body.classList.remove('has-global-banner');
+    };
+  }, [banner]);
+
+  useEffect(() => {
     const fetchBanner = async () => {
       try {
         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/banner`);
@@ -36,24 +48,25 @@ export default function GlobalBanner() {
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0, height: 0 }}
-        animate={{ opacity: 1, height: '32px' }}
+        animate={{ opacity: 1, height: '40px' }}
         exit={{ opacity: 0, height: 0 }}
-        className={`w-full font-medium overflow-hidden z-[100] relative ${currentStyle}`}
+        className={`w-full font-medium overflow-hidden z-[100] fixed top-0 left-0 flex items-center shadow-md ${currentStyle}`}
       >
-        <div className="relative w-full h-8 flex items-center overflow-hidden">
+        <div className="relative w-full h-full flex items-center overflow-hidden">
           <motion.div
-            className="whitespace-nowrap flex items-center h-full"
-            initial={{ x: '100%' }}
-            animate={{ x: '-100%' }}
+            className="whitespace-nowrap flex items-center h-full min-w-full"
+            initial={{ x: '100vw' }}
+            animate={{ x: '-100vw' }}
             transition={{
               repeat: Infinity,
-              duration: 25,
+              duration: 20,
               ease: 'linear',
             }}
           >
-            <span className="px-8">{banner.message}</span>
-            <span className="px-8">{banner.message}</span>
-            <span className="px-8">{banner.message}</span>
+            <span className="px-8 inline-block align-middle">{banner.message}</span>
+            <span className="px-8 inline-block align-middle">{banner.message}</span>
+            <span className="px-8 inline-block align-middle">{banner.message}</span>
+            <span className="px-8 inline-block align-middle">{banner.message}</span>
           </motion.div>
         </div>
       </motion.div>
