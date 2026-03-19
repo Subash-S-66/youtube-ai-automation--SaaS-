@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -69,7 +70,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
               const isActive = pathname === link.href;
 
               return (
-                <a
+                <Link
                   key={link.name}
                   href={link.href}
                   className={cn(
@@ -86,7 +87,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
                   )}
                   <Icon className={cn("mr-3 flex-shrink-0 h-5 w-5 transition-colors", isActive ? "text-[#00D4FF]" : "text-slate-500 group-hover:text-[#7C5CFF]")} />
                   {link.name}
-                </a>
+                </Link>
               )
             })}
           </nav>

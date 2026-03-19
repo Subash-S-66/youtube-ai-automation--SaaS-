@@ -183,31 +183,33 @@ export default function AdminDashboard() {
   };
 
   useEffect(() => {
+    let isMounted = true;
     const initAdmin = async () => {
       try {
         const me = await authService.getMe();
-        if (me?.data?.user?.role !== 'admin') {
-          router.push('/dashboard');
+        if (!me?.data?.user || me.data.user.role !== 'admin') {
+          if (isMounted) router.replace('/dashboard');
           return;
         }
 
-        setCurrentUser({ ...me.data.user, plan: me.data.plan, displayPlan: me.data.displayPlan, isBetaMode: me.data.isBetaMode });
-
-        const [statsData, usersData] = await Promise.all([
-          adminService.getStats(),
-          adminService.getUsers()
-        ]);
-
-        setStats(statsData.data);
-        setUsers(usersData.data);
+        if (isMounted) {
+          setCurrentUser({ ...me.data.user, plan: me.data.plan, displayPlan: me.data.displayPlan, isBetaMode: me.data.isBetaMode });
+          const [statsData, usersData] = await Promise.all([
+            adminService.getStats(),
+            adminService.getUsers()
+          ]);
+          setStats(statsData.data);
+          setUsers(usersData.data);
+        }
       } catch (error) {
         console.error("Admin init error", error);
-        router.push('/dashboard');
+        if (isMounted) router.replace('/login');
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
     initAdmin();
+    return () => { isMounted = false; };
   }, [router]);
 
   const loadUserDetails = async (id: string) => {
