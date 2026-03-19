@@ -164,7 +164,15 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           settings.currentPart = 1;
           settings.lastPrompt = "";
         }
-        await appendLogSafe(jobId, `\nProceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...\n`, 'running');
+
+        // Ensure recap is strictly disabled for Part 1 regardless of frontend payload
+        if (settings.currentPart <= 1) {
+            settings.recapEnabled = false;
+        }
+
+        await appendLogSafe(jobId, `
+Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
+`, 'running');
       }
 
       // 3. Get valid YouTube token

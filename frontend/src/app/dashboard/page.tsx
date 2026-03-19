@@ -376,7 +376,7 @@ function Dashboard() {
         storyMode,
         storyId: executeStoryId || storyId,
         currentPart,
-        recapEnabled,
+        recapEnabled: currentPart > 1 ? recapEnabled : false,
         ctaEnabled,
         voices: finalVoices
       }, acceptedWarning);

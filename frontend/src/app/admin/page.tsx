@@ -248,14 +248,16 @@ export default function AdminDashboard() {
     }
   };
 
-  if (loading) {
+if (loading) {
     return (
-      <DashboardLayout user={currentUser}>
-        <div className="flex justify-center items-center h-[50vh]">
-          <RefreshCw className="h-8 w-8 animate-spin text-[#7C5CFF]" />
-        </div>
-      </DashboardLayout>
+      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
+        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
+      </div>
     );
+  }
+
+  if (!currentUser || currentUser.role !== 'admin') {
+    return null; // Prevents render while redirecting
   }
 
   return (
