@@ -45,6 +45,10 @@ export const startPipeline = asyncHandler(
       throw new AppError(limitCheck.message || 'Daily upload limit reached', 403);
     }
 
+    if (limitCheck.remainingUploads < settings.videoCount) {
+      throw new AppError(`Not enough uploads remaining. You requested ${settings.videoCount} videos but only have ${limitCheck.remainingUploads} uploads available today.`, 400);
+    }
+
     const user = await User.findById(userId);
     if (!user) {
       throw new AppError('User not found', 404);

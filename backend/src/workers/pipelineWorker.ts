@@ -208,7 +208,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
          // Handle Consumption Rules
          if (finalStatusMarker === 'SUCCESS') {
-            await incrementUploadCount(userId).catch(console.error);
+            await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
 
             // Handle Story Mode increment
             if (settings.storyMode && settings.storyId) {
@@ -235,7 +235,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
             }
          } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
             // Always consume upload on YouTube rejection (per updated specs)
-            await incrementUploadCount(userId).catch(console.error);
+            await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
 
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
