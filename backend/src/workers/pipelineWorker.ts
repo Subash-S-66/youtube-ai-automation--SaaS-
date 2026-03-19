@@ -308,10 +308,15 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
             if (user) {
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
-         } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
+                  } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
             await JobModel.findByIdAndUpdate(jobId, { status: 'failed' });
-            // Always consume upload on YouTube rejection (per updated specs)
-            await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
+
+            const dbJobCheck = await JobModel.findById(jobId);
+            const acceptedWarning = dbJobCheck?.acceptedYouTubeLimitWarning || false;
+
+            if (acceptedWarning) {
+              await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
+            }
 
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
