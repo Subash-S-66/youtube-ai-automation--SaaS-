@@ -10,7 +10,6 @@ export const checkAndUpdateUserPlan = async (user: any): Promise<any> => {
   if (user.subscriptionExpiresAt && new Date() > user.subscriptionExpiresAt) {
     user.plan = 'free';
     user.subscriptionExpiresAt = undefined;
-    user.subscriptionStatus = 'inactive';
     await user.save();
   }
   return user;

@@ -24,6 +24,7 @@ export const runPipelineSchema = z.object({
     }, {
       message: 'settings are required',
     }),
+    acceptedYouTubeLimitWarning: z.boolean().optional(),
   }),
 });
 

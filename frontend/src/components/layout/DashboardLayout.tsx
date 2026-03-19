@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles } from 'lucide-react';
+import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
@@ -26,6 +26,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
     { name: 'History', icon: History, href: '/history' },
     { name: 'Payments', icon: CreditCard, href: '/payments' },
     { name: 'Settings', icon: Settings, href: '/settings' },
+    { name: 'Help', icon: HelpCircle, href: '/help' },
   ];
 
   return (
@@ -48,7 +49,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
       <motion.aside
         initial={{ x: -300 }}
         animate={{ x: isMobileMenuOpen ? 0 : 0 }}
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#111827] border-r border-[#1A2235] shadow-2xl md:relative md:translate-x-0 transform transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`fixed inset-y-0 left-0 z-50 w-64 md:w-56 bg-[#111827] border-r border-[#1A2235] shadow-2xl md:relative md:translate-x-0 transform transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         <div className="h-full flex flex-col">
           {/* Logo Area */}
