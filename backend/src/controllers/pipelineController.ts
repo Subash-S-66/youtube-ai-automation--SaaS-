@@ -66,7 +66,7 @@ export const startPipeline = asyncHandler(
       pro: 10,
       premium: 20,
     };
-    const maxConcurrentJobs = concurrentLimits[user.plan] || 1;
+    const maxConcurrentJobs = (concurrentLimits as any)[limitCheck.plan] || 1;
 
     const activeJobsCount = await Job.countDocuments({
       userId,
