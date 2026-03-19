@@ -2,7 +2,13 @@ import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import User from '../models/User';
+import DeletedUser from '../models/DeletedUser';
 import { z } from 'zod';
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
+  apiVersion: '2025-01-27.acacia' as any,
+});
 
 const updateSettingsSchema = z.object({
   body: z.object({
@@ -46,5 +52,50 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
     success: true,
     message: 'Settings updated successfully',
     data: updatedUser,
+  });
+});
+
+export const deleteAccount = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  // Cancel Stripe subscription
+  if (user.stripeCustomerId && user.subscriptionStatus === 'active') {
+    try {
+      const subscriptions = await stripe.subscriptions.list({
+        customer: user.stripeCustomerId,
+        status: 'active',
+      });
+      for (const sub of subscriptions.data) {
+        await stripe.subscriptions.cancel(sub.id);
+      }
+    } catch (error) {
+      console.error('Failed to cancel Stripe subscription during account deletion:', error);
+    }
+  }
+
+  // Store in DeletedUsers collection
+  await DeletedUser.create({
+    email: user.email,
+    planHistory: [user.plan],
+    usageStats: {
+      uploadsUsedTotal: user.uploadsUsedToday, // can add historical later if tracked
+    },
+    deletedAt: new Date(),
+  });
+
+  // Delete user from active users
+  await user.deleteOne();
+
+  res.status(200).json({
+    success: true,
+    message: 'Account deleted successfully',
   });
 });

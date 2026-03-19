@@ -1,6 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { register, login, getMe, verifyEmail, forgotPassword, resetPassword, resendVerificationEmail } from '../controllers/authController';
+import { register, login, getMe, verifyEmail, forgotPassword, resetPassword, resendVerificationEmail, googleLogin, googleCallback } from '../controllers/authController';
 import { protect } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validateResource';
 import { registerSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema, resendVerificationSchema } from '../utils/validators/authValidators';
@@ -18,8 +18,10 @@ const resendVerificationLimiter = rateLimit({
   },
 });
 
-router.post('/register', authLimiter, validate(registerSchema), register);
-router.post('/login', authLimiter, validate(loginSchema), login);
+router.post('/register', validate(registerSchema), register);
+router.post('/login', validate(loginSchema), login);
+router.get('/google', googleLogin);
+router.get('/google/callback', googleCallback);
 router.get('/verify-email', verifyEmail);
 router.post('/resend-verification', resendVerificationLimiter, validate(resendVerificationSchema), resendVerificationEmail);
 router.post('/forgot-password', authLimiter, validate(forgotPasswordSchema), forgotPassword);

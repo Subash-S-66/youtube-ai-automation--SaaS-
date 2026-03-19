@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import User from '../models/User';
+import Notification from '../models/Notification';
 import { AppError } from '../middleware/errorHandler';
+import asyncHandler from '../utils/asyncHandler';
 
 export const saveToken = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -31,3 +33,20 @@ export const saveToken = async (req: Request, res: Response, next: NextFunction)
     next(error);
   }
 };
+
+export const getNotifications = asyncHandler(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) {
+    throw new AppError('Unauthorized', 401);
+  }
+
+  // Fetch notifications that target the user's plan, sorted by latest
+  const notifications = await Notification.find({
+    targetPlans: user.plan
+  }).sort({ createdAt: -1 });
+
+  res.status(200).json({
+    success: true,
+    data: notifications,
+  });
+});

@@ -1,5 +1,5 @@
 import rateLimit from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
+import RedisStore from 'rate-limit-redis';
 import { connection } from '../config/redis';
 
 // Global rate limiter (100 requests per 15 minutes per IP)
@@ -55,4 +55,20 @@ export const pipelineLimiter = rateLimit({
       }
       return `pipeline_ip_${req.ip}`;
   }
+});
+
+export const pipelineRateLimiter = rateLimit({
+  store: new RedisStore({
+    // @ts-expect-error - Known typing mismatch with ioredis, works at runtime
+    sendCommand: (...args: string[]) => connection.call(...args),
+  }),
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 5, // Limit each IP to 5 requests per 1 minute to prevent queue flooding
+  message: {
+    status: 429,
+    success: false,
+    message: 'Queue flood protection triggered: Maximum 5 jobs per minute allowed. Please wait.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
 });

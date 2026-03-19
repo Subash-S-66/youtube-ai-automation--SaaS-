@@ -1,6 +1,6 @@
 import express from 'express';
 import { protect } from '../middleware/authMiddleware';
-import { updateSettings } from '../controllers/userController';
+import { updateSettings, deleteAccount } from '../controllers/userController';
 
 const router = express.Router();
 
@@ -8,5 +8,6 @@ const router = express.Router();
 router.use(protect);
 
 router.put('/settings', updateSettings);
+router.delete('/me', deleteAccount);
 
 export default router;
