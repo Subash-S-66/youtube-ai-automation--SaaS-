@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, Youtube, Mail, BellRing, Trash2, ShieldAlert, CheckCircle2, RefreshCw, User, Info, Save } from 'lucide-react';
+import { Settings, Youtube, Mail, BellRing, Trash2, ShieldAlert, CheckCircle2, RefreshCw, User, Info, Save, Copy } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
 import { userService } from '../../services/userService';

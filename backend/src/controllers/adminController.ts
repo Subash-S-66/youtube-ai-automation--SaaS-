@@ -329,3 +329,39 @@ export const updateUserPlan = asyncHandler(async (req: Request, res: Response) =
     },
   });
 });
+
+export const triggerWeeklyReports = asyncHandler(async (req: Request, res: Response) => {
+  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const activeUsers = await User.find({
+    plan: { $in: ['basic', 'pro', 'premium'] }
+  }).select('email _id');
+
+  let emailsQueued = 0;
+
+  for (const user of activeUsers) {
+    const weeklyJobs = await Job.countDocuments({
+      userId: user._id,
+      status: 'success',
+      createdAt: { $gte: oneWeekAgo }
+    });
+
+    if (weeklyJobs > 0) {
+      await emailQueue.add('emailJob', {
+        to: user.email,
+        subject: 'Your Weekly ClipForge Analytics',
+        message: `Hello!
+
+You successfully generated and uploaded ${weeklyJobs} videos over the past 7 days. Keep up the great work and watch your channels grow!
+
+- The ClipForge Team`
+      });
+      emailsQueued++;
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: `Weekly report triggered successfully. Queued ${emailsQueued} emails.`,
+  });
+});

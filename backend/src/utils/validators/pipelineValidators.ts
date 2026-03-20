@@ -24,6 +24,10 @@ export const runPipelineSchema = z.object({
       resetStory: z.boolean().optional(),
       userMediaPaths: z.array(z.string()).optional(),
       lastPrompt: z.string().optional(),
+      templateConfig: z.object({
+         fontStyle: z.string().optional(),
+         subtitleColor: z.string().optional()
+      }).optional()
     }, {
       message: 'settings are required',
     }),

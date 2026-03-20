@@ -124,6 +124,11 @@ export default function PaymentsPage() {
                 <span className="text-4xl font-extrabold text-white capitalize">{user?.plan}</span>
                 <span className="text-sm text-slate-500 mb-1 ml-2">/ month</span>
               </div>
+              {user?.cancelAtPeriodEnd && (
+                 <div className="mt-2 inline-block px-3 py-1 bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-bold rounded">
+                   Cancels at Period End
+                 </div>
+              )}
 
               <div className="space-y-4 mt-6">
                 <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Daily Usage</h4>

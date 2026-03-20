@@ -60,6 +60,11 @@ export const startPipeline = asyncHandler(
         }
     }
 
+    if (limitCheck.plan !== 'premium' && settings.templateConfig) {
+        throw new AppError('Template Customization is only available on the Premium plan.', 403);
+    }
+
+
 
     if (limitCheck.remainingUploads < settings.videoCount) {
       throw new AppError(`Not enough uploads remaining. You requested ${settings.videoCount} videos but only have ${limitCheck.remainingUploads} uploads available today.`, 400);

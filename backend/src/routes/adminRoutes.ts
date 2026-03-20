@@ -11,6 +11,7 @@ import {
   deleteUserByAdmin,
   getSystemConfig,
   updateSystemConfig,
+  triggerWeeklyReports,
 } from '../controllers/adminController';
 
 const router = express.Router();
@@ -28,5 +29,6 @@ router.post('/notify', createNotification);
 router.post('/banner', setGlobalBanner);
 router.get('/config', getSystemConfig);
 router.post('/config', updateSystemConfig);
+router.post('/trigger-reports', triggerWeeklyReports);
 
 export default router;
