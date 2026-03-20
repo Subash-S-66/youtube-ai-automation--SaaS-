@@ -146,9 +146,10 @@ export default function AdminDashboard() {
 
     setUpdatingConfig(true);
     try {
-      await adminService.updateSystemConfig({ betaMode: newBetaMode });
+            await adminService.updateSystemConfig({ betaMode: newBetaMode });
       setBetaMode(newBetaMode);
       alert(`Beta Mode ${newBetaMode ? 'ENABLED' : 'DISABLED'} successfully.`);
+      window.location.reload(); // Force refresh to update all limits/user context instantly
     } catch (err) {
       console.error(err);
       alert('Failed to update system config.');

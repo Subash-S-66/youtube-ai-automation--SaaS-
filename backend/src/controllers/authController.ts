@@ -126,7 +126,9 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         displayPlan: limitCheck.displayPlan,
         isBetaMode: limitCheck.isBetaMode,
         remainingUploads: limitCheck.remainingUploads,
+        uploadsUsedToday: user.uploadsUsedToday || 0,
         uploadsOnHold: user.uploadsOnHold || 0,
+        uploadLimitPerDay: planLimits[limitCheck.plan] || planLimits['free'] || 3,
         uploadLimit: planLimits[limitCheck.plan] || planLimits['free'] || 3,
       },
     });

@@ -125,7 +125,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
         {/* Top Navbar */}
-        <header className="h-16 flex-shrink-0 bg-[#111827]/80 backdrop-blur-xl border-b border-[#1A2235] flex items-center justify-between px-4 sm:px-6 lg:px-8 z-10">
+        <header className="sticky top-0 h-16 flex-shrink-0 bg-[#111827]/80 backdrop-blur-xl border-b border-[#1A2235] flex items-center justify-between px-4 sm:px-6 lg:px-8 z-[1000]">
            <button
              className="md:hidden text-slate-400 hover:text-white"
              onClick={() => setIsMobileMenuOpen(true)}
