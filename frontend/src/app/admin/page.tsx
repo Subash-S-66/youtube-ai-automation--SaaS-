@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, RefObject } from 'react';
 import { useRouter } from 'next/navigation';
 import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, History as HistoryIcon, FileText, Bell, MonitorPlay, Trash2, Settings, CheckCircle } from 'lucide-react';
 import { adminService } from '../../services/adminService';
@@ -68,6 +68,9 @@ export default function AdminDashboard() {
   const [bannerEnd, setBannerEnd] = useState('');
   const [bannering, setBannering] = useState(false);
   const [togglingBanner, setTogglingBanner] = useState(false);
+  const bannerStartRef = useRef<HTMLInputElement | null>(null);
+  const bannerEndRef = useRef<HTMLInputElement | null>(null);
+  const editExpiryRef = useRef<HTMLInputElement | null>(null);
 
   const [betaMode, setBetaMode] = useState(false);
   const [updatingConfig, setUpdatingConfig] = useState(false);
@@ -422,6 +425,16 @@ const handleDeleteUser = () => {
     }
   };
 
+  const openPicker = (ref: RefObject<HTMLInputElement>) => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof (el as any).showPicker === 'function') {
+      (el as any).showPicker();
+    } else {
+      el.focus();
+    }
+  };
+
 if (loading) {
     return (
       <DashboardLayout user={currentUser}>
@@ -524,11 +537,55 @@ if (loading) {
                   <div className="flex gap-4">
                     <div className="flex-1">
                       <label htmlFor="banner-start" className="block text-xs text-slate-400 mb-1">Start At (Optional)</label>
-                      <input id="banner-start" type="datetime-local" value={bannerStart} onChange={(e) => setBannerStart(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                      <div className="relative">
+                        <input
+                          id="banner-start"
+                          ref={bannerStartRef}
+                          type="datetime-local"
+                          value={bannerStart}
+                          onChange={(e) => setBannerStart(e.target.value)}
+                          className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]"
+                        />
+                        <button
+                          type="button"
+                          aria-label="Open start date picker"
+                          onClick={() => openPicker(bannerStartRef)}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                            <line x1="16" y1="2" x2="16" y2="6" />
+                            <line x1="8" y1="2" x2="8" y2="6" />
+                            <line x1="3" y1="10" x2="21" y2="10" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                     <div className="flex-1">
                       <label htmlFor="banner-end" className="block text-xs text-slate-400 mb-1">End At (Optional)</label>
-                      <input id="banner-end" type="datetime-local" value={bannerEnd} onChange={(e) => setBannerEnd(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                      <div className="relative">
+                        <input
+                          id="banner-end"
+                          ref={bannerEndRef}
+                          type="datetime-local"
+                          value={bannerEnd}
+                          onChange={(e) => setBannerEnd(e.target.value)}
+                          className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]"
+                        />
+                        <button
+                          type="button"
+                          aria-label="Open end date picker"
+                          onClick={() => openPicker(bannerEndRef)}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                            <line x1="16" y1="2" x2="16" y2="6" />
+                            <line x1="8" y1="2" x2="8" y2="6" />
+                            <line x1="3" y1="10" x2="21" y2="10" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <label className="flex items-center justify-between cursor-pointer bg-[#0B0F1A] border border-[#1A2235] rounded-xl px-4 py-3">
@@ -690,7 +747,28 @@ if (loading) {
                       </div>
                       <div>
                         <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Expiry Date</label>
-                        <input type="date" value={editExpiry} onChange={(e) => setEditExpiry(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none [color-scheme:dark]" />
+                        <div className="relative">
+                          <input
+                            ref={editExpiryRef}
+                            type="date"
+                            value={editExpiry}
+                            onChange={(e) => setEditExpiry(e.target.value)}
+                            className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none [color-scheme:dark]"
+                          />
+                          <button
+                            type="button"
+                            aria-label="Open expiry date picker"
+                            onClick={() => openPicker(editExpiryRef)}
+                            className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                              <line x1="16" y1="2" x2="16" y2="6" />
+                              <line x1="8" y1="2" x2="8" y2="6" />
+                              <line x1="3" y1="10" x2="21" y2="10" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
                       <button onClick={handleUpdatePlan} disabled={savingPlan} className="w-full flex justify-center items-center py-2.5 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors">
                         {savingPlan ? <RefreshCw className="h-4 w-4 animate-spin" /> : <><Save className="h-4 w-4 mr-2" /> Save Changes</>}

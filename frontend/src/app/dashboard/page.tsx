@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useState, Suspense, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Play, Activity, Youtube, ListVideo, Clock, FileVideo,
   ShieldAlert, Sparkles, RefreshCw, PenLine, List,
-  BookOpen, Mic, Volume2, Calendar
+  BookOpen, Mic, Volume2
 } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
@@ -64,6 +64,7 @@ function Dashboard() {
   // Scheduling State
   const [scheduleEnabled, setScheduleEnabled] = useState<boolean>(false);
   const [scheduleDatetime, setScheduleDatetime] = useState<string>('');
+  const scheduleInputRef = useRef<HTMLInputElement | null>(null);
   const [autoUploadEnabled, setAutoUploadEnabled] = usePersistentSettings<boolean>('clipforge_autoUploadEnabled', false);
   const [autoUploadIntervalHours, setAutoUploadIntervalHours] = usePersistentSettings<number>('clipforge_autoUploadIntervalHours', 2);
   const [autoUploadVideosPerInterval, setAutoUploadVideosPerInterval] = usePersistentSettings<number>('clipforge_autoUploadVideosPerInterval', 1);
@@ -687,52 +688,6 @@ function Dashboard() {
                 )}
               </AnimatePresence>
 
-              {/* Scheduling Options */}
-              <div className="p-5 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 rounded-xl border border-[#00D4FF]/30">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center">
-                    <Calendar className="h-5 w-5 text-[#00D4FF] mr-2" />
-                    <h3 className="text-sm font-semibold text-white">Auto Upload Schedule</h3>
-                  </div>
-                  <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
-                    <input type="checkbox" className="sr-only peer" checked={scheduleEnabled} onChange={(e) => {
-                      if (isFreeUser) {
-                        setModalConfig({
-                          isOpen: true,
-                          title: 'Upgrade Required',
-                          description: 'Scheduling is only available on paid plans.',
-                          type: 'warning',
-                          confirmText: 'Upgrade Now',
-                          cancelText: 'Dismiss',
-                          onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
-                          onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-                        });
-                        return;
-                      }
-                      setScheduleEnabled(e.target.checked);
-                    }} disabled={isFreeUser} />
-                    <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
-                  </label>
-                </div>
-
-                <AnimatePresence>
-                  {scheduleEnabled && (
-                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                      <div className="pt-4 mt-4 border-t border-[#00D4FF]/20">
-                        <label className="block text-sm font-medium text-slate-300 mb-2">Publish Date & Time</label>
-                        <input
-                          type="datetime-local"
-                          value={scheduleDatetime}
-                          onChange={(e) => setScheduleDatetime(e.target.value)}
-                          className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-3 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
-                        />
-                        <p className="text-xs text-slate-400 mt-2">The video will be generated and automatically published to YouTube at this time.</p>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
               {/* Story Mode Options */}
               <div className="p-5 bg-gradient-to-r from-[#7C5CFF]/10 to-[#00D4FF]/10 rounded-xl border border-[#7C5CFF]/30">
                 <div className="flex items-center justify-between mb-4">
@@ -848,7 +803,79 @@ function Dashboard() {
 
                   <div className="mt-4 pt-4 border-t border-[#1A2235]">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-300">Auto Upload Interval</span>
+                      <span className="text-sm text-slate-300">Schedule this video</span>
+                      <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={scheduleEnabled}
+                          onChange={(e) => {
+                            if (isFreeUser) {
+                              setModalConfig({
+                                isOpen: true,
+                                title: 'Upgrade Required',
+                                description: 'Scheduling is only available on paid plans.',
+                                type: 'warning',
+                                confirmText: 'Upgrade Now',
+                                cancelText: 'Dismiss',
+                                onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
+                                onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+                              });
+                              return;
+                            }
+                            setScheduleEnabled(e.target.checked);
+                          }}
+                          disabled={isFreeUser}
+                        />
+                        <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                      </label>
+                    </div>
+
+                    <AnimatePresence>
+                      {scheduleEnabled && (
+                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="mt-3">
+                            <label className="block text-xs text-slate-400 mb-1">Publish Date & Time</label>
+                            <div className="relative">
+                              <input
+                                ref={scheduleInputRef}
+                                type="datetime-local"
+                                value={scheduleDatetime}
+                                onChange={(e) => setScheduleDatetime(e.target.value)}
+                                className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors pr-10"
+                              />
+                              <button
+                                type="button"
+                                aria-label="Open calendar"
+                                onClick={() => {
+                                  const el = scheduleInputRef.current;
+                                  if (!el) return;
+                                  if (typeof (el as any).showPicker === 'function') {
+                                    (el as any).showPicker();
+                                  } else {
+                                    el.focus();
+                                  }
+                                }}
+                                className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                                  <line x1="16" y1="2" x2="16" y2="6" />
+                                  <line x1="8" y1="2" x2="8" y2="6" />
+                                  <line x1="3" y1="10" x2="21" y2="10" />
+                                </svg>
+                              </button>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-2">The video will be generated and published at this time.</p>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-[#1A2235]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-slate-300">Auto Upload Schedule</span>
                       <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
                         <input
                           type="checkbox"

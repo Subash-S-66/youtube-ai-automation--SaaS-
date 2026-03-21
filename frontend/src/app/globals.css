@@ -45,6 +45,34 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Remove number input spinners across browsers */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Make native calendar icon white in dark UI */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  display: block;
+}
+
+input[type="date"],
+input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
+input.calendar-white::-webkit-calendar-picker-indicator {
+  opacity: 0;
+}
+
 body.has-global-banner {
   --global-banner-offset: 40px;
   padding-top: var(--global-banner-offset);
