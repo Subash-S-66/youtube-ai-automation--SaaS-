@@ -4,6 +4,7 @@ import connectDB from './config/db';
 import { initializeFirebaseAdmin } from './config/firebaseAdmin';
 import { ensureAdminUser } from './utils/ensureAdminUser';
 import { ensureSystemConfigSingleton } from './utils/ensureSystemConfig';
+import { startScheduleRunner } from './workers/scheduleRunner';
 
 // Initialize Firebase Admin
 initializeFirebaseAdmin();
@@ -12,6 +13,7 @@ initializeFirebaseAdmin();
 connectDB().then(async () => {
   await ensureAdminUser();
   await ensureSystemConfigSingleton();
+  startScheduleRunner();
 }).catch((err) => {
   console.error('Failed to ensure admin user', err);
 });
