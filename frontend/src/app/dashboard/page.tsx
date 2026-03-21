@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
+import dynamic from 'next/dynamic';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
@@ -14,7 +15,8 @@ import { promptService } from '../../services/promptService';
 import { pipelineService } from '../../services/pipelineService';
 import { paymentService } from '../../services/paymentService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import AppModal, { AppModalType } from '../../components/ui/AppModal';
+const AppModal = dynamic(() => import('../../components/ui/AppModal'), { ssr: false });
+import { AppModalType } from '../../components/ui/AppModal';
 import { usePersistentSettings } from '../../hooks/usePersistentSettings';
 import { requestNotificationPermission } from '../../lib/notifications';
 import { cn } from '../../lib/utils';

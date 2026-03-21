@@ -6,18 +6,35 @@
 }
 
 @theme {
-  --color-primary: #7C5CFF;
-  --color-secondary: #00D4FF;
-  --color-accent: #FF4FD8;
-  --color-base: #0B0F1A;
-  --color-surface: #111827;
-  --color-surface-elevated: #1A2235;
+  --color-primary: var(--theme-primary, #7C5CFF);
+  --color-secondary: var(--theme-secondary, #00D4FF);
+  --color-accent: var(--theme-accent, #FF4FD8);
+  --color-base: var(--theme-base, #0B0F1A);
+  --color-surface: var(--theme-surface, #111827);
+  --color-surface-elevated: var(--theme-surface-elevated, #1A2235);
 }
 
 :root {
-  --background: #0B0F1A;
+  --background: var(--theme-base, #0B0F1A);
   --foreground: #f8fafc;
   --global-banner-offset: 0px;
+
+  --theme-primary: #7C5CFF;
+  --theme-secondary: #00D4FF;
+  --theme-accent: #FF4FD8;
+  --theme-base: #0B0F1A;
+  --theme-surface: #111827;
+  --theme-surface-elevated: #1A2235;
+}
+
+[data-theme="transparent"] {
+  --theme-primary: #a78bfa;
+  --theme-secondary: #38bdf8;
+  --theme-accent: #f472b6;
+  --theme-base: rgba(11, 15, 26, 0.85);
+  --theme-surface: rgba(17, 24, 39, 0.6);
+  --theme-surface-elevated: rgba(26, 34, 53, 0.7);
+  backdrop-filter: blur(10px);
 }
 
 body {
@@ -94,25 +111,25 @@ body.has-global-banner {
 /* Shared Utility Classes for Glows */
 @layer utilities {
   .bg-gradient-primary {
-    background: linear-gradient(135deg, #00D4FF, #7C5CFF, #FF4FD8);
+    background: linear-gradient(135deg, var(--theme-secondary), var(--theme-primary), var(--theme-accent));
   }
   .text-gradient-primary {
-    background: linear-gradient(135deg, #00D4FF, #7C5CFF, #FF4FD8);
+    background: linear-gradient(135deg, var(--theme-secondary), var(--theme-primary), var(--theme-accent));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }
   .shadow-glow-primary {
-    box-shadow: 0 0 20px rgba(124, 92, 255, 0.4);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--theme-primary) 40%, transparent);
   }
   .shadow-glow-primary-hover:hover {
-    box-shadow: 0 0 30px rgba(124, 92, 255, 0.6);
+    box-shadow: 0 0 30px color-mix(in srgb, var(--theme-primary) 60%, transparent);
   }
   .shadow-glow-accent {
-    box-shadow: 0 0 20px rgba(255, 79, 216, 0.4);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--theme-accent) 40%, transparent);
   }
   .border-glow-primary:focus-within {
-    border-color: #7C5CFF;
-    box-shadow: 0 0 10px rgba(124, 92, 255, 0.3);
+    border-color: var(--theme-primary);
+    box-shadow: 0 0 10px var(--theme-primary);
   }
 
   .banner-info-blue {
