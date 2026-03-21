@@ -9,7 +9,6 @@ import GlobalBanner from '../models/GlobalBanner';
 import DeletedUser from '../models/DeletedUser';
 import SystemConfig from '../models/SystemConfig';
 import { z } from 'zod';
-import { planLimits } from '../config/plans';
 import { emailQueue } from '../queues/emailQueue';
 import { pipelineQueue } from '../queues/pipelineQueue';
 
@@ -143,12 +142,6 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
 const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
-    planLimits: z.object({
-      free: z.number().int().min(1),
-      basic: z.number().int().min(1),
-      pro: z.number().int().min(1),
-      premium: z.number().int().min(1),
-    }).optional(),
   }),
 });
 
@@ -159,11 +152,8 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     throw new AppError(errorMessages, 400);
   }
 
-  const { betaMode, planLimits } = validation.data.body;
+  const { betaMode } = validation.data.body;
   const updatePayload: any = { betaMode };
-  if (planLimits) {
-    updatePayload.planLimits = planLimits;
-  }
   const config = await SystemConfig.findOneAndUpdate(
     {},
     updatePayload,

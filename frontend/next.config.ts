@@ -4,40 +4,24 @@ import withPWAInit from "@ducanh2912/next-pwa";
 const withPWA = withPWAInit({
   dest: "public",
   disable: process.env.NODE_ENV === "development",
-  register: true,
-  // Only cache static files (CSS, JS, images). We don't want to cache dynamic API responses here.
-  cacheOnFrontEndNav: true,
-  aggressiveFrontEndNavCaching: false,
-  reloadOnOnline: true,
   workboxOptions: {
-    disableDevLogs: true,
     runtimeCaching: [
       {
         urlPattern: /\/api\//,
-        handler: 'NetworkOnly',
+        handler: "NetworkOnly",
       },
       {
-        urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/,
-        handler: 'CacheFirst',
+        urlPattern: /\/_next\/image\?url/,
+        handler: "StaleWhileRevalidate",
         options: {
-          cacheName: 'static-images',
-          expiration: {
-            maxEntries: 100,
-          },
-        },
-      },
-      {
-        urlPattern: /\.(?:js|css)$/,
-        handler: 'StaleWhileRevalidate',
-        options: {
-          cacheName: 'static-resources',
+          cacheName: "next-image-cache",
         },
       },
       {
         urlPattern: /^https?.*/,
-        handler: 'NetworkFirst',
+        handler: "NetworkFirst",
         options: {
-          cacheName: 'offlineCache',
+          cacheName: "offlineCache",
           expiration: {
             maxEntries: 200,
           },
@@ -48,7 +32,20 @@ const withPWA = withPWAInit({
 });
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  reactStrictMode: true,
+  transpilePackages: ['lucide-react'], // Helps with tree-shaking
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'framer-motion'],
+  },
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '**',
+      },
+    ],
+    formats: ['image/avif', 'image/webp'],
+  }
 };
 
 export default withPWA(nextConfig);

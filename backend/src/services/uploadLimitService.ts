@@ -1,12 +1,13 @@
 import User from '../models/User';
-import { PlanType, resolvePlanLimit } from '../config/plans';
+import { PlanType } from '../config/plans';
 import SystemConfig from '../models/SystemConfig';
+import Plan from '../models/Plan';
 
 interface UploadLimitCheckResult {
   canUpload: boolean;
   remainingUploads: number;
   dailyLimit: number;
-  plan: PlanType;
+  plan: string;
   displayPlan?: string;
   isBetaMode?: boolean;
 }
@@ -15,6 +16,37 @@ export const checkAndDowngradeExpiredPlan = async (user: any): Promise<any> => {
   if (user.subscriptionExpiresAt && new Date() > user.subscriptionExpiresAt) {
     user.plan = 'free';
     user.subscriptionExpiresAt = undefined;
+
+    // Disable excess channels logic
+    const freePlan = await Plan.findOne({ name: 'free' });
+    const maxChannels = freePlan ? freePlan.limits.max_channels : 1;
+
+    if (user.youtubeChannels && user.youtubeChannels.length > maxChannels) {
+      user.youtubeChannels.forEach((ch: any) => {
+          if (!ch.status) ch.status = 'active'; // ensure old ones have a status
+      });
+
+      let activeChannels = user.youtubeChannels.filter((c: any) => c.status !== 'disabled_due_to_plan');
+
+      // Sort by recently warned/used if available, or fallback to createdAt
+      activeChannels.sort((a: any, b: any) => {
+        const timeA = a.lastLimitWarningSentAt ? new Date(a.lastLimitWarningSentAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const timeB = b.lastLimitWarningSentAt ? new Date(b.lastLimitWarningSentAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return timeB - timeA; // Descending, so newest/most active first
+      });
+
+      if (activeChannels.length > maxChannels) {
+         for (let i = maxChannels; i < activeChannels.length; i++) {
+             // Disable the ones beyond the allowed limit
+             const channelToDisable = activeChannels[i];
+             const idx = user.youtubeChannels.findIndex((c: any) => c.channelId === channelToDisable.channelId);
+             if (idx !== -1) {
+               user.youtubeChannels[idx].status = 'disabled_due_to_plan';
+             }
+         }
+      }
+    }
+
     await user.save();
   }
   return user;
@@ -46,11 +78,13 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
     await updatedUser.save();
   }
 
-  const actualPlan = updatedUser.plan as PlanType;
-  const betaForFreeUsers = !!systemConfig?.betaMode && actualPlan === 'free';
-  const effectivePlan: PlanType = betaForFreeUsers ? 'basic' : actualPlan;
+  const actualPlanName = updatedUser.plan as string;
+  const betaForFreeUsers = !!systemConfig?.betaMode && actualPlanName === 'free';
+  const effectivePlanName = betaForFreeUsers ? 'basic' : actualPlanName;
 
-  const dailyLimit = resolvePlanLimit(effectivePlan, systemConfig?.planLimits);
+  const planObj = await Plan.findOne({ name: effectivePlanName }) || await Plan.findOne({ name: 'free' });
+  const dailyLimit = planObj ? planObj.limits.daily_upload_limit : 2;
+
   const remainingUploads = Math.max(0, dailyLimit - uploadsUsedToday - uploadsOnHold);
 
   return {
@@ -58,9 +92,9 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
     remainingUploads,
     dailyLimit,
     // Plan is the effective plan used for feature gating and limits.
-    plan: effectivePlan,
+    plan: effectivePlanName,
     // Keep display label explicit so UI can show real plan with beta override.
-    displayPlan: betaForFreeUsers ? 'free (beta basic)' : actualPlan,
+    displayPlan: betaForFreeUsers ? 'free (beta basic)' : actualPlanName,
     isBetaMode: betaForFreeUsers,
   };
 };
