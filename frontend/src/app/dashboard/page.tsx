@@ -64,6 +64,9 @@ function Dashboard() {
   // Scheduling State
   const [scheduleEnabled, setScheduleEnabled] = useState<boolean>(false);
   const [scheduleDatetime, setScheduleDatetime] = useState<string>('');
+  const [autoUploadEnabled, setAutoUploadEnabled] = usePersistentSettings<boolean>('clipforge_autoUploadEnabled', false);
+  const [autoUploadIntervalHours, setAutoUploadIntervalHours] = usePersistentSettings<number>('clipforge_autoUploadIntervalHours', 2);
+  const [autoUploadVideosPerInterval, setAutoUploadVideosPerInterval] = usePersistentSettings<number>('clipforge_autoUploadVideosPerInterval', 1);
 
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
@@ -199,7 +202,10 @@ function Dashboard() {
     if (isFreeUser && recapEnabled) {
       setRecapEnabled(false);
     }
-  }, [isFreeUser, storyMode, recapEnabled, setStoryMode, setRecapEnabled]);
+    if (isFreeUser && autoUploadEnabled) {
+      setAutoUploadEnabled(false);
+    }
+  }, [isFreeUser, storyMode, recapEnabled, autoUploadEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
 
   const handleConnectYouTube = () => window.location.href = youtubeService.getAuthUrl();
   const handleUpgrade = async () => {
@@ -431,7 +437,41 @@ function Dashboard() {
         templateConfig: user?.plan === 'premium' ? { fontStyle: templateFont, subtitleColor: templateColor } : undefined
       };
 
-      if (scheduleEnabled && scheduleDatetime) {
+      if (autoUploadEnabled) {
+        if (isFreeUser) {
+          setModalConfig({
+            isOpen: true,
+            title: 'Upgrade Required',
+            description: 'Auto-upload scheduling is only available on paid plans.',
+            type: 'warning',
+            confirmText: 'Upgrade Now',
+            cancelText: 'Dismiss',
+            onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
+            onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+          });
+          return;
+        }
+
+        if (!autoUploadIntervalHours || autoUploadIntervalHours < 1) {
+          setMessage({ text: 'Please set a valid interval (in hours).', type: 'error' });
+          return;
+        }
+
+        if (!autoUploadVideosPerInterval || autoUploadVideosPerInterval < 1) {
+          setMessage({ text: 'Please set a valid videos per interval count.', type: 'error' });
+          return;
+        }
+
+        const { scheduleService } = require('../../services/scheduleService');
+        await scheduleService.createSchedule({
+          channelId: selectedChannelId,
+          type: 'interval',
+          intervalHours: autoUploadIntervalHours,
+          videosPerInterval: autoUploadVideosPerInterval,
+          videoConfig: { ...videoConfig, promptId: pId, videoCount: autoUploadVideosPerInterval },
+        });
+        setMessage({ text: 'Auto-upload schedule created successfully!', type: 'success' });
+      } else if (scheduleEnabled && scheduleDatetime) {
         const { scheduleService } = require('../../services/scheduleService');
         await scheduleService.createSchedule({
           channelId: selectedChannelId,
@@ -797,13 +837,78 @@ function Dashboard() {
                   </div>
                 )}
 
-                <label className="flex items-center p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235] cursor-pointer group hover:border-[#7C5CFF]/50 transition-colors">
-                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
-                     {ctaEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                <div className="p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235] hover:border-[#7C5CFF]/50 transition-colors">
+                  <label className="flex items-center cursor-pointer group">
+                    <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
+                      {ctaEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                    </div>
+                    <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
+                    <input type="checkbox" className="hidden" checked={ctaEnabled} onChange={() => setCtaEnabled(!ctaEnabled)} />
+                  </label>
+
+                  <div className="mt-4 pt-4 border-t border-[#1A2235]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-slate-300">Auto Upload Interval</span>
+                      <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={autoUploadEnabled}
+                          onChange={(e) => {
+                            if (isFreeUser) {
+                              setModalConfig({
+                                isOpen: true,
+                                title: 'Upgrade Required',
+                                description: 'Auto-upload scheduling is only available on paid plans.',
+                                type: 'warning',
+                                confirmText: 'Upgrade Now',
+                                cancelText: 'Dismiss',
+                                onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
+                                onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+                              });
+                              return;
+                            }
+                            setAutoUploadEnabled(e.target.checked);
+                          }}
+                          disabled={isFreeUser}
+                        />
+                        <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                      </label>
+                    </div>
+
+                    <AnimatePresence>
+                      {autoUploadEnabled && (
+                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="mt-3 grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs text-slate-400 mb-1">Interval (hours)</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="24"
+                                className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
+                                value={autoUploadIntervalHours}
+                                onChange={(e) => setAutoUploadIntervalHours(Number(e.target.value))}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-slate-400 mb-1">Videos per interval</label>
+                              <input
+                                type="number"
+                                min="1"
+                                max="10"
+                                className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
+                                value={autoUploadVideosPerInterval}
+                                onChange={(e) => setAutoUploadVideosPerInterval(Number(e.target.value))}
+                              />
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-2">Each channel runs its own schedule. First upload starts after the selected interval.</p>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
-                  <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
-                  <input type="checkbox" className="hidden" checked={ctaEnabled} onChange={() => setCtaEnabled(!ctaEnabled)} />
-                </label>
+                </div>
 
                 {/* Voice Selection */}
                 <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235] flex flex-col">

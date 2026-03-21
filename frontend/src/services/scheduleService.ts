@@ -1,7 +1,15 @@
 import api from '../lib/api';
 
 export const scheduleService = {
-  async createSchedule(data: { channelId: string; type: string; datetime?: Date; cron_expression?: string; videoConfig: any }) {
+  async createSchedule(data: {
+    channelId: string;
+    type: 'one-time' | 'interval';
+    datetime?: Date;
+    intervalHours?: number;
+    videosPerInterval?: number;
+    cron_expression?: string;
+    videoConfig: any;
+  }) {
     const response = await api.post('/schedules', data);
     return response.data;
   },
