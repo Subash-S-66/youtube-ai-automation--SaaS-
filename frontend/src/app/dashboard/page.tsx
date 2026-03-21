@@ -24,10 +24,11 @@ import { cn } from '../../lib/utils';
 const TOPIC_CATEGORIES = ["World News", "Tech", "Science", "Nature", "Story Mode", "Auto"];
 
 const AVAILABLE_VOICES = [
-  { id: 'v1', name: 'Adam (Deep/Calm)' },
-  { id: 'v2', name: 'Sarah (Energetic)' },
-  { id: 'v3', name: 'Marcus (Narrator)' },
-  { id: 'v4', name: 'Rachel (News Anchor)' },
+  { id: 'Aoede', name: 'Aoede (Gemini Flash Native)' },
+  { id: 'Charon', name: 'Charon (Gemini Flash Native)' },
+  { id: 'Fenrir', name: 'Fenrir (Gemini Flash Native)' },
+  { id: 'Kore', name: 'Kore (Gemini Flash Native)' },
+  { id: 'Puck', name: 'Puck (Gemini Flash Native)' },
 ];
 
 function Dashboard() {
