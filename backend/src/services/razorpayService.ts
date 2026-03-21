@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import User from '../models/User';
 import { AppError } from '../middleware/errorHandler';
+import Plan from '../models/Plan';
 
 type RazorpayPaymentLinkResponse = {
   short_url?: string;
@@ -21,17 +22,32 @@ const getRazorpayAuthHeader = () => {
   return `Basic ${token}`;
 };
 
-export const createPaymentLink = async (userId: string): Promise<string> => {
+export const createPaymentLink = async (userId: string, planId?: string): Promise<string> => {
   const user = await User.findById(userId);
   if (!user) {
     throw new AppError('User not found', 404);
   }
 
-  if (user.plan === 'pro' && user.subscriptionStatus === 'active') {
-    throw new AppError('User already has an active Pro subscription', 400);
+  // Determine which plan they are buying
+  const requestedPlanName = planId || 'pro';
+
+  const planObj = await Plan.findOne({ name: requestedPlanName });
+  if (!planObj) {
+      throw new AppError(`Plan '${requestedPlanName}' not found`, 404);
   }
 
-  const amountPaise = Number(process.env.RAZORPAY_PLAN_AMOUNT_PAISE || 0);
+  if (user.plan === requestedPlanName && user.subscriptionStatus === 'active') {
+    throw new AppError(`User already has an active ${requestedPlanName} subscription`, 400);
+  }
+
+  // Calculate amount in paise. Note plan price should be stored in USD or local currency,
+  // If price is 9.99, multiply by 100 to get integer cents/paise then by exchange rate if needed.
+  // For Razorpay INR, assume price is in USD, 1 USD ~ 80 INR
+  const exchangeRate = 80;
+  const calculatedPaise = Math.round(planObj.price * exchangeRate * 100);
+
+  // Fallback to env var if plan price is 0
+  const amountPaise = calculatedPaise || Number(process.env.RAZORPAY_PLAN_AMOUNT_PAISE || 0);
   const currency = process.env.RAZORPAY_CURRENCY || 'INR';
 
   if (!amountPaise || Number.isNaN(amountPaise)) {
@@ -43,7 +59,7 @@ export const createPaymentLink = async (userId: string): Promise<string> => {
   const body = {
     amount: amountPaise,
     currency,
-    description: 'ClipForge Pro Subscription',
+    description: `ClipForge ${planObj.name} Subscription`,
     customer: {
       name: user.email,
       email: user.email,
@@ -53,7 +69,7 @@ export const createPaymentLink = async (userId: string): Promise<string> => {
     callback_method: 'get',
     notes: {
       userId,
-      plan: 'pro',
+      plan: planObj.name,
     },
   };
 
@@ -109,13 +125,14 @@ export const handleRazorpayWebhook = async (rawBody: Buffer | string, signature:
   if (event === 'payment_link.paid') {
     const paymentLink = payload?.payload?.payment_link?.entity;
     const userId = paymentLink?.notes?.userId;
+    const purchasedPlan = paymentLink?.notes?.plan || 'pro';
 
     if (userId) {
       const subscriptionExpiresAt = new Date();
       subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 28);
 
       await User.findByIdAndUpdate(userId, {
-        plan: 'pro',
+        plan: purchasedPlan,
         subscriptionStatus: 'active',
         subscriptionExpiresAt,
       });

@@ -11,7 +11,9 @@ export const createCheckout = asyncHandler(async (req: Request, res: Response) =
     throw new AppError('Not authorized', 401);
   }
 
-  const url = await createPaymentLink(req.user.id);
+  const { planId } = req.body;
+
+  const url = await createPaymentLink(req.user.id, planId);
 
   res.status(200).json({
     success: true,
