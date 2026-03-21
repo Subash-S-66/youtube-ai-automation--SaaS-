@@ -12,6 +12,7 @@ import supportRoutes from './routes/supportRoutes';
 import adminRoutes from './routes/adminRoutes';
 import userRoutes from './routes/userRoutes';
 import bannerRoutes from './routes/bannerRoutes';
+import scheduleRoutes from './routes/scheduleRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
