@@ -112,7 +112,7 @@ export const handleRazorpayWebhook = async (rawBody: Buffer | string, signature:
 
     if (userId) {
       const subscriptionExpiresAt = new Date();
-      subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
+      subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 28);
 
       await User.findByIdAndUpdate(userId, {
         plan: 'pro',

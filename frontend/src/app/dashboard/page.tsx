@@ -55,6 +55,8 @@ function Dashboard() {
   const [ctaEnabled, setCtaEnabled] = usePersistentSettings<boolean>('clipforge_ctaEnabled', false);
   const [selectedVoices, setSelectedVoices] = usePersistentSettings<string[]>('clipforge_voices', ['v1']);
   const [randomVoice, setRandomVoice] = usePersistentSettings<boolean>('clipforge_randomVoice', true);
+  const [templateFont, setTemplateFont] = usePersistentSettings<string>('clipforge_templateFont', 'Arial');
+  const [templateColor, setTemplateColor] = usePersistentSettings<string>('clipforge_templateColor', '#FFFFFF');
 
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
@@ -358,6 +360,23 @@ function Dashboard() {
      }
   };
 
+  const handleStoryModeToggle = () => {
+    if (user?.plan === 'free') {
+      setModalConfig({
+        isOpen: true,
+        title: 'Upgrade Required',
+        description: 'Story Mode is only available on Basic, Pro, and Premium plans. Upgrade to unlock this feature.',
+        type: 'warning',
+        confirmText: 'Upgrade Now',
+        cancelText: 'Dismiss',
+        onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
+        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+      return;
+    }
+    setStoryMode(!storyMode);
+  };
+
   const executePipeline = async (pId: string, acceptedWarning: boolean, newPromptContent?: string, executeStoryId?: string) => {
     try {
       if (acceptedWarning) {
@@ -376,9 +395,10 @@ function Dashboard() {
         storyMode,
         storyId: executeStoryId || storyId,
         currentPart,
-        recapEnabled,
+        recapEnabled: currentPart > 1 ? recapEnabled : false,
         ctaEnabled,
-        voices: finalVoices
+        voices: finalVoices,
+        templateConfig: user?.plan === 'premium' ? { fontStyle: templateFont, subtitleColor: templateColor } : undefined
       }, acceptedWarning);
 
       if (pipelineRes.warning) {
@@ -569,7 +589,7 @@ function Dashboard() {
                     <h3 className="text-sm font-semibold text-white">Story Mode</h3>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={storyMode} onChange={() => setStoryMode(!storyMode)} />
+                    <input type="checkbox" className="sr-only peer" checked={storyMode} onChange={handleStoryModeToggle} />
                     <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
@@ -637,6 +657,31 @@ function Dashboard() {
 
               {/* Call to Actions & Voices */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+                {user?.plan === 'premium' && (
+                  <div className="col-span-1 sm:col-span-2 bg-[#0B0F1A] p-4 rounded-xl border border-[#00D4FF]/30 space-y-4">
+                     <div className="flex items-center mb-2">
+                       <Sparkles className="h-4 w-4 text-[#00D4FF] mr-2" />
+                       <h3 className="text-sm font-semibold text-white">Premium Template Config</h3>
+                     </div>
+                     <div className="grid grid-cols-2 gap-4">
+                       <div>
+                         <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
+                         <select value={templateFont} onChange={(e) => setTemplateFont(e.target.value)} className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]">
+                           <option value="Arial">Arial</option>
+                           <option value="Anton">Anton</option>
+                           <option value="Montserrat">Montserrat</option>
+                           <option value="Bebas Neue">Bebas Neue</option>
+                         </select>
+                       </div>
+                       <div>
+                         <label className="text-xs text-slate-400 mb-1 block">Subtitle Color</label>
+                         <input type="color" value={templateColor} onChange={(e) => setTemplateColor(e.target.value)} className="w-full h-9 bg-[#111827] border border-[#1A2235] rounded-lg p-1 cursor-pointer" />
+                       </div>
+                     </div>
+                  </div>
+                )}
+
                 <label className="flex items-center p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235] cursor-pointer group hover:border-[#7C5CFF]/50 transition-colors">
                   <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
                      {ctaEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}

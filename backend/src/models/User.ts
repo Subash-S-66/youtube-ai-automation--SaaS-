@@ -26,7 +26,11 @@ export interface IUser extends Document {
   plan: PlanType;
   subscriptionExpiresAt?: Date;
   subscriptionStatus: 'active' | 'inactive';
+  cancelAtPeriodEnd: boolean;
   stripeCustomerId?: string;
+  referralCode: string;
+  referredBy?: string;
+  referralRewardGiven: boolean;
   uploadLimitPerDay: number;
   uploadsUsedToday: number;
   uploadsOnHold: number;
@@ -116,8 +120,23 @@ const UserSchema = new Schema<IUser>(
       enum: ['active', 'inactive'],
       default: 'inactive',
     },
+    cancelAtPeriodEnd: {
+      type: Boolean,
+      default: false,
+    },
     stripeCustomerId: {
       type: String,
+    },
+    referralCode: {
+      type: String,
+      unique: true,
+    },
+    referredBy: {
+      type: String,
+    },
+    referralRewardGiven: {
+      type: Boolean,
+      default: false,
     },
     uploadLimitPerDay: {
       type: Number,

@@ -46,13 +46,22 @@ const getGoogleOAuth2Client = () => {
 // @access  Public
 export const register = asyncHandler(
   async (req: Request<unknown, unknown, RegisterInput>, res: Response) => {
-    const { email, password } = req.body;
+    const { email, password, referralCode } = req.body;
 
     // Check if user exists
     const userExists = await User.findOne({ email });
 
     if (userExists) {
       throw new AppError('User already exists', 400);
+    }
+
+    // Generate own referral code
+    const myReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+
+    let referredBy: string | undefined = undefined;
+    if (referralCode) {
+      const referrer = await User.findOne({ referralCode });
+      if (referrer) referredBy = referrer._id.toString();
     }
 
     // Hash password
@@ -67,12 +76,16 @@ export const register = asyncHandler(
     const verificationExpires = new Date(Date.now() + 60 * 60 * 1000);
 
     // Create user
-    const user = await User.create({
+    const createPayload: any = {
       email,
       password: hashedPassword,
       emailVerificationToken: hashedVerificationToken,
       emailVerificationExpires: verificationExpires,
-    });
+      referralCode: myReferralCode,
+    };
+    if (referredBy) createPayload.referredBy = referredBy;
+
+    const user = await User.create(createPayload);
 
     if (!user) {
       throw new AppError('Invalid user data', 400);
@@ -121,6 +134,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
           telegramNotificationsEnabled: user.telegramNotificationsEnabled,
           pushNotificationsEnabled: user.pushNotificationsEnabled,
           subscriptionExpiresAt: user.subscriptionExpiresAt,
+          referralCode: user.referralCode,
+          cancelAtPeriodEnd: user.cancelAtPeriodEnd,
         },
         plan: limitCheck.plan,
         displayPlan: limitCheck.displayPlan,
@@ -438,11 +453,24 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
     }
   } else {
     // Create Google User
+    const stateStr = req.query.state as string;
+    let referredBy: string | undefined = undefined;
+    if (stateStr && stateStr.startsWith('ref:')) {
+      const refCode = stateStr.split(':')[1];
+      if (refCode) {
+        const referrer = await User.findOne({ referralCode: refCode });
+        if (referrer) referredBy = referrer._id.toString();
+      }
+    }
+    const myReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+
     const createPayload: any = {
       email: data.email,
       provider: 'google',
       isEmailVerified: true, // Auto-verified by Google
+      referralCode: myReferralCode,
     };
+    if (referredBy) createPayload.referredBy = referredBy;
     if (data.id) {
       createPayload.googleId = data.id;
     }

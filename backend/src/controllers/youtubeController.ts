@@ -105,14 +105,18 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
            user.youtubeChannels[existingChannelIndex].channelName = channelName; // Update name just in case
        }
     } else {
-       // Enforce Channel Limits
+       // Enforce Channel Limits dynamically with effective plan
+       const { getUploadLimits } = require('../services/uploadLimitService');
+       const limitCheck = await getUploadLimits(user.id);
+       const effectivePlan = limitCheck.plan;
+
        const channelLimits = {
          free: 1,
-         basic: 2,
-         pro: 4,
-         premium: 8,
+         basic: 3,
+         pro: 10,
+         premium: 50,
        };
-       const maxChannels = channelLimits[user.plan] || 1;
+       const maxChannels = (channelLimits as any)[effectivePlan] || 1;
 
        if (user.youtubeChannels.length >= maxChannels) {
            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';

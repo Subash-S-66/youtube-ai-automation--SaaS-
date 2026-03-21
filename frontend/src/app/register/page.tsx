@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { Sparkles, ArrowRight, Mail, Lock } from 'lucide-react';
 import { authService } from '../../services/authService';
 
-export default function Register() {
+function RegisterContent() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -14,13 +14,17 @@ export default function Register() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
+  const searchParams = useSearchParams();
+  const refCode = searchParams.get('ref') || undefined;
+
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
     setSuccess('');
     try {
-      const data = await authService.register({ email, password });
+      const data = await authService.register({ email, password, referralCode: refCode });
+
       if (data.success) {
         setSuccess(data.message || 'Registration successful. Please check your email to verify your account.');
       }
@@ -134,5 +138,13 @@ export default function Register() {
         </div>
       </motion.div>
     </div>
+  );
+}
+
+export default function Register() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center"><div className="w-8 h-8 rounded-full border-2 border-[#7C5CFF] border-t-transparent animate-spin"></div></div>}>
+      <RegisterContent />
+    </Suspense>
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -69,7 +70,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
               const isActive = pathname === link.href;
 
               return (
-                <a
+                <Link
                   key={link.name}
                   href={link.href}
                   className={cn(
@@ -86,7 +87,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
                   )}
                   <Icon className={cn("mr-3 flex-shrink-0 h-5 w-5 transition-colors", isActive ? "text-[#00D4FF]" : "text-slate-500 group-hover:text-[#7C5CFF]")} />
                   {link.name}
-                </a>
+                </Link>
               )
             })}
           </nav>
@@ -124,6 +125,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+
         {/* Top Navbar */}
         <header className="sticky top-0 h-16 flex-shrink-0 bg-[#111827]/80 backdrop-blur-xl border-b border-[#1A2235] flex items-center justify-between px-4 sm:px-6 lg:px-8 z-[1000]">
            <button
@@ -132,8 +134,16 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
            >
              <Menu className="h-6 w-6" />
            </button>
+           <div className="flex-1 flex justify-center ml-4 mr-4">
+             {user?.subscriptionExpiresAt && (new Date(user.subscriptionExpiresAt).getTime() - new Date().getTime()) / (1000 * 3600 * 24) <= 3 && (
+               <div className="bg-yellow-500/20 border border-yellow-500/50 text-yellow-400 px-4 py-1.5 rounded-lg text-xs font-bold animate-pulse flex items-center text-center">
+                 ⚠️ Your {user.displayPlan || user.plan} plan expires in {Math.ceil((new Date(user.subscriptionExpiresAt).getTime() - new Date().getTime()) / (1000 * 3600 * 24))} days. Renew now to keep access.
+               </div>
+             )}
+           </div>
            <div className="ml-auto flex items-center">
               {/* Install PWA Prompt */}
+
               <InstallPwaButton />
               <div className="h-8 w-8 rounded-full bg-[#7C5CFF]/20 flex items-center justify-center border border-[#7C5CFF]/30 shadow-glow-primary">
                  <span className="text-[#00D4FF] text-xs font-bold">{user?.email?.charAt(0).toUpperCase() || 'U'}</span>

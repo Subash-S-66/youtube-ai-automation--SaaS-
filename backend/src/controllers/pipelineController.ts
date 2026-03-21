@@ -50,6 +50,22 @@ export const startPipeline = asyncHandler(
       throw new AppError('Daily upload limit reached', 403);
     }
 
+    if (limitCheck.plan === 'free') {
+        if (settings.storyMode) {
+            throw new AppError('Story Mode is not available on the Free plan. Please upgrade to Basic or higher.', 403);
+        }
+        // Assuming a scheduledAt or similar setting exists, block it here
+        if ((settings as any).scheduledAt || (settings as any).scheduleEnabled) {
+            throw new AppError('Scheduling is not available on the Free plan. Please upgrade to Basic or higher.', 403);
+        }
+    }
+
+    if (limitCheck.plan !== 'premium' && settings.templateConfig) {
+        throw new AppError('Template Customization is only available on the Premium plan.', 403);
+    }
+
+
+
     if (limitCheck.remainingUploads < settings.videoCount) {
       throw new AppError(`Not enough uploads remaining. You requested ${settings.videoCount} videos but only have ${limitCheck.remainingUploads} uploads available today.`, 400);
     }
@@ -62,11 +78,11 @@ export const startPipeline = asyncHandler(
     // Concurrent Job Limit Validation
     const concurrentLimits = {
       free: 1,
-      basic: 5,
+      basic: 3,
       pro: 10,
       premium: 20,
     };
-    const maxConcurrentJobs = concurrentLimits[user.plan] || 1;
+    const maxConcurrentJobs = (concurrentLimits as any)[limitCheck.plan] || 1;
 
     const activeJobsCount = await Job.countDocuments({
       userId,
@@ -165,6 +181,18 @@ export const startPipeline = asyncHandler(
       channelId: settings.channelId,
     });
 
+const planPriorities: Record<string, number> = {
+      premium: 1,
+      pro: 2,
+      basic: 3,
+      free: 4,
+    };
+    const jobPriority = planPriorities[finalLimitCheck.plan] || 4;
+
+    const count = settings.videoCount || 1;
+    const jobTimeoutMinutes = 10 + (count - 1) * 5;
+    const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
+
     // Add job to BullMQ
     await pipelineQueue.add('runPipeline', {
       userId,
@@ -172,8 +200,10 @@ export const startPipeline = asyncHandler(
       jobId: job._id.toString(),
       settings,
     }, {
+      priority: jobPriority,
       jobId: job._id.toString(), // Ensure idempotency
       attempts: 3,               // Retry up to 3 times on failure
+      timeout: jobTimeoutMs,     // Force fail job if Azure Container App stalls
       backoff: {
         type: 'exponential',
         delay: 5000,             // Start with 5 seconds, then 25, 125...

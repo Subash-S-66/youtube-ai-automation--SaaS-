@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const registerSchema = z.object({
   body: z.object({
+    referralCode: z.string().optional(),
     email: z
       .string({
         message: 'Email is required',
@@ -17,6 +18,7 @@ export const registerSchema = z.object({
 
 export const loginSchema = z.object({
   body: z.object({
+    referralCode: z.string().optional(),
     email: z
       .string({
         message: 'Email is required',
@@ -42,6 +44,7 @@ export const adminLoginSchema = z.object({
 
 export const forgotPasswordSchema = z.object({
   body: z.object({
+    referralCode: z.string().optional(),
     email: z
       .string({
         message: 'Email is required',
@@ -66,6 +69,7 @@ export const resetPasswordSchema = z.object({
 
 export const resendVerificationSchema = z.object({
   body: z.object({
+    referralCode: z.string().optional(),
     email: z
       .string({
         message: 'Email is required',
