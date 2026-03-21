@@ -159,18 +159,19 @@ def _normalize_token(token: str) -> str:
 
 def _inject_highlight_ass(text: str, highlight_words: set[str]) -> str:
     if not highlight_words:
-        return text
+        return text.upper()
     lines = text.split(r"\N")
     out_lines: list[str] = []
     for line in lines:
         out_tokens: list[str] = []
         for token in line.split():
             base = _normalize_token(token)
+            token_upper = token.upper()
             if base and base in highlight_words:
                 # Yellow-gold highlight with bold for emphasis (no scale-up to avoid overflow)
-                out_tokens.append(r"{\c&H00CCFF&\b1}" + token + r"{\rCaption}")
+                out_tokens.append(r"{\c&H00CCFF&\b1}" + token_upper + r"{\rCaption}")
             else:
-                out_tokens.append(token)
+                out_tokens.append(token_upper)
         out_lines.append(" ".join(out_tokens))
     return r"\N".join(out_lines)
 
@@ -401,11 +402,28 @@ def _scene_duration_plan(
     if clip_count <= 0:
         return []
     plan = [scene_duration] * clip_count
+
+    # Make the first 2 scenes very fast for better hook engagement
+    if clip_count > 2:
+        fast_cut_1 = 1.5
+        fast_cut_2 = 2.0
+        diff_1 = plan[0] - fast_cut_1
+        diff_2 = plan[1] - fast_cut_2
+        plan[0] = fast_cut_1
+        plan[1] = fast_cut_2
+
+        # Distribute the leftover time across the remaining clips
+        leftover = diff_1 + diff_2
+        remaining_clips = clip_count - 2
+        added_time_per_clip = leftover / remaining_clips
+        for i in range(2, clip_count):
+            plan[i] += added_time_per_clip
+
     current = sum(plan)
     if current > target_duration:
         excess = current - target_duration
         index = clip_count - 1
-        while excess > 0.01 and index >= 0:
+        while excess > 0.01 and index >= 2: # Keep fast cuts fast
             reducible = max(0.0, plan[index] - 2.0)
             delta = min(reducible, excess)
             plan[index] -= delta
@@ -413,7 +431,7 @@ def _scene_duration_plan(
             index -= 1
     elif current < target_duration:
         plan[-1] += target_duration - current
-    return [max(2.0, value) for value in plan]
+    return [max(1.5, value) for value in plan] # Lower absolute min bound to allow fast cuts
 
 
 def _prepare_scene_clip(
@@ -597,7 +615,8 @@ def create_scene_based_video(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     audio_duration = _probe_duration(audio_path)
-    target_duration = max(min_video_length, min(max_video_length, audio_duration))
+    # Ensure video duration strictly matches audio duration up to max limit to prevent gaps
+    target_duration = min(float(max_video_length), audio_duration)
 
     clip_pool = list(videos)
     if shuffle_scenes:

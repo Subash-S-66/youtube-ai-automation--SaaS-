@@ -82,14 +82,30 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
 
         if (userId) {
           const subscriptionExpiresAt = new Date();
-          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
+          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 28);
 
-          await User.findByIdAndUpdate(userId, {
+
+          const updatedUser = await User.findByIdAndUpdate(userId, {
             stripeCustomerId: session.customer as string,
             plan: 'pro',
             subscriptionStatus: 'active',
             subscriptionExpiresAt,
-          });
+          }, { new: true });
+
+          if (updatedUser && updatedUser.referredBy && !updatedUser.referralRewardGiven) {
+             const referrer = await User.findById(updatedUser.referredBy);
+             if (referrer) {
+                const currentExpiry = referrer.subscriptionExpiresAt && referrer.subscriptionExpiresAt > new Date() ? referrer.subscriptionExpiresAt : new Date();
+                currentExpiry.setDate(currentExpiry.getDate() + 7);
+                referrer.subscriptionExpiresAt = currentExpiry;
+                if (referrer.plan === 'free') referrer.plan = 'basic';
+                referrer.subscriptionStatus = 'active';
+                await referrer.save();
+                updatedUser.referralRewardGiven = true;
+                await updatedUser.save();
+             }
+          }
+
           console.log(`[Stripe] Checkout completed. User ${userId} upgraded to Pro.`);
         }
         break;
@@ -101,7 +117,7 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
 
         if (customerId) {
           const subscriptionExpiresAt = new Date();
-          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
+          subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 28);
 
           await User.findOneAndUpdate(
             { stripeCustomerId: customerId },
@@ -126,10 +142,26 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
             {
               plan: 'free',
               subscriptionStatus: 'inactive',
+              cancelAtPeriodEnd: false,
               $unset: { subscriptionExpiresAt: 1 },
             }
           );
           console.warn(`[Stripe] Invoice failed for customer ${customerId}. Subscription inactive.`);
+        }
+        break;
+      }
+
+      case 'customer.subscription.updated': {
+        const subscription = dataObject as Stripe.Subscription;
+        const customerId = subscription.customer as string;
+
+        if (customerId) {
+          const cancelAtPeriodEnd = subscription.cancel_at_period_end;
+          await User.findOneAndUpdate(
+            { stripeCustomerId: customerId },
+            { cancelAtPeriodEnd }
+          );
+          console.log(`[Stripe] Subscription updated for ${customerId}. Cancel at end: ${cancelAtPeriodEnd}`);
         }
         break;
       }
@@ -144,6 +176,7 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
             {
               plan: 'free',
               subscriptionStatus: 'inactive',
+              cancelAtPeriodEnd: false,
               $unset: { subscriptionExpiresAt: 1 },
             }
           );

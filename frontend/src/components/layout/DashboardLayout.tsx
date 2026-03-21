@@ -1,12 +1,15 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
-import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle, Shield } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
 import InstallPwaButton from '../InstallPwaButton';
+
+const InAppNotifications = dynamic(() => import('./InAppNotifications'), { ssr: false });
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -16,6 +19,15 @@ interface LayoutProps {
 export default function DashboardLayout({ children, user }: LayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
+  const displayUser = user?.user
+    ? {
+        ...user.user,
+        plan: user.plan ?? user.user.plan,
+        displayPlan: user.displayPlan ?? user.user.displayPlan,
+        isBetaMode: user.isBetaMode ?? user.user.isBetaMode,
+      }
+    : user || null;
+  const isAdminRoute = pathname.startsWith('/admin');
 
   const handleLogout = () => {
     authService.logout();
@@ -24,68 +36,63 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
   const navLinks = [
     { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
     { name: 'History', icon: History, href: '/history' },
-    { name: 'Payments', icon: CreditCard, href: '/payments' },
+    { name: 'Subscriptions', icon: CreditCard, href: '/payments' },
     { name: 'Settings', icon: Settings, href: '/settings' },
     { name: 'Help', icon: HelpCircle, href: '/help' },
   ];
+  if (displayUser?.role === 'admin') {
+    navLinks.push({ name: 'Admin Panel', icon: Shield, href: '/admin' });
+  }
 
   return (
-    <div className="flex h-screen bg-[#0B0F1A] text-slate-300 font-sans overflow-hidden">
+    <div className="dashboard-shell flex min-h-0 bg-[#0B0F1A] text-slate-300 font-sans overflow-hidden">
 
       {/* Mobile Sidebar Overlay */}
-      <AnimatePresence>
-        {isMobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-40 bg-black/60 md:hidden backdrop-blur-sm"
-            onClick={() => setIsMobileMenuOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+      {isMobileMenuOpen && (
+        <div
+          className="dashboard-mobile-overlay fixed inset-0 z-40 bg-black/60 md:hidden backdrop-blur-sm"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
 
       {/* Sidebar */}
-      <motion.aside
-        initial={{ x: -300 }}
-        animate={{ x: isMobileMenuOpen ? 0 : 0 }}
-        className={`fixed inset-y-0 left-0 z-50 w-64 md:w-56 bg-[#111827] border-r border-[#1A2235] shadow-2xl md:relative md:translate-x-0 transform transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}
+      <aside
+        className={`dashboard-sidebar fixed inset-y-0 left-0 z-50 w-64 md:w-56 bg-[#111827] border-r border-[#1A2235] shadow-2xl md:relative md:translate-x-0 transform transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <div className="h-full flex flex-col">
+        <div className="h-full min-h-0 flex flex-col overflow-y-auto">
           {/* Logo Area */}
           <div className="h-16 flex items-center px-6 border-b border-[#1A2235]">
             <Sparkles className="h-6 w-6 text-[#7C5CFF] mr-2 shadow-glow-primary" />
             <span className="text-xl font-bold tracking-wider text-white">Clip<span className="text-gradient-primary">Forge</span></span>
-            <button className="ml-auto md:hidden text-slate-400 hover:text-white" onClick={() => setIsMobileMenuOpen(false)}>
+            <button
+              aria-label="Close sidebar menu"
+              className="ml-auto md:hidden text-slate-400 hover:text-white"
+              onClick={() => setIsMobileMenuOpen(false)}
+            >
               <X className="h-5 w-5" />
             </button>
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+          <nav className="flex-1 min-h-0 px-4 py-6 space-y-1">
             {navLinks.map((link) => {
               const Icon = link.icon;
               const isActive = pathname === link.href;
 
               return (
-                <a
+                <Link
                   key={link.name}
                   href={link.href}
+                  onClick={() => setIsMobileMenuOpen(false)}
                   className={cn(
                     "group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-200 relative",
                     isActive ? "text-white bg-[#1A2235]/80 shadow-[0_2px_10px_rgba(0,0,0,0.2)]" : "text-slate-400 hover:text-white hover:bg-[#1A2235]/40"
                   )}
                 >
-                  {isActive && (
-                    <motion.div
-                      layoutId="active-sidebar-nav"
-                      className="absolute left-0 w-1 h-6 bg-[#00D4FF] rounded-r-md shadow-[0_0_10px_rgba(0,212,255,0.6)]"
-                      transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                    />
-                  )}
+                  {isActive && <div className="absolute left-0 w-1 h-6 bg-[#00D4FF] rounded-r-md shadow-[0_0_10px_rgba(0,212,255,0.6)]" />}
                   <Icon className={cn("mr-3 flex-shrink-0 h-5 w-5 transition-colors", isActive ? "text-[#00D4FF]" : "text-slate-500 group-hover:text-[#7C5CFF]")} />
                   {link.name}
-                </a>
+                </Link>
               )
             })}
           </nav>
@@ -94,8 +101,20 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
           <div className="p-4 border-t border-[#1A2235] bg-[#0B0F1A]/50">
              <div className="flex items-center">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{user?.email || 'Loading...'}</p>
-                  <p className="text-xs text-[#FF4FD8] capitalize tracking-wider mt-1">{user?.plan} Plan</p>
+                  <p className="text-sm font-medium text-white truncate">{displayUser?.email || 'Loading...'}</p>
+                  <div className="flex items-center mt-1">
+                    <p className="text-xs text-[#FF4FD8] capitalize tracking-wider">
+                      {displayUser?.displayPlan || displayUser?.plan} Plan
+                    </p>
+                    {displayUser?.isBetaMode && (
+                      <span
+                        title="You are currently in beta with Basic access"
+                        className="ml-2 px-1.5 py-0.5 text-[10px] font-bold bg-[#00D4FF]/20 text-[#00D4FF] border border-[#00D4FF]/30 rounded cursor-help"
+                      >
+                        BETA
+                      </span>
+                    )}
+                  </div>
                 </div>
              </div>
              <button
@@ -107,23 +126,33 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
              </button>
           </div>
         </div>
-      </motion.aside>
+      </aside>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+
         {/* Top Navbar */}
-        <header className="h-16 flex-shrink-0 bg-[#111827]/80 backdrop-blur-xl border-b border-[#1A2235] flex items-center justify-between px-4 sm:px-6 lg:px-8 z-10">
+        <header className="sticky top-0 h-16 flex-shrink-0 bg-[#111827]/80 backdrop-blur-xl border-b border-[#1A2235] flex items-center justify-between px-4 sm:px-6 lg:px-8 z-[1000]">
            <button
+             aria-label="Open sidebar menu"
              className="md:hidden text-slate-400 hover:text-white"
              onClick={() => setIsMobileMenuOpen(true)}
            >
              <Menu className="h-6 w-6" />
            </button>
+           <div className="flex-1 flex justify-center ml-4 mr-4">
+             {displayUser?.subscriptionExpiresAt && (new Date(displayUser.subscriptionExpiresAt).getTime() - new Date().getTime()) / (1000 * 3600 * 24) <= 3 && (
+               <div className="bg-yellow-500/20 border border-yellow-500/50 text-yellow-400 px-4 py-1.5 rounded-lg text-xs font-bold animate-pulse flex items-center text-center">
+                 Warning: your {displayUser.displayPlan || displayUser.plan} plan expires in {Math.ceil((new Date(displayUser.subscriptionExpiresAt).getTime() - new Date().getTime()) / (1000 * 3600 * 24))} days. Renew now to keep access.
+               </div>
+             )}
+           </div>
            <div className="ml-auto flex items-center">
               {/* Install PWA Prompt */}
+
               <InstallPwaButton />
               <div className="h-8 w-8 rounded-full bg-[#7C5CFF]/20 flex items-center justify-center border border-[#7C5CFF]/30 shadow-glow-primary">
-                 <span className="text-[#00D4FF] text-xs font-bold">{user?.email?.charAt(0).toUpperCase() || 'U'}</span>
+                 <span className="text-[#00D4FF] text-xs font-bold">{displayUser?.email?.charAt(0).toUpperCase() || 'U'}</span>
               </div>
            </div>
         </header>
@@ -136,16 +165,14 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto bg-[#0B0F1A] p-4 sm:p-6 lg:p-8 relative z-10">
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="max-w-6xl mx-auto space-y-6"
-          >
+          <div className="max-w-6xl mx-auto space-y-6">
             {children}
-          </motion.div>
+          </div>
         </main>
       </div>
+
+      {/* Notifications */}
+      {!isAdminRoute && <InAppNotifications />}
     </div>
   );
 }

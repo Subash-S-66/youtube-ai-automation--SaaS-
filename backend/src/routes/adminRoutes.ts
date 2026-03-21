@@ -6,6 +6,13 @@ import {
   getAllUsers,
   getUserDetails,
   updateUserPlan,
+  createNotification,
+  setGlobalBanner,
+  getGlobalBannerConfig,
+  deleteUserByAdmin,
+  getSystemConfig,
+  updateSystemConfig,
+  triggerWeeklyReports,
 } from '../controllers/adminController';
 
 const router = express.Router();
@@ -18,5 +25,12 @@ router.get('/stats', getAdminStats);
 router.get('/users', getAllUsers);
 router.get('/users/:id', getUserDetails);
 router.put('/users/:id/plan', updateUserPlan);
+router.delete('/users/:id', deleteUserByAdmin);
+router.post('/notify', createNotification);
+router.post('/banner', setGlobalBanner);
+router.get('/banner', getGlobalBannerConfig);
+router.get('/config', getSystemConfig);
+router.post('/config', updateSystemConfig);
+router.post('/trigger-reports', triggerWeeklyReports);
 
 export default router;

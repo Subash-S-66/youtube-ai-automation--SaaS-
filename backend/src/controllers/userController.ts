@@ -2,7 +2,11 @@ import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import User from '../models/User';
+import DeletedUser from '../models/DeletedUser';
 import { z } from 'zod';
+import { pipelineQueue } from '../queues/pipelineQueue';
+
+// Stripe disabled. Using Razorpay for payments.
 
 const updateSettingsSchema = z.object({
   body: z.object({
@@ -46,5 +50,49 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
     success: true,
     message: 'Settings updated successfully',
     data: updatedUser,
+  });
+});
+
+export const deleteAccount = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  // Stripe disabled. If you need Razorpay cancellation, implement it here.
+
+  // Store in DeletedUsers collection
+  await DeletedUser.create({
+    email: user.email,
+    planHistory: [user.plan],
+    usageStats: {
+      uploadsUsedTotal: user.uploadsUsedToday, // can add historical later if tracked
+    },
+    deletedAt: new Date(),
+  });
+
+  // Remove pending jobs from BullMQ queue to save resources
+  try {
+    const activeJobs = await pipelineQueue.getJobs(['waiting', 'delayed']);
+    for (const job of activeJobs) {
+      if (job.data.userId === userId.toString()) {
+        await job.remove();
+      }
+    }
+  } catch (error) {
+    console.error('Failed to cleanup BullMQ jobs during account deletion:', error);
+  }
+
+  // Delete user from active users
+  await user.deleteOne();
+
+  res.status(200).json({
+    success: true,
+    message: 'Account deleted successfully',
   });
 });

@@ -10,5 +10,6 @@ router.use(protect);
 router.get('/auth', connectYouTube);
 router.get('/callback', youtubeCallback);
 router.post('/disconnect', disconnectYouTube);
+router.post('/disconnect/:channelId', disconnectYouTube);
 
 export default router;

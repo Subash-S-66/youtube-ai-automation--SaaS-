@@ -23,7 +23,7 @@ export default function HelpPage() {
     const fetchUser = async () => {
       try {
         const userData = await authService.getMe();
-        setUser(userData.data.user);
+        setUser(userData.data);
       } catch (err) {
         router.push('/login');
       } finally {
@@ -58,9 +58,12 @@ export default function HelpPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0B0F1A]">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-[#7C5CFF]"></div>
-      </div>
+      <DashboardLayout user={user}>
+        <div className="flex items-center space-x-3 text-slate-400 text-sm">
+          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-[#7C5CFF]"></div>
+          <span>Loading help…</span>
+        </div>
+      </DashboardLayout>
     );
   }
 
@@ -91,7 +94,7 @@ export default function HelpPage() {
               </div>
               <h3 className="text-xl font-bold text-white">Your request has been submitted</h3>
               <p className="text-slate-400">
-                We've sent a confirmation email to {user?.email}. We will review your ticket and reply shortly.
+                We've sent a confirmation email to {user?.user?.email || user?.email}. We will review your ticket and reply shortly.
               </p>
               <button
                 onClick={() => setSuccess(false)}

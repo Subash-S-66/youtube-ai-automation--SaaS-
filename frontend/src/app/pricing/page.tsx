@@ -22,22 +22,22 @@ const PLANS: Plan[] = [
     id: 'free',
     name: 'Free',
     price: '$0/mo',
-    limit: 3,
-    features: ['3 video uploads per day', 'Basic AI generation', 'Standard voices', 'Community support'],
+    limit: 2,
+    features: ['2 video uploads per day', '1 YouTube channel', 'Basic AI generation', 'Standard voices', 'No scheduling / No Story Mode'],
   },
   {
     id: 'basic',
     name: 'Basic',
     price: '$10/mo',
     limit: 10,
-    features: ['10 video uploads per day', 'Faster AI generation', 'Standard voices', 'Email support'],
+    features: ['10 video uploads per day', '3 YouTube channels', 'Faster AI generation', 'Story Mode & Scheduling enabled', 'Email support'],
   },
   {
     id: 'pro',
     name: 'Pro',
     price: '$25/mo',
     limit: 25,
-    features: ['25 video uploads per day', 'Priority generation queue', 'Premium AI voices', 'Priority support'],
+    features: ['25 video uploads per day', '10 YouTube channels', 'Priority generation queue', 'Premium AI voices', 'Priority support'],
     recommended: true,
   },
   {
@@ -45,7 +45,7 @@ const PLANS: Plan[] = [
     name: 'Premium',
     price: '$99/mo',
     limit: 100,
-    features: ['100 video uploads per day', 'Instant generation queue', 'All AI voices unlocked', '24/7 dedicated support', 'Custom templates'],
+    features: ['100 video uploads per day', '50 YouTube channels', 'Instant generation queue', 'All AI voices unlocked', '24/7 dedicated support', 'Custom templates'],
   }
 ];
 
@@ -99,7 +99,7 @@ export default function PricingPage() {
   const currentPlanId = user?.plan || 'free';
 
   return (
-    <DashboardLayout user={user?.user}>
+    <DashboardLayout user={user}>
       <div className="max-w-6xl mx-auto py-12 px-4 sm:px-6">
 
         {/* Header */}

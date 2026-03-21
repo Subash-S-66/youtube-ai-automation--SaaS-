@@ -19,4 +19,22 @@ api.interceptors.request.use(
   }
 );
 
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      if (typeof window !== 'undefined') {
+        const path = window.location.pathname;
+        const isAdminArea = path.startsWith('/admin');
+        // Prevent redirect loop if already on login page
+        if (!path.includes('/login')) {
+          localStorage.removeItem('token');
+          window.location.href = isAdminArea ? '/admin-login' : '/login';
+        }
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default api;

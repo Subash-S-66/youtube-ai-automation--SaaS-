@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const registerSchema = z.object({
   body: z.object({
+    referralCode: z.string().optional(),
     email: z
       .string({
         message: 'Email is required',
@@ -17,6 +18,7 @@ export const registerSchema = z.object({
 
 export const loginSchema = z.object({
   body: z.object({
+    referralCode: z.string().optional(),
     email: z
       .string({
         message: 'Email is required',
@@ -29,8 +31,20 @@ export const loginSchema = z.object({
   }),
 });
 
+export const adminLoginSchema = z.object({
+  body: z.object({
+    username: z.string({
+      message: 'Username is required',
+    }),
+    password: z.string({
+      message: 'Password is required',
+    }),
+  }),
+});
+
 export const forgotPasswordSchema = z.object({
   body: z.object({
+    referralCode: z.string().optional(),
     email: z
       .string({
         message: 'Email is required',
@@ -55,6 +69,7 @@ export const resetPasswordSchema = z.object({
 
 export const resendVerificationSchema = z.object({
   body: z.object({
+    referralCode: z.string().optional(),
     email: z
       .string({
         message: 'Email is required',
@@ -65,6 +80,7 @@ export const resendVerificationSchema = z.object({
 
 export type RegisterInput = z.infer<typeof registerSchema>['body'];
 export type LoginInput = z.infer<typeof loginSchema>['body'];
+export type AdminLoginInput = z.infer<typeof adminLoginSchema>['body'];
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>['body'];
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>['body'];
 export type ResendVerificationInput = z.infer<typeof resendVerificationSchema>['body'];

@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, Youtube, Mail, BellRing, Trash2, ShieldAlert, CheckCircle2, RefreshCw, User, Info, Save } from 'lucide-react';
+import { Settings, Youtube, Mail, BellRing, Trash2, ShieldAlert, CheckCircle2, RefreshCw, User, Info, Save, Copy } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
 import { userService } from '../../services/userService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
+import AppModal, { AppModalType } from '../../components/ui/AppModal';
 import { usePersistentSettings } from '../../hooks/usePersistentSettings';
 import { cn } from '../../lib/utils';
 
@@ -23,6 +24,21 @@ export default function SettingsPage() {
   const [emailNotifs, setEmailNotifs] = useState(true);
   const [telegramNotifs, setTelegramNotifs] = useState(true);
   const [pushNotifs, setPushNotifs] = useState(true);
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    type: AppModalType;
+    onConfirm?: () => void;
+    onCancel?: () => void;
+    confirmText?: string;
+    cancelText?: string;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    type: 'info',
+  });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -61,8 +77,21 @@ export default function SettingsPage() {
   };
 
   const handleResetMemory = () => {
-    setStoryPart(1);
-    setMessage({ text: 'Story memory has been reset to Part 1', type: 'success' });
+    setModalConfig({
+        isOpen: true,
+        title: 'Reset Story Memory',
+        description: 'Are you sure you want to completely erase your Story memory? You will start over at Part 1 on your next generation. This cannot be undone.',
+        type: 'warning',
+        confirmText: 'Erase Memory',
+        onConfirm: () => {
+            setStoryPart(1);
+            setMessage({ text: 'Story memory has been reset to Part 1', type: 'success' });
+            setModalConfig(prev => ({ ...prev, isOpen: false }));
+            setTimeout(() => setMessage(null), 3000);
+        },
+        cancelText: 'Cancel',
+        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+    });
   };
 
   const handleSaveSettings = async () => {
@@ -84,14 +113,17 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
-      </div>
+      <DashboardLayout user={user}>
+        <div className="flex items-center space-x-3 text-slate-400 text-sm">
+          <RefreshCw className="h-4 w-4 animate-spin text-[#7C5CFF]" />
+          <span>Loading settings…</span>
+        </div>
+      </DashboardLayout>
     );
   }
 
   return (
-    <DashboardLayout user={user?.user}>
+    <DashboardLayout user={user}>
 
       <AnimatePresence>
         {message && (
@@ -140,7 +172,7 @@ export default function SettingsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
                 <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Current Plan</p>
-                <p className="text-lg font-bold text-white capitalize">{user?.plan}</p>
+                <p className="text-lg font-bold text-white capitalize">{user?.displayPlan || user?.plan}</p>
               </div>
               <div className="p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
                 <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Subscription Expiry</p>
@@ -256,6 +288,18 @@ export default function SettingsPage() {
 
         </div>
       </div>
+
+      <AppModal
+        isOpen={modalConfig.isOpen}
+        title={modalConfig.title}
+        description={modalConfig.description}
+        type={modalConfig.type}
+        onConfirm={modalConfig.onConfirm}
+        onCancel={modalConfig.onCancel}
+        confirmText={modalConfig.confirmText}
+        cancelText={modalConfig.cancelText}
+      />
+
     </DashboardLayout>
   );
 }

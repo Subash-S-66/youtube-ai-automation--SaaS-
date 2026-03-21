@@ -11,6 +11,11 @@ export const authService = {
     return response.data;
   },
 
+  async adminLogin(data: any) {
+    const response = await api.post('/auth/admin-login', data);
+    return response.data;
+  },
+
   async getMe() {
     const response = await api.get('/auth/me');
     return response.data;

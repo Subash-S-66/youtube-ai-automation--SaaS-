@@ -11,11 +11,13 @@ def generate_content(
     topic: str,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-3-flash",
+    gemini_model: str = "gemini-3.1-flash-lite",
     openai_api_key: str = "",
     openai_model: str = "gpt-4.1-mini",
     anthropic_api_key: str = "",
     anthropic_model: str = "claude-3-5-haiku-latest",
+    story_mode: bool = False,
+    current_part: int = 1,
 ) -> GeneratedContent:
     return _generate_content(
         topic=topic,
@@ -28,6 +30,8 @@ def generate_content(
         anthropic_model=anthropic_model,
         min_seconds=20,
         max_seconds=40,
+        story_mode=story_mode,
+        current_part=current_part,
     )
 
 
