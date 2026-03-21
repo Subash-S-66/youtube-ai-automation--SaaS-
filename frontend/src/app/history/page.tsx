@@ -51,9 +51,12 @@ export default function HistoryPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
-      </div>
+      <DashboardLayout user={user}>
+        <div className="flex items-center space-x-3 text-slate-400 text-sm">
+          <RefreshCw className="h-4 w-4 animate-spin text-[#7C5CFF]" />
+          <span>Loading history…</span>
+        </div>
+      </DashboardLayout>
     );
   }
 

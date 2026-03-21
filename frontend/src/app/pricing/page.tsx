@@ -99,7 +99,7 @@ export default function PricingPage() {
   const currentPlanId = user?.plan || 'free';
 
   return (
-    <DashboardLayout user={user?.user}>
+    <DashboardLayout user={user}>
       <div className="max-w-6xl mx-auto py-12 px-4 sm:px-6">
 
         {/* Header */}

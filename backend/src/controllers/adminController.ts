@@ -106,20 +106,32 @@ export const createNotification = asyncHandler(async (req: Request, res: Respons
 const bannerSchema = z.object({
   body: z.object({
     message: z.string()
-      .min(1, 'Banner message is required')
       .max(200, 'Banner message must be at most 200 characters')
-      .refine(s => !s.includes('\n'), { message: 'Banner message must be a single line (no newlines)' }),
+      .refine(s => !s.includes('\n'), { message: 'Banner message must be a single line (no newlines)' })
+      .optional(),
     isActive: z.boolean().default(true),
-    type: z.enum(['info', 'warning', 'critical']).default('info'),
+    type: z.enum([
+      'info-blue',
+      'info-cyan',
+      'info-green',
+      'info-purple',
+      'warning-amber',
+      'warning-gold',
+      'critical-red',
+      'critical-rose',
+    ]).default('info-blue'),
     startAt: z.string().optional().nullable(),
     endAt: z.string().optional().nullable(),
   }),
 });
 
 export const getSystemConfig = asyncHandler(async (req: Request, res: Response) => {
-  let config = await SystemConfig.findOne();
+  let config = await SystemConfig.findOne().sort({ updatedAt: -1 });
   if (!config) {
     config = await SystemConfig.create({ betaMode: false });
+  } else {
+    // Ensure only one config doc exists.
+    await SystemConfig.deleteMany({ _id: { $ne: config._id } });
   }
 
   res.status(200).json({
@@ -131,6 +143,12 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
 const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
+    planLimits: z.object({
+      free: z.number().int().min(1),
+      basic: z.number().int().min(1),
+      pro: z.number().int().min(1),
+      premium: z.number().int().min(1),
+    }).optional(),
   }),
 });
 
@@ -141,15 +159,18 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     throw new AppError(errorMessages, 400);
   }
 
-  const { betaMode } = validation.data.body;
-
-  let config = await SystemConfig.findOne();
-  if (config) {
-    config.betaMode = betaMode;
-    await config.save();
-  } else {
-    config = await SystemConfig.create({ betaMode });
+  const { betaMode, planLimits } = validation.data.body;
+  const updatePayload: any = { betaMode };
+  if (planLimits) {
+    updatePayload.planLimits = planLimits;
   }
+  const config = await SystemConfig.findOneAndUpdate(
+    {},
+    updatePayload,
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
+  );
+  // Cleanup any stale duplicates.
+  await SystemConfig.deleteMany({ _id: { $ne: config._id } });
 
   res.status(200).json({
     success: true,
@@ -168,17 +189,28 @@ export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) 
   const { message, isActive, type, startAt, endAt } = validation.data.body;
 
   let banner = await GlobalBanner.findOne();
+  const normalizedMessage = (message || '').trim();
+
+  if (isActive && normalizedMessage.length === 0) {
+    throw new AppError('Banner message is required', 400);
+  }
 
   if (banner) {
-    banner.message = message;
+    if (normalizedMessage.length > 0) {
+      banner.message = normalizedMessage;
+    }
     banner.isActive = isActive;
     banner.type = type;
     banner.startAt = startAt ? new Date(startAt) : null as any;
     banner.endAt = endAt ? new Date(endAt) : null as any;
     await banner.save();
   } else {
+    if (isActive && normalizedMessage.length === 0) {
+      throw new AppError('Banner message is required when creating a new banner', 400);
+    }
     banner = await GlobalBanner.create({
-      message,
+      // Allow creating an inactive banner record even if message is blank.
+      message: normalizedMessage.length > 0 ? normalizedMessage : 'Banner disabled',
       isActive,
       type,
       startAt: startAt ? new Date(startAt) : null as any,
@@ -190,6 +222,14 @@ export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) 
     success: true,
     message: 'Global banner updated successfully',
     data: banner,
+  });
+});
+
+export const getGlobalBannerConfig = asyncHandler(async (req: Request, res: Response) => {
+  const banner = await GlobalBanner.findOne();
+  res.status(200).json({
+    success: true,
+    data: banner || null,
   });
 });
 

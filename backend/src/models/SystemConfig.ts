@@ -2,6 +2,12 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ISystemConfig extends Document {
   betaMode: boolean;
+  planLimits?: {
+    free: number;
+    basic: number;
+    pro: number;
+    premium: number;
+  };
   updatedAt: Date;
 }
 
@@ -10,6 +16,12 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     betaMode: {
       type: Boolean,
       default: false,
+    },
+    planLimits: {
+      free: { type: Number, default: 2 },
+      basic: { type: Number, default: 10 },
+      pro: { type: Number, default: 25 },
+      premium: { type: Number, default: 100 },
     },
   },
   {

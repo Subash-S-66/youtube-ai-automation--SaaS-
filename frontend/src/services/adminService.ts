@@ -36,12 +36,17 @@ export const adminService = {
     return response.data;
   },
 
+  async getGlobalBanner() {
+    const response = await api.get('/admin/banner');
+    return response.data;
+  },
+
   async getSystemConfig() {
     const response = await api.get('/admin/config');
     return response.data;
   },
 
-  async updateSystemConfig(data: { betaMode: boolean }) {
+  async updateSystemConfig(data: { betaMode: boolean; planLimits?: { free: number; basic: number; pro: number; premium: number } }) {
     const response = await api.post('/admin/config', data);
     return response.data;
   }

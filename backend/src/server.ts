@@ -3,12 +3,16 @@ import app from './app';
 import connectDB from './config/db';
 import { initializeFirebaseAdmin } from './config/firebaseAdmin';
 import { ensureAdminUser } from './utils/ensureAdminUser';
+import { ensureSystemConfigSingleton } from './utils/ensureSystemConfig';
 
 // Initialize Firebase Admin
 initializeFirebaseAdmin();
 
 // Connect to Database
-connectDB().then(() => ensureAdminUser()).catch((err) => {
+connectDB().then(async () => {
+  await ensureAdminUser();
+  await ensureSystemConfigSingleton();
+}).catch((err) => {
   console.error('Failed to ensure admin user', err);
 });
 

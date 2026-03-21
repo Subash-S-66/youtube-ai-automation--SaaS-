@@ -85,13 +85,20 @@ export default function PaymentsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
-      </div>
+      <DashboardLayout user={user}>
+        <div className="flex items-center space-x-3 text-slate-400 text-sm">
+          <RefreshCw className="h-4 w-4 animate-spin text-[#7C5CFF]" />
+          <span>Loading subscriptions...</span>
+        </div>
+      </DashboardLayout>
     );
   }
 
   const currentPlanId = user?.plan || 'free';
+  const currentPlan = PLANS.find(plan => plan.id === currentPlanId);
+  const subscriptionExpiry = user?.user?.subscriptionExpiresAt
+    ? new Date(user.user.subscriptionExpiresAt).toLocaleDateString()
+    : null;
 
   return (
     <DashboardLayout user={user}>
@@ -120,9 +127,14 @@ export default function PaymentsPage() {
             {/* Current Plan Overview */}
             <div className="bg-[#0B0F1A] rounded-2xl p-6 border border-[#1A2235]">
               <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">Current Plan</h3>
-              <div className="flex items-end mb-2">
-                <span className="text-4xl font-extrabold text-white capitalize">{user?.plan}</span>
-                <span className="text-sm text-slate-500 mb-1 ml-2">/ month</span>
+              <div className="flex items-end mb-2 flex-wrap gap-2">
+                <span className="text-4xl font-extrabold text-white capitalize">{user?.displayPlan || user?.plan}</span>
+                <span className="text-lg text-slate-400 font-semibold">
+                  {(currentPlan?.price || '$0/mo').replace('/mo', '')} / month
+                </span>
+              </div>
+              <div className="text-xs text-slate-500">
+                Subscription Expires: <span className="text-slate-300">{subscriptionExpiry || 'N/A'}</span>
               </div>
               {user?.cancelAtPeriodEnd && (
                  <div className="mt-2 inline-block px-3 py-1 bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-bold rounded">
@@ -134,13 +146,22 @@ export default function PaymentsPage() {
                 <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Daily Usage</h4>
                 <div>
                   <div className="flex justify-between text-sm mb-1">
-                    <span className="text-slate-300">Uploads</span>
-                    <span className="text-white font-mono">{user?.uploadsUsedToday} / {user?.uploadLimitPerDay}</span>
+                    <span className="text-slate-300">Uploads Remaining</span>
+                    <span className="text-white font-mono">
+                      {Math.max((user?.uploadLimitPerDay ?? 0) - (user?.uploadsUsedToday ?? 0), 0)} / {user?.uploadLimitPerDay ?? 0}
+                    </span>
                   </div>
                   <div className="w-full bg-[#111827] rounded-full h-2 border border-[#1A2235]">
                     <div
                       className={`h-2 rounded-full ${user?.plan !== 'free' ? 'bg-[#00D4FF] shadow-[0_0_8px_rgba(0,212,255,0.6)]' : 'bg-[#7C5CFF]'}`}
-                      style={{ width: `${Math.min((user?.uploadsUsedToday / user?.uploadLimitPerDay) * 100, 100)}%` }}
+                      style={{
+                        width: `${Math.min(
+                          ((Math.max((user?.uploadLimitPerDay ?? 0) - (user?.uploadsUsedToday ?? 0), 0)) /
+                            (user?.uploadLimitPerDay ?? 1)) *
+                            100,
+                          100
+                        )}%`
+                      }}
                     ></div>
                   </div>
                 </div>

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, History as HistoryIcon, FileText, Bell, MonitorPlay, Trash2, Settings, CheckCircle } from 'lucide-react';
 import { adminService } from '../../services/adminService';
 import { authService } from '../../services/authService';
@@ -42,6 +41,7 @@ interface UserDetails {
 export default function AdminDashboard() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -63,13 +63,16 @@ export default function AdminDashboard() {
 
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(true);
-  const [bannerType, setBannerType] = useState('info');
+  const [bannerType, setBannerType] = useState('info-blue');
   const [bannerStart, setBannerStart] = useState('');
   const [bannerEnd, setBannerEnd] = useState('');
   const [bannering, setBannering] = useState(false);
+  const [togglingBanner, setTogglingBanner] = useState(false);
 
   const [betaMode, setBetaMode] = useState(false);
   const [updatingConfig, setUpdatingConfig] = useState(false);
+  const [planLimits, setPlanLimits] = useState({ free: 2, basic: 10, pro: 25, premium: 100 });
+  const [savingPlanLimits, setSavingPlanLimits] = useState(false);
 
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
@@ -87,21 +90,28 @@ export default function AdminDashboard() {
     type: 'info',
   });
 
-  useEffect(() => {
-    const fetchConfig = async () => {
-      try {
-        const configData = await adminService.getSystemConfig();
-        if (configData.success && configData.data) {
-          setBetaMode(configData.data.betaMode);
-        }
-      } catch (err) {
-        console.error("Failed to load system config", err);
+  const setBannerWithCompatibility = async (payload: {
+    message: string;
+    isActive: boolean;
+    type: string;
+    startAt?: string | null;
+    endAt?: string | null;
+  }) => {
+    try {
+      return await adminService.setGlobalBanner(payload);
+    } catch (err: any) {
+      const errMessage = err?.response?.data?.message || '';
+      const needsLegacyType = typeof errMessage === 'string' &&
+        errMessage.includes('Invalid option: expected one of "info"|"warning"|"critical"');
+
+      if (!needsLegacyType) {
+        throw err;
       }
-    };
-    if (currentUser?.role === 'admin') {
-      fetchConfig();
+
+      const legacyType = payload.type.includes('-') ? payload.type.split('-')[0] : payload.type;
+      return await adminService.setGlobalBanner({ ...payload, type: legacyType });
     }
-  }, [currentUser]);
+  };
 
   const handleCreateNotification = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -128,25 +138,50 @@ export default function AdminDashboard() {
 
   const handleSetBanner = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bannerMessage) return;
+    if (!bannerMessage.trim()) return;
     setBannering(true);
     try {
-      await adminService.setGlobalBanner({
-        message: bannerMessage,
-        isActive: bannerActive,
+      await setBannerWithCompatibility({
+        message: bannerMessage.trim(),
+        // Updating banner always turns it back on automatically.
+        isActive: true,
         type: bannerType,
         startAt: bannerStart ? new Date(bannerStart).toISOString() : null,
         endAt: bannerEnd ? new Date(bannerEnd).toISOString() : null
       });
+      setBannerActive(true);
       alert('Banner updated successfully!');
-      setBannerMessage('');
-      setBannerStart('');
-      setBannerEnd('');
     } catch (err) {
       console.error(err);
-      alert('Failed to update banner.');
+      const message = (err as any)?.response?.data?.message || 'Failed to update banner.';
+      alert(message);
     } finally {
       setBannering(false);
+    }
+  };
+
+  const handleBannerActiveToggle = async (nextActive: boolean) => {
+    setBannerActive(nextActive);
+    if (nextActive) {
+      return;
+    }
+
+    setTogglingBanner(true);
+    try {
+      await setBannerWithCompatibility({
+        message: bannerMessage.trim() || 'Banner disabled',
+        isActive: false,
+        type: bannerType,
+        startAt: bannerStart ? new Date(bannerStart).toISOString() : null,
+        endAt: bannerEnd ? new Date(bannerEnd).toISOString() : null
+      });
+      alert('Banner turned off.');
+    } catch (err) {
+      setBannerActive(true);
+      const message = (err as any)?.response?.data?.message || 'Failed to turn off banner.';
+      alert(message);
+    } finally {
+      setTogglingBanner(false);
     }
   };
 
@@ -183,7 +218,7 @@ export default function AdminDashboard() {
       setModalConfig({
          isOpen: true,
          title: 'Enable Beta Mode',
-         description: 'Are you ABSOLUTELY sure you want to enable Beta Mode? This will instantly grant ALL users PRO privileges globally.',
+         description: 'Are you ABSOLUTELY sure you want to enable Beta Mode? This will instantly grant ALL free users BASIC privileges globally.',
          type: 'warning',
          confirmText: 'Enable globally',
          cancelText: 'Cancel',
@@ -207,6 +242,41 @@ export default function AdminDashboard() {
          },
          onCancel: () => setModalConfig(prev => ({...prev, isOpen: false}))
       });
+    }
+  };
+
+  const handleSavePlanLimits = async () => {
+    setSavingPlanLimits(true);
+    try {
+      await adminService.updateSystemConfig({
+        betaMode,
+        planLimits: {
+          free: Number(planLimits.free),
+          basic: Number(planLimits.basic),
+          pro: Number(planLimits.pro),
+          premium: Number(planLimits.premium),
+        },
+      });
+      setModalConfig({
+        isOpen: true,
+        title: 'Success',
+        description: 'Plan limits updated successfully.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err) {
+      console.error(err);
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: 'Failed to update plan limits.',
+        type: 'error',
+        confirmText: 'Dismiss',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingPlanLimits(false);
     }
   };
 
@@ -269,20 +339,45 @@ const handleDeleteUser = () => {
           return;
         }
 
-        if (isMounted) {
-          setCurrentUser({ ...me.data.user, plan: me.data.plan, displayPlan: me.data.displayPlan, isBetaMode: me.data.isBetaMode });
-          const [statsData, usersData] = await Promise.all([
-            adminService.getStats(),
-            adminService.getUsers()
-          ]);
-          setStats(statsData.data);
-          setUsers(usersData.data);
+        if (!isMounted) return;
+
+        setCurrentUser({ ...me.data.user, plan: me.data.plan, displayPlan: me.data.displayPlan, isBetaMode: me.data.isBetaMode });
+        setLoading(false);
+        setDashboardLoading(true);
+
+        const [statsData, usersData, configData, bannerData] = await Promise.all([
+          adminService.getStats(),
+          adminService.getUsers(),
+          adminService.getSystemConfig(),
+          adminService.getGlobalBanner(),
+        ]);
+
+        if (!isMounted) return;
+        setStats(statsData.data);
+        setUsers(usersData.data);
+        if (configData.success && configData.data) {
+          setBetaMode(configData.data.betaMode);
+          if (configData.data.planLimits) {
+            setPlanLimits(configData.data.planLimits);
+          }
+        }
+        if (bannerData?.success && bannerData.data) {
+          setBannerMessage(bannerData.data.message || '');
+          setBannerActive(!!bannerData.data.isActive);
+          setBannerType(bannerData.data.type || 'info-blue');
+          setBannerStart(bannerData.data.startAt ? new Date(bannerData.data.startAt).toISOString().slice(0, 16) : '');
+          setBannerEnd(bannerData.data.endAt ? new Date(bannerData.data.endAt).toISOString().slice(0, 16) : '');
+        } else {
+          setBannerActive(false);
         }
       } catch (error) {
         console.error("Admin init error", error);
         if (isMounted) router.replace('/login');
       } finally {
-        if (isMounted) setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+          setDashboardLoading(false);
+        }
       }
     };
     initAdmin();
@@ -329,9 +424,18 @@ const handleDeleteUser = () => {
 
 if (loading) {
     return (
-      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
-      </div>
+      <DashboardLayout user={currentUser}>
+        <div className="space-y-6">
+          <div className="flex items-center space-x-3 text-slate-400 text-sm">
+            <RefreshCw className="h-4 w-4 animate-spin text-[#7C5CFF]" />
+            <span>Loading admin panel...</span>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="h-56 bg-[#111827] border border-[#1A2235] rounded-2xl" />
+            <div className="h-56 bg-[#111827] border border-[#1A2235] rounded-2xl" />
+          </div>
+        </div>
+      </DashboardLayout>
     );
   }
 
@@ -343,7 +447,7 @@ if (loading) {
     <DashboardLayout user={currentUser}>
       <div className="max-w-7xl mx-auto py-8">
         {!selectedUserId ? (
-          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+          <div className="space-y-8">
             <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Admin Panel</h1>
 
             {/* Control Tools */}
@@ -356,14 +460,17 @@ if (loading) {
                 </div>
                 <form onSubmit={handleCreateNotification} className="space-y-4">
                   <div>
-                    <input type="text" placeholder="Title" value={notifyTitle} onChange={(e) => setNotifyTitle(e.target.value)} required className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none" />
+                    <label htmlFor="notify-title" className="block text-xs text-slate-400 mb-1">Title</label>
+                    <input id="notify-title" type="text" placeholder="Title" value={notifyTitle} onChange={(e) => setNotifyTitle(e.target.value)} required className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none" />
                   </div>
                   <div>
-                    <textarea placeholder="Message" value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} required rows={3} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none resize-none"></textarea>
+                    <label htmlFor="notify-message" className="block text-xs text-slate-400 mb-1">Message</label>
+                    <textarea id="notify-message" placeholder="Message" value={notifyMessage} onChange={(e) => setNotifyMessage(e.target.value)} required rows={3} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none resize-none"></textarea>
                   </div>
                   <div className="flex gap-4">
                     <div className="flex-1">
-                      <select value={notifyType} onChange={(e) => setNotifyType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none">
+                      <label htmlFor="notify-type" className="block text-xs text-slate-400 mb-1">Type</label>
+                      <select id="notify-type" value={notifyType} onChange={(e) => setNotifyType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none">
                         <option value="info">Info</option>
                         <option value="warning">Warning</option>
                         <option value="critical">Critical</option>
@@ -380,8 +487,8 @@ if (loading) {
                       ))}
                     </div>
                   </div>
-                  <label className="flex items-center mt-2 cursor-pointer">
-                    <input type="checkbox" checked={notifySendEmail} onChange={(e) => setNotifySendEmail(e.target.checked)} className="rounded border-slate-700 bg-slate-800 text-[#7C5CFF] focus:ring-[#7C5CFF]" />
+                  <label htmlFor="notify-send-email" className="flex items-center mt-2 cursor-pointer">
+                    <input id="notify-send-email" type="checkbox" checked={notifySendEmail} onChange={(e) => setNotifySendEmail(e.target.checked)} className="rounded border-slate-700 bg-slate-800 text-[#7C5CFF] focus:ring-[#7C5CFF]" />
                     <span className="ml-2 text-sm text-slate-300">Also send via Email Queue</span>
                   </label>
                   <button type="submit" disabled={notifying} className="w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center">
@@ -398,30 +505,50 @@ if (loading) {
                 </div>
                 <form onSubmit={handleSetBanner} className="space-y-4">
                   <div>
-                    <input type="text" placeholder="Banner Message (Max 200 chars)" value={bannerMessage} onChange={(e) => setBannerMessage(e.target.value)} required maxLength={200} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none" />
+                    <label htmlFor="banner-message" className="block text-xs text-slate-400 mb-1">Banner Message</label>
+                    <input id="banner-message" type="text" placeholder="Banner Message (Max 200 chars)" value={bannerMessage} onChange={(e) => setBannerMessage(e.target.value)} required={bannerActive} maxLength={200} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none" />
                   </div>
                   <div>
-                    <select value={bannerType} onChange={(e) => setBannerType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none">
-                      <option value="info">Info (Blue)</option>
-                      <option value="warning">Warning (Amber)</option>
-                      <option value="critical">Critical (Red)</option>
+                    <label htmlFor="banner-type" className="block text-xs text-slate-400 mb-1">Banner Color</label>
+                    <select id="banner-type" value={bannerType} onChange={(e) => setBannerType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none">
+                      <option value="info-blue">Info (Blue)</option>
+                      <option value="info-cyan">Info (Cyan)</option>
+                      <option value="info-green">Info (Green)</option>
+                      <option value="info-purple">Info (Purple)</option>
+                      <option value="warning-amber">Warning (Amber)</option>
+                      <option value="warning-gold">Warning (Gold)</option>
+                      <option value="critical-red">Critical (Red)</option>
+                      <option value="critical-rose">Critical (Rose)</option>
                     </select>
                   </div>
                   <div className="flex gap-4">
                     <div className="flex-1">
-                      <label className="block text-xs text-slate-400 mb-1">Start At (Optional)</label>
-                      <input type="datetime-local" value={bannerStart} onChange={(e) => setBannerStart(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                      <label htmlFor="banner-start" className="block text-xs text-slate-400 mb-1">Start At (Optional)</label>
+                      <input id="banner-start" type="datetime-local" value={bannerStart} onChange={(e) => setBannerStart(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
                     </div>
                     <div className="flex-1">
-                      <label className="block text-xs text-slate-400 mb-1">End At (Optional)</label>
-                      <input type="datetime-local" value={bannerEnd} onChange={(e) => setBannerEnd(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                      <label htmlFor="banner-end" className="block text-xs text-slate-400 mb-1">End At (Optional)</label>
+                      <input id="banner-end" type="datetime-local" value={bannerEnd} onChange={(e) => setBannerEnd(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
                     </div>
                   </div>
-                  <label className="flex items-center cursor-pointer">
-                    <input type="checkbox" checked={bannerActive} onChange={(e) => setBannerActive(e.target.checked)} className="rounded border-slate-700 bg-slate-800 text-[#00D4FF] focus:ring-[#00D4FF]" />
-                    <span className="ml-2 text-sm text-slate-300">Is Active</span>
+                  <label className="flex items-center justify-between cursor-pointer bg-[#0B0F1A] border border-[#1A2235] rounded-xl px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">Banner Active</p>
+                      <p className="text-xs text-slate-400">Turn on/off the global banner</p>
+                    </div>
+                    <span className="relative inline-flex items-center">
+                    <input
+                      id="banner-active"
+                      type="checkbox"
+                      className="sr-only peer"
+                      checked={bannerActive}
+                      disabled={togglingBanner || bannering}
+                      onChange={(e) => handleBannerActiveToggle(e.target.checked)}
+                    />
+                      <span className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></span>
+                    </span>
                   </label>
-                  <button type="submit" disabled={bannering} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-black font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
+                  <button type="submit" disabled={bannering || togglingBanner} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-black font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
                     {bannering ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Update Banner'}
                   </button>
                 </form>
@@ -436,12 +563,43 @@ if (loading) {
                 <div className="p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between">
                   <div>
                     <p className="text-white font-bold">Beta Mode</p>
-                    <p className="text-sm text-slate-400">When enabled, all users temporarily receive &quot;Pro&quot; plan limits. Does not modify their database record.</p>
+                    <p className="text-sm text-slate-400">When enabled, all free users temporarily receive &quot;Basic&quot; plan limits. Does not modify their database record.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
                     <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
+                </div>
+
+                <div className="mt-6 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <p className="text-white font-bold">Plan Limits (Daily Uploads)</p>
+                      <p className="text-sm text-slate-400">Control upload limits for each plan globally.</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {(['free', 'basic', 'pro', 'premium'] as const).map((plan) => (
+                      <div key={plan}>
+                        <label className="block text-xs text-slate-400 mb-1 capitalize">{plan}</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={(planLimits as any)[plan]}
+                          onChange={(e) => setPlanLimits(prev => ({ ...prev, [plan]: Number(e.target.value) }))}
+                          className="w-full bg-[#111827] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSavePlanLimits}
+                    disabled={savingPlanLimits}
+                    className="mt-4 w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center"
+                  >
+                    {savingPlanLimits ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Plan Limits'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -450,15 +608,15 @@ if (loading) {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
                 <div className="p-4 rounded-xl bg-[#7C5CFF]/10 text-[#7C5CFF] mr-4"><Users className="h-6 w-6" /></div>
-                <div><p className="text-slate-400 text-sm font-medium">Total Users</p><p className="text-2xl font-bold text-white">{stats?.totalUsers || 0}</p></div>
+                <div><p className="text-slate-400 text-sm font-medium">Total Users</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.totalUsers || 0)}</p></div>
               </div>
               <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
                 <div className="p-4 rounded-xl bg-[#00D4FF]/10 text-[#00D4FF] mr-4"><CreditCard className="h-6 w-6" /></div>
-                <div><p className="text-slate-400 text-sm font-medium">Active Subscriptions</p><p className="text-2xl font-bold text-white">{stats?.totalActiveSubscriptions || 0}</p></div>
+                <div><p className="text-slate-400 text-sm font-medium">Active Subscriptions</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.totalActiveSubscriptions || 0)}</p></div>
               </div>
               <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
                 <div className="p-4 rounded-xl bg-green-500/10 text-green-500 mr-4"><CheckCircle className="h-6 w-6" /></div>
-                <div><p className="text-slate-400 text-sm font-medium">Success Rate</p><p className="text-2xl font-bold text-white">{stats?.jobs?.successRate || '0%'}</p></div>
+                <div><p className="text-slate-400 text-sm font-medium">Success Rate</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.jobs?.successRate || '0%')}</p></div>
               </div>
             </div>
 
@@ -490,16 +648,19 @@ if (loading) {
                         <td className="p-4 text-slate-400 hidden md:table-cell">{u.subscriptionExpiresAt ? new Date(u.subscriptionExpiresAt).toLocaleDateString() : 'N/A'}</td>
                       </tr>
                     ))}
-                    {users.length === 0 && (
+                    {dashboardLoading && (
+                      <tr><td colSpan={5} className="p-8 text-center text-slate-500">Loading users...</td></tr>
+                    )}
+                    {!dashboardLoading && users.length === 0 && (
                       <tr><td colSpan={5} className="p-8 text-center text-slate-500">No users found.</td></tr>
                     )}
                   </tbody>
                 </table>
               </div>
             </div>
-          </motion.div>
+          </div>
         ) : (
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
+          <div className="space-y-6">
             <button onClick={() => setSelectedUserId(null)} className="flex items-center text-slate-400 hover:text-white transition-colors text-sm font-medium">
               <ChevronLeft className="h-4 w-4 mr-1" /> Back to Directory
             </button>
@@ -594,7 +755,7 @@ if (loading) {
 
               </div>
             )}
-          </motion.div>
+          </div>
         )}
       </div>
       <AppModal

@@ -181,6 +181,19 @@ function Dashboard() {
     return () => clearInterval(interval);
   }, [user]);
 
+  const currentPlan = ((user?.plan || user?.user?.plan || 'free') as string).toLowerCase();
+  const isFreeUser = currentPlan === 'free';
+  const effectiveStoryMode = !isFreeUser && storyMode;
+
+  useEffect(() => {
+    if (isFreeUser && storyMode) {
+      setStoryMode(false);
+    }
+    if (isFreeUser && recapEnabled) {
+      setRecapEnabled(false);
+    }
+  }, [isFreeUser, storyMode, recapEnabled, setStoryMode, setRecapEnabled]);
+
   const handleConnectYouTube = () => window.location.href = youtubeService.getAuthUrl();
   const handleUpgrade = async () => {
     try {
@@ -261,7 +274,7 @@ function Dashboard() {
     try {
       // 1. Manage Story ID
       let currentStoryId = storyId;
-      if (storyMode && currentPart === 1) {
+      if (effectiveStoryMode && currentPart === 1) {
         currentStoryId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
         setStoryId(currentStoryId);
       }
@@ -275,7 +288,7 @@ function Dashboard() {
         finalPrompt = `Create a viral short-form video about the topic: ${topicString}.`;
       }
 
-      if (storyMode) {
+      if (effectiveStoryMode) {
         finalPrompt += ` This is Part ${currentPart} of an ongoing series.`;
 
         if (storyContext) {
@@ -361,7 +374,7 @@ function Dashboard() {
   };
 
   const handleStoryModeToggle = () => {
-    if (user?.plan === 'free') {
+    if (isFreeUser) {
       setModalConfig({
         isOpen: true,
         title: 'Upgrade Required',
@@ -392,10 +405,10 @@ function Dashboard() {
         contentType,
         videoCount,
         channelId: selectedChannelId,
-        storyMode,
+        storyMode: effectiveStoryMode,
         storyId: executeStoryId || storyId,
         currentPart,
-        recapEnabled: currentPart > 1 ? recapEnabled : false,
+        recapEnabled: effectiveStoryMode && currentPart > 1 ? recapEnabled : false,
         ctaEnabled,
         voices: finalVoices,
         templateConfig: user?.plan === 'premium' ? { fontStyle: templateFont, subtitleColor: templateColor } : undefined
@@ -408,7 +421,7 @@ function Dashboard() {
       }
 
       // If story mode, save context for the next part and increment
-      if (storyMode) {
+      if (effectiveStoryMode) {
         setStoryContext(prevContext => {
           // ensure we only append the newly generated content, not the prompt with previous context already injected
           const newContext = newPromptContent || (inputMode === 'prompt' ? prompt : `Video about: ${selectedTopic === 'Custom' ? customTopic : selectedTopic}`);
@@ -461,9 +474,33 @@ function Dashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
-      </div>
+      <DashboardLayout user={user}>
+        <div className="space-y-6">
+          <div className="flex items-center space-x-3 text-slate-400 text-sm">
+            <RefreshCw className="h-4 w-4 animate-spin text-[#7C5CFF]" />
+            <span>Loading dashboard…</span>
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="xl:col-span-2 space-y-6">
+              <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl">
+                <div className="h-6 w-40 bg-[#1A2235] rounded mb-6" />
+                <div className="h-24 bg-[#0B0F1A] border border-[#1A2235] rounded-xl" />
+                <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="h-20 bg-[#0B0F1A] border border-[#1A2235] rounded-xl" />
+                  <div className="h-20 bg-[#0B0F1A] border border-[#1A2235] rounded-xl" />
+                  <div className="h-20 bg-[#0B0F1A] border border-[#1A2235] rounded-xl" />
+                </div>
+              </div>
+            </div>
+            <div className="space-y-6">
+              <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl">
+                <div className="h-5 w-28 bg-[#1A2235] rounded mb-4" />
+                <div className="h-20 bg-[#0B0F1A] border border-[#1A2235] rounded-xl" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </DashboardLayout>
     );
   }
 
@@ -588,14 +625,17 @@ function Dashboard() {
                     <BookOpen className="h-5 w-5 text-[#00D4FF] mr-2" />
                     <h3 className="text-sm font-semibold text-white">Story Mode</h3>
                   </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={storyMode} onChange={handleStoryModeToggle} />
+                  <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                    <input type="checkbox" className="sr-only peer" checked={effectiveStoryMode} onChange={handleStoryModeToggle} disabled={isFreeUser} />
                     <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
+                {isFreeUser && (
+                  <p className="text-xs text-slate-500 mb-2">Story Mode is available on Basic, Pro, and Premium plans.</p>
+                )}
 
                 <AnimatePresence>
-                  {storyMode && (
+                  {effectiveStoryMode && (
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>

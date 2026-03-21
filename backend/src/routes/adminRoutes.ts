@@ -8,6 +8,7 @@ import {
   updateUserPlan,
   createNotification,
   setGlobalBanner,
+  getGlobalBannerConfig,
   deleteUserByAdmin,
   getSystemConfig,
   updateSystemConfig,
@@ -27,6 +28,7 @@ router.put('/users/:id/plan', updateUserPlan);
 router.delete('/users/:id', deleteUserByAdmin);
 router.post('/notify', createNotification);
 router.post('/banner', setGlobalBanner);
+router.get('/banner', getGlobalBannerConfig);
 router.get('/config', getSystemConfig);
 router.post('/config', updateSystemConfig);
 router.post('/trigger-reports', triggerWeeklyReports);

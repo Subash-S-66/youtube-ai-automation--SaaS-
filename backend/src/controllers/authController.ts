@@ -8,7 +8,6 @@ import bcrypt from 'bcrypt';
 import crypto from 'crypto';
 import { sendEmail } from '../services/emailService';
 import { getUploadLimits } from '../services/uploadLimitService';
-import { planLimits } from '../config/plans';
 import { google } from 'googleapis';
 
 // Generate JWT
@@ -143,8 +142,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         remainingUploads: limitCheck.remainingUploads,
         uploadsUsedToday: user.uploadsUsedToday || 0,
         uploadsOnHold: user.uploadsOnHold || 0,
-        uploadLimitPerDay: planLimits[limitCheck.plan] || planLimits['free'] || 3,
-        uploadLimit: planLimits[limitCheck.plan] || planLimits['free'] || 3,
+        uploadLimitPerDay: limitCheck.dailyLimit,
+        uploadLimit: limitCheck.dailyLimit,
       },
     });
   } else {

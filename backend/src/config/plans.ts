@@ -6,3 +6,14 @@ export const planLimits: Record<PlanType, number> = {
   pro: 25,
   premium: 100,
 };
+
+export const resolvePlanLimit = (
+  plan: PlanType,
+  overrides?: Partial<Record<PlanType, number>>
+): number => {
+  const overrideValue = overrides?.[plan];
+  if (typeof overrideValue === 'number' && Number.isFinite(overrideValue) && overrideValue > 0) {
+    return overrideValue;
+  }
+  return planLimits[plan] || planLimits.free;
+};

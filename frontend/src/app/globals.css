@@ -17,6 +17,7 @@
 :root {
   --background: #0B0F1A;
   --foreground: #f8fafc;
+  --global-banner-offset: 0px;
 }
 
 body {
@@ -28,7 +29,46 @@ body {
 }
 
 body.has-global-banner {
-  padding-top: 40px; /* matches the global banner height */
+  --global-banner-offset: 40px;
+  padding-top: var(--global-banner-offset);
+}
+
+.dashboard-shell {
+  height: calc(100dvh - var(--global-banner-offset));
+}
+
+.dashboard-sidebar {
+  top: 0;
+  bottom: 0;
+  height: auto;
+}
+
+.dashboard-mobile-overlay {
+  top: 0;
+}
+
+@media (max-width: 767px) {
+  body.has-global-banner .dashboard-sidebar {
+    top: var(--global-banner-offset);
+    height: calc(100dvh - var(--global-banner-offset));
+  }
+
+  body.has-global-banner .dashboard-mobile-overlay {
+    top: var(--global-banner-offset);
+  }
+}
+
+@keyframes banner-marquee {
+  0% {
+    transform: translateX(100vw);
+  }
+  100% {
+    transform: translateX(-100vw);
+  }
+}
+
+.banner-marquee {
+  animation: banner-marquee 20s linear infinite;
 }
 
 /* Custom Scrollbar for modern SaaS dark theme */
@@ -75,16 +115,36 @@ body.has-global-banner {
     box-shadow: 0 0 10px rgba(124, 92, 255, 0.3);
   }
 
-  .banner-info {
-    background-color: #2563eb;
+  .banner-info-blue {
+    background-color: rgba(59, 130, 246, 0.85);
     color: white;
   }
-  .banner-warning {
-    background-color: #f59e0b;
-    color: black;
+  .banner-info-cyan {
+    background-color: rgba(6, 182, 212, 0.85);
+    color: #071b2d;
   }
-  .banner-critical {
-    background-color: #dc2626;
+  .banner-info-green {
+    background-color: rgba(16, 185, 129, 0.85);
+    color: #052016;
+  }
+  .banner-info-purple {
+    background-color: rgba(139, 92, 246, 0.85);
+    color: white;
+  }
+  .banner-warning-amber {
+    background-color: rgba(245, 158, 11, 0.9);
+    color: #2b1a00;
+  }
+  .banner-warning-gold {
+    background-color: rgba(251, 191, 36, 0.9);
+    color: #2b1a00;
+  }
+  .banner-critical-red {
+    background-color: rgba(220, 38, 38, 0.9);
+    color: white;
+  }
+  .banner-critical-rose {
+    background-color: rgba(244, 63, 94, 0.9);
     color: white;
   }
 }

@@ -113,14 +113,17 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
-        <RefreshCw className="h-8 w-8 text-[#7C5CFF] animate-spin" />
-      </div>
+      <DashboardLayout user={user}>
+        <div className="flex items-center space-x-3 text-slate-400 text-sm">
+          <RefreshCw className="h-4 w-4 animate-spin text-[#7C5CFF]" />
+          <span>Loading settings…</span>
+        </div>
+      </DashboardLayout>
     );
   }
 
   return (
-    <DashboardLayout user={user?.user}>
+    <DashboardLayout user={user}>
 
       <AnimatePresence>
         {message && (
@@ -169,7 +172,7 @@ export default function SettingsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
                 <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Current Plan</p>
-                <p className="text-lg font-bold text-white capitalize">{user?.plan}</p>
+                <p className="text-lg font-bold text-white capitalize">{user?.displayPlan || user?.plan}</p>
               </div>
               <div className="p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
                 <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Subscription Expiry</p>

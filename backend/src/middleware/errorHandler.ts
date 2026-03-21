@@ -40,8 +40,13 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
 
   // Zod validation error
   if (err.name === 'ZodError') {
-    const errors = err.errors.map((e: any) => `${e.path.join('.')}: ${e.message}`);
-    message = `Validation Error. ${errors.join('. ')}`;
+    const zodErrors = Array.isArray(err.errors) ? err.errors : Array.isArray(err.issues) ? err.issues : [];
+    if (zodErrors.length > 0) {
+      const errors = zodErrors.map((e: any) => `${(e.path || []).join('.')}: ${e.message}`);
+      message = `Validation Error. ${errors.join('. ')}`;
+    } else {
+      message = 'Validation Error.';
+    }
     statusCode = 400;
   }
 
