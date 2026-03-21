@@ -169,7 +169,7 @@ export default function AdminDashboard() {
     setTogglingBanner(true);
     try {
       await setBannerWithCompatibility({
-        message: bannerMessage.trim() || 'Banner disabled',
+        message: bannerMessage.trim() || ' ',
         isActive: false,
         type: bannerType,
         startAt: bannerStart ? new Date(bannerStart).toISOString() : null,

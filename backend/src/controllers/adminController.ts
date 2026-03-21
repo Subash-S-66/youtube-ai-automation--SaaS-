@@ -210,7 +210,7 @@ export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) 
     }
     banner = await GlobalBanner.create({
       // Allow creating an inactive banner record even if message is blank.
-      message: normalizedMessage.length > 0 ? normalizedMessage : 'Banner disabled',
+      message: normalizedMessage.length > 0 ? normalizedMessage : '   ',
       isActive,
       type,
       startAt: startAt ? new Date(startAt) : null as any,
