@@ -36,6 +36,8 @@ export default function HelpPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+
     if (!subject.trim() || !message.trim()) {
         setError('Subject and Message are required.');
         return;

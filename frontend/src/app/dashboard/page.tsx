@@ -7,7 +7,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Play, Activity, Youtube, ListVideo, Clock, FileVideo,
   ShieldAlert, Sparkles, RefreshCw, PenLine, List,
-  BookOpen, Mic, Volume2
+  BookOpen, Mic, Volume2, Calendar
 } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
@@ -56,10 +56,14 @@ function Dashboard() {
 
   // Settings
   const [ctaEnabled, setCtaEnabled] = usePersistentSettings<boolean>('clipforge_ctaEnabled', false);
-  const [selectedVoices, setSelectedVoices] = usePersistentSettings<string[]>('clipforge_voices', ['v1']);
+  const [selectedVoices, setSelectedVoices] = usePersistentSettings<string[]>('clipforge_voices', ['Aoede']);
   const [randomVoice, setRandomVoice] = usePersistentSettings<boolean>('clipforge_randomVoice', true);
   const [templateFont, setTemplateFont] = usePersistentSettings<string>('clipforge_templateFont', 'Arial');
   const [templateColor, setTemplateColor] = usePersistentSettings<string>('clipforge_templateColor', '#FFFFFF');
+
+  // Scheduling State
+  const [scheduleEnabled, setScheduleEnabled] = useState<boolean>(false);
+  const [scheduleDatetime, setScheduleDatetime] = useState<string>('');
 
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'warning' } | null>(null);
@@ -224,6 +228,10 @@ function Dashboard() {
 
   const handleGenerateAndRun = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Prevent double entry
+    if (generating) return;
+
     if (!user?.isYoutubeConnected) {
       setModalConfig({
         isOpen: true,
@@ -248,6 +256,12 @@ function Dashboard() {
 
     if (inputMode === 'topic' && selectedTopic === 'Custom' && !customTopic.trim()) {
       setMessage({ text: 'Please enter a custom topic.', type: 'error' });
+      return;
+    }
+
+    // Strict upload limit enforcement before hitting backend
+    if (user?.remainingUploads < videoCount) {
+      setMessage({ text: `Not enough uploads remaining. You requested ${videoCount} videos but only have ${user?.remainingUploads} uploads available today.`, type: 'error' });
       return;
     }
 
@@ -403,7 +417,7 @@ function Dashboard() {
         finalVoices = [AVAILABLE_VOICES[Math.floor(Math.random() * AVAILABLE_VOICES.length)]!.id];
       }
 
-      const pipelineRes = await pipelineService.runPipeline(pId, {
+      const videoConfig = {
         targetDuration: duration,
         contentType,
         videoCount,
@@ -415,12 +429,24 @@ function Dashboard() {
         ctaEnabled,
         voices: finalVoices,
         templateConfig: user?.plan === 'premium' ? { fontStyle: templateFont, subtitleColor: templateColor } : undefined
-      }, acceptedWarning);
+      };
 
-      if (pipelineRes.warning) {
-          setMessage({ text: pipelineRes.warning, type: 'warning' });
+      if (scheduleEnabled && scheduleDatetime) {
+        const { scheduleService } = require('../../services/scheduleService');
+        await scheduleService.createSchedule({
+          channelId: selectedChannelId,
+          type: 'one-time',
+          datetime: new Date(scheduleDatetime),
+          videoConfig: { ...videoConfig, promptId: pId }
+        });
+        setMessage({ text: 'Video generation scheduled successfully!', type: 'success' });
       } else {
-          setMessage({ text: 'Pipeline started successfully!', type: 'success' });
+        const pipelineRes = await pipelineService.runPipeline(pId, videoConfig, acceptedWarning);
+        if (pipelineRes.warning) {
+            setMessage({ text: pipelineRes.warning, type: 'warning' });
+        } else {
+            setMessage({ text: 'Pipeline started successfully!', type: 'success' });
+        }
       }
 
       // If story mode, save context for the next part and increment
@@ -620,6 +646,52 @@ function Dashboard() {
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              {/* Scheduling Options */}
+              <div className="p-5 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 rounded-xl border border-[#00D4FF]/30">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center">
+                    <Calendar className="h-5 w-5 text-[#00D4FF] mr-2" />
+                    <h3 className="text-sm font-semibold text-white">Auto Upload Schedule</h3>
+                  </div>
+                  <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                    <input type="checkbox" className="sr-only peer" checked={scheduleEnabled} onChange={(e) => {
+                      if (isFreeUser) {
+                        setModalConfig({
+                          isOpen: true,
+                          title: 'Upgrade Required',
+                          description: 'Scheduling is only available on paid plans.',
+                          type: 'warning',
+                          confirmText: 'Upgrade Now',
+                          cancelText: 'Dismiss',
+                          onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
+                          onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+                        });
+                        return;
+                      }
+                      setScheduleEnabled(e.target.checked);
+                    }} disabled={isFreeUser} />
+                    <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                  </label>
+                </div>
+
+                <AnimatePresence>
+                  {scheduleEnabled && (
+                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                      <div className="pt-4 mt-4 border-t border-[#00D4FF]/20">
+                        <label className="block text-sm font-medium text-slate-300 mb-2">Publish Date & Time</label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleDatetime}
+                          onChange={(e) => setScheduleDatetime(e.target.value)}
+                          className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-3 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
+                        />
+                        <p className="text-xs text-slate-400 mt-2">The video will be generated and automatically published to YouTube at this time.</p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
 
               {/* Story Mode Options */}
               <div className="p-5 bg-gradient-to-r from-[#7C5CFF]/10 to-[#00D4FF]/10 rounded-xl border border-[#7C5CFF]/30">
