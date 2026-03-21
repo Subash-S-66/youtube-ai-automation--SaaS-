@@ -3,10 +3,12 @@
 import { useEffect, useState, useRef, RefObject } from 'react';
 import { useRouter } from 'next/navigation';
 import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, History as HistoryIcon, FileText, Bell, MonitorPlay, Trash2, Settings, CheckCircle } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { adminService } from '../../services/adminService';
 import { authService } from '../../services/authService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
-import AppModal, { AppModalType } from '../../components/ui/AppModal';
+const AppModal = dynamic(() => import('../../components/ui/AppModal'), { ssr: false });
+import { AppModalType } from '../../components/ui/AppModal';
 import { cn } from '../../lib/utils';
 
 interface AdminStats {
@@ -60,6 +62,9 @@ export default function AdminDashboard() {
   const [notifyTargetPlans, setNotifyTargetPlans] = useState<string[]>(['free', 'basic', 'pro', 'premium']);
   const [notifySendEmail, setNotifySendEmail] = useState(false);
   const [notifying, setNotifying] = useState(false);
+
+  // Plans Config State
+  const [plans, setPlans] = useState<any[]>([]);
 
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(true);
@@ -291,6 +296,32 @@ export default function AdminDashboard() {
     }
   };
 
+  const handlePlanChange = async (planId: string, updates: any) => {
+      try {
+          const { planService } = await import('../../services/planService');
+          await planService.updatePlan(planId, updates);
+
+          setPlans(prev => prev.map(p => p._id === planId ? { ...p, ...updates } : p));
+          setModalConfig({
+              isOpen: true,
+              title: 'Plan Updated',
+              description: 'The plan configuration has been successfully updated.',
+              type: 'success',
+              confirmText: 'OK',
+              onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+          });
+      } catch (err: any) {
+          setModalConfig({
+              isOpen: true,
+              title: 'Error',
+              description: err.response?.data?.message || 'Failed to update plan',
+              type: 'error',
+              confirmText: 'OK',
+              onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+          });
+      }
+  };
+
 const handleDeleteUser = () => {
     if (!selectedUserId) return;
 
@@ -348,31 +379,44 @@ const handleDeleteUser = () => {
         setLoading(false);
         setDashboardLoading(true);
 
-        const [statsData, usersData, configData, bannerData] = await Promise.all([
+        // Start loading the heavy API endpoints without blocking the initial UI completely
+        Promise.allSettled([
           adminService.getStats(),
           adminService.getUsers(),
           adminService.getSystemConfig(),
           adminService.getGlobalBanner(),
-        ]);
+          import('../../services/planService').then(m => m.planService.getPlans()),
+        ]).then((results) => {
+           if (!isMounted) return;
+           const [statsRes, usersRes, configRes, bannerRes, plansRes] = results;
 
-        if (!isMounted) return;
-        setStats(statsData.data);
-        setUsers(usersData.data);
-        if (configData.success && configData.data) {
-          setBetaMode(configData.data.betaMode);
-          if (configData.data.planLimits) {
-            setPlanLimits(configData.data.planLimits);
-          }
-        }
-        if (bannerData?.success && bannerData.data) {
-          setBannerMessage(bannerData.data.message || '');
-          setBannerActive(!!bannerData.data.isActive);
-          setBannerType(bannerData.data.type || 'info-blue');
-          setBannerStart(bannerData.data.startAt ? new Date(bannerData.data.startAt).toISOString().slice(0, 16) : '');
-          setBannerEnd(bannerData.data.endAt ? new Date(bannerData.data.endAt).toISOString().slice(0, 16) : '');
-        } else {
-          setBannerActive(false);
-        }
+           if (statsRes.status === 'fulfilled' && statsRes.value?.success) setStats(statsRes.value.data);
+           if (usersRes.status === 'fulfilled' && usersRes.value?.success) setUsers(usersRes.value.data);
+
+           if (configRes.status === 'fulfilled' && configRes.value?.success && configRes.value.data) {
+              setBetaMode(configRes.value.data.betaMode);
+              if (configRes.value.data.planLimits) {
+                setPlanLimits(configRes.value.data.planLimits);
+              }
+           }
+
+           if (bannerRes.status === 'fulfilled' && bannerRes.value?.success && bannerRes.value.data) {
+             const bd = bannerRes.value.data;
+             setBannerMessage(bd.message || '');
+             setBannerActive(!!bd.isActive);
+             setBannerType(bd.type || 'info-blue');
+             setBannerStart(bd.startAt ? new Date(bd.startAt).toISOString().slice(0, 16) : '');
+             setBannerEnd(bd.endAt ? new Date(bd.endAt).toISOString().slice(0, 16) : '');
+           } else {
+             setBannerActive(false);
+           }
+
+           if (plansRes.status === 'fulfilled' && plansRes.value?.success) {
+               setPlans(plansRes.value.data);
+           }
+           setDashboardLoading(false);
+        });
+
       } catch (error) {
         console.error("Admin init error", error);
         if (isMounted) router.replace('/login');
@@ -508,6 +552,69 @@ if (loading) {
                     {notifying ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Send Broadcast'}
                   </button>
                 </form>
+              </div>
+
+              {/* Dynamic Plans Control */}
+              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center">
+                    <Settings className="h-5 w-5 text-[#7C5CFF] mr-2" />
+                    <h2 className="text-xl font-bold text-white">Plans Configuration</h2>
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  {plans.map(plan => (
+                    <div key={plan._id} className="bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-white capitalize">{plan.name}</h3>
+                        <label className="flex items-center cursor-pointer">
+                          <span className="mr-2 text-xs text-slate-400">Active</span>
+                          <div className="relative inline-flex items-center">
+                            <input type="checkbox" className="sr-only peer" checked={plan.is_active} onChange={(e) => handlePlanChange(plan._id, { is_active: e.target.checked })} />
+                            <div className="w-9 h-5 bg-[#1A2235] rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
+                          </div>
+                        </label>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                           <label className="text-xs text-slate-400 block mb-1">Price</label>
+                           <input type="number" value={plan.price} onChange={(e) => handlePlanChange(plan._id, { price: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        </div>
+                        <div>
+                           <label className="text-xs text-slate-400 block mb-1">Priority Weight</label>
+                           <input type="number" value={plan.priority_weight} onChange={(e) => handlePlanChange(plan._id, { priority_weight: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                           <label className="text-xs text-slate-400 block mb-1">Max Channels</label>
+                           <input type="number" value={plan.limits?.max_channels} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_channels: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        </div>
+                        <div>
+                           <label className="text-xs text-slate-400 block mb-1">Daily Uploads</label>
+                           <input type="number" value={plan.limits?.daily_upload_limit} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, daily_upload_limit: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="flex items-center cursor-pointer">
+                          <input type="checkbox" checked={plan.features?.voice_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, voice_selection: e.target.checked }})} className="mr-2" />
+                          <span className="text-xs text-slate-300">Voice Selection</span>
+                        </label>
+                        <label className="flex items-center cursor-pointer">
+                          <input type="checkbox" checked={plan.features?.scheduling} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, scheduling: e.target.checked }})} className="mr-2" />
+                          <span className="text-xs text-slate-300">Scheduling</span>
+                        </label>
+                        <label className="flex items-center cursor-pointer">
+                          <input type="checkbox" checked={plan.features?.multi_channel} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, multi_channel: e.target.checked }})} className="mr-2" />
+                          <span className="text-xs text-slate-300">Multi Channel</span>
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Banner Control */}
