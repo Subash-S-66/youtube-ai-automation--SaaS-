@@ -67,7 +67,7 @@ export default function AdminTicketsPage() {
       await supportService.replyToTicket(selected._id, reply.trim(), closeTicket);
       setReply('');
       await loadTickets();
-      setSelected(prev => prev ? { ...prev, status: closeTicket ? 'closed' : prev.status, replies: [...(prev.replies || []), { message: reply.trim(), repliedBy: currentUser?.email || 'admin', createdAt: new Date().toISOString() }] } : prev);
+      setSelected(prev => prev ? { ...prev, status: closeTicket ? 'closed' : prev.status, replies: [...(prev.replies || []), { message: reply.trim(), repliedBy: 'admin', createdAt: new Date().toISOString() }] } : prev);
       setModalConfig({
         isOpen: true,
         title: 'Reply Sent',

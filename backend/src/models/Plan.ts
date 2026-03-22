@@ -17,6 +17,8 @@ export interface IPlan extends Document {
     max_channels: number;
     daily_upload_limit: number;
   };
+  discountPercentage: number;
+  featuresList: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,8 +27,10 @@ const PlanSchema = new Schema<IPlan>(
   {
     name: { type: String, required: true, unique: true },
     price: { type: Number, required: true, default: 0 },
+    discountPercentage: { type: Number, default: 0 },
     priority_weight: { type: Number, required: true, default: 0 },
     is_active: { type: Boolean, required: true, default: true },
+    featuresList: { type: [String], default: [] },
     features: {
       voice_selection: { type: Boolean, default: false },
       scheduling: { type: Boolean, default: false },

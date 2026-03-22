@@ -73,7 +73,7 @@ export default function AdminUsersPage() {
     return () => { isMounted = false; };
   }, [userPage, userSearch]);
 
-  const openPicker = (ref: RefObject<HTMLInputElement>) => {
+  const openPicker = (ref: RefObject<HTMLInputElement | null>) => {
     const el = ref.current;
     if (!el) return;
     if (typeof (el as any).showPicker === 'function') {

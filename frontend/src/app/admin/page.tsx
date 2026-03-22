@@ -50,6 +50,7 @@ export default function AdminDashboard() {
 
   // Plans Config State
   const [plans, setPlans] = useState<any[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(true);
@@ -65,7 +66,7 @@ export default function AdminDashboard() {
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlans, setSavingPlans] = useState(false);
 
-  const openPicker = (ref: RefObject<HTMLInputElement>) => {
+  const openPicker = (ref: RefObject<HTMLInputElement | null>) => {
     if (!ref.current) return;
     const input = ref.current as HTMLInputElement & { showPicker?: () => void };
     if (typeof input.showPicker === 'function') {
@@ -261,7 +262,9 @@ export default function AdminDashboard() {
   const getPlanPayload = (plan: any) => ({
     is_active: plan.is_active,
     price: Number(plan.price),
+    discountPercentage: Number(plan.discountPercentage || 0),
     priority_weight: Number(plan.priority_weight),
+    featuresList: Array.isArray(plan.featuresList) ? plan.featuresList : [],
     limits: {
       max_channels: Number(plan.limits?.max_channels),
       daily_upload_limit: Number(plan.limits?.daily_upload_limit),
@@ -618,15 +621,24 @@ const handleDeleteUser = () => {
                       </label>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="grid grid-cols-3 gap-4 mb-4">
                       <div>
                         <label className="text-xs text-slate-400 block mb-1">Price</label>
                         <input type="number" value={plan.price} onChange={(e) => handlePlanChange(plan._id, { price: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                       </div>
                       <div>
+                        <label className="text-xs text-slate-400 block mb-1">Discount %</label>
+                        <input type="number" min="0" max="100" value={plan.discountPercentage || 0} onChange={(e) => handlePlanChange(plan._id, { discountPercentage: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                      </div>
+                      <div>
                         <label className="text-xs text-slate-400 block mb-1">Priority Weight</label>
                         <input type="number" value={plan.priority_weight} onChange={(e) => handlePlanChange(plan._id, { priority_weight: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                       </div>
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="text-xs text-slate-400 block mb-1">Features List (Comma separated for display)</label>
+                      <input type="text" value={(plan.featuresList || []).join(', ')} onChange={(e) => handlePlanChange(plan._id, { featuresList: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} placeholder="E.g., 100 uploads, Fast AI, 24/7 Support" className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 mb-4">

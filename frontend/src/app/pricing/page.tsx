@@ -5,68 +5,59 @@ import { motion } from 'framer-motion';
 import { CheckCircle2, ShieldAlert, Sparkles, Zap, RefreshCw } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { paymentService } from '../../services/paymentService';
+import { planService } from '../../services/planService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { cn } from '../../lib/utils';
 
 interface Plan {
   id: string;
   name: string;
-  price: string;
+  price: number;
+  discountPercentage: number;
   limit: number;
   features: string[];
   recommended?: boolean;
 }
 
-const PLANS: Plan[] = [
-  {
-    id: 'free',
-    name: 'Free',
-    price: '$0/mo',
-    limit: 2,
-    features: ['2 video uploads per day', '1 YouTube channel', 'Basic AI generation', 'Standard voices', 'No scheduling / No Story Mode'],
-  },
-  {
-    id: 'basic',
-    name: 'Basic',
-    price: '$10/mo',
-    limit: 10,
-    features: ['10 video uploads per day', '3 YouTube channels', 'Faster AI generation', 'Story Mode & Scheduling enabled', 'Email support'],
-  },
-  {
-    id: 'pro',
-    name: 'Pro',
-    price: '$25/mo',
-    limit: 25,
-    features: ['25 video uploads per day', '10 YouTube channels', 'Priority generation queue', 'Premium AI voices', 'Priority support'],
-    recommended: true,
-  },
-  {
-    id: 'premium',
-    name: 'Premium',
-    price: '$99/mo',
-    limit: 100,
-    features: ['100 video uploads per day', '50 YouTube channels', 'Instant generation queue', 'All AI voices unlocked', '24/7 dedicated support', 'Custom templates'],
-  }
-];
-
 export default function PricingPage() {
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; type: 'error' | 'success' } | null>(null);
 
   useEffect(() => {
-    const fetchUser = async () => {
+    const fetchData = async () => {
       try {
-        const userData = await authService.getMe();
+        const [userData, plansData] = await Promise.all([
+           authService.getMe(),
+           planService.getPlans() // Assumes this endpoint works or is updated
+        ]);
+
         setUser(userData.data);
+
+        // Map backend plans to frontend structure and sort by price
+        if (plansData && plansData.data) {
+          const mappedPlans = plansData.data.map((p: any) => ({
+             id: p.name,
+             name: p.name.charAt(0).toUpperCase() + p.name.slice(1),
+             price: p.price,
+             discountPercentage: p.discountPercentage || 0,
+             limit: p.limits?.daily_upload_limit || 0,
+             features: Array.isArray(p.featuresList) && p.featuresList.length > 0
+                ? p.featuresList
+                : [`${p.limits?.daily_upload_limit || 0} video uploads per day`, `${p.limits?.max_channels || 0} YouTube channels`],
+             recommended: p.name === 'pro'
+          })).sort((a: Plan, b: Plan) => a.price - b.price);
+          setPlans(mappedPlans);
+        }
       } catch (err) {
         authService.logout();
       } finally {
         setLoading(false);
       }
     };
-    fetchUser();
+    fetchData();
   }, []);
 
   const handleUpgrade = async (planId: string) => {
@@ -130,8 +121,10 @@ export default function PricingPage() {
 
         {/* Pricing Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8">
-          {PLANS.map((plan, index) => {
+          {plans.map((plan, index) => {
             const isCurrentPlan = currentPlanId === plan.id;
+            const hasDiscount = plan.discountPercentage > 0;
+            const discountedPrice = hasDiscount ? plan.price * (1 - plan.discountPercentage / 100) : plan.price;
 
             return (
               <motion.div
@@ -146,16 +139,29 @@ export default function PricingPage() {
                     : "border-[#1A2235] hover:border-slate-700"
                 )}
               >
-                {plan.recommended && (
+                {plan.recommended && !hasDiscount && (
                   <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gradient-primary text-white text-[10px] font-extrabold uppercase tracking-widest px-4 py-1.5 rounded-full shadow-glow-primary flex items-center">
                     <Sparkles className="h-3 w-3 mr-1.5" /> Most Popular
                   </div>
                 )}
 
+                {hasDiscount && (
+                   <div className="absolute top-0 right-4 transform -translate-y-1/2 bg-[#FF4FD8] text-white text-xs font-black uppercase tracking-wider px-3 py-1 rounded-full shadow-[0_0_15px_rgba(255,79,216,0.5)] flex items-center transform rotate-3">
+                     Save {plan.discountPercentage}%
+                   </div>
+                )}
+
                 <div className="mb-6">
                   <h3 className="text-xl font-bold text-white mb-2 capitalize">{plan.name}</h3>
-                  <div className="flex items-baseline mb-4">
-                    <span className="text-4xl font-extrabold text-white tracking-tight">{plan.price}</span>
+                  <div className="flex flex-col items-start mb-4">
+                    {hasDiscount ? (
+                       <>
+                         <span className="text-lg font-bold text-slate-500 line-through decoration-red-500 decoration-2">${plan.price}/mo</span>
+                         <span className="text-4xl font-extrabold text-white tracking-tight">${discountedPrice.toFixed(0)}<span className="text-lg text-slate-400 font-medium">/mo</span></span>
+                       </>
+                    ) : (
+                       <span className="text-4xl font-extrabold text-white tracking-tight">${plan.price}<span className="text-lg text-slate-400 font-medium">/mo</span></span>
+                    )}
                   </div>
                   <p className="text-sm text-slate-400">Up to <span className="text-[#00D4FF] font-bold">{plan.limit}</span> videos / day</p>
                 </div>

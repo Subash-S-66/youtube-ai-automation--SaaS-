@@ -1,7 +1,0 @@
-
-> backend@1.0.0 start
-> node dist/server.js
-
-[Redis] REDIS_URL not set. Running without Redis-backed queues/rate limits.
-Firebase Admin credentials missing. Push notifications will fail gracefully.
-Error: MONGO_URI is not defined in the environment variables

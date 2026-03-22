@@ -270,6 +270,22 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {/* Account Security */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-6 flex items-center">
+              <ShieldAlert className="h-4 w-4 mr-2" /> Account Security
+            </h3>
+            <div className="flex items-center justify-between p-5 bg-[#0B0F1A] rounded-xl border border-[#1A2235]">
+              <div>
+                <p className="text-base font-bold text-white mb-1">Password</p>
+                <p className="text-sm text-slate-500">Reset your password if you forgot it or want to change it.</p>
+              </div>
+              <a href="/forgot-password" className="text-sm bg-[#1A2235] hover:bg-slate-700 text-white font-semibold px-4 py-2 rounded-lg border border-slate-600 transition-colors">
+                Reset Password
+              </a>
+            </div>
+          </div>
+
           {/* Danger Zone */}
           <div>
             <h3 className="text-sm font-semibold text-red-500 uppercase tracking-wider mb-6 flex items-center">

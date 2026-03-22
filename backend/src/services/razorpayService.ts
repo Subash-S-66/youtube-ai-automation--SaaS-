@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import User from '../models/User';
 import { AppError } from '../middleware/errorHandler';
 import Plan from '../models/Plan';
+import Payment from '../models/Payment';
 
 type RazorpayPaymentLinkResponse = {
   short_url?: string;
@@ -40,14 +41,19 @@ export const createPaymentLink = async (userId: string, planId?: string): Promis
     throw new AppError(`User already has an active ${requestedPlanName} subscription`, 400);
   }
 
-  // Calculate amount in paise. Note plan price should be stored in USD or local currency,
-  // If price is 9.99, multiply by 100 to get integer cents/paise then by exchange rate if needed.
+  // Calculate amount in paise considering the discount.
   // For Razorpay INR, assume price is in USD, 1 USD ~ 80 INR
   const exchangeRate = 80;
-  const calculatedPaise = Math.round(planObj.price * exchangeRate * 100);
+  let finalPrice = planObj.price;
 
-  // Fallback to env var if plan price is 0
-  const amountPaise = calculatedPaise || Number(process.env.RAZORPAY_PLAN_AMOUNT_PAISE || 0);
+  if (planObj.discountPercentage && planObj.discountPercentage > 0) {
+    finalPrice = finalPrice * (1 - planObj.discountPercentage / 100);
+  }
+
+  const calculatedPaise = Math.round(finalPrice * exchangeRate * 100);
+
+  // Fallback to env var if calculated amount is 0
+  const amountPaise = calculatedPaise > 0 ? calculatedPaise : Number(process.env.RAZORPAY_PLAN_AMOUNT_PAISE || 0);
   const currency = process.env.RAZORPAY_CURRENCY || 'INR';
 
   if (!amountPaise || Number.isNaN(amountPaise)) {
@@ -126,16 +132,45 @@ export const handleRazorpayWebhook = async (rawBody: Buffer | string, signature:
     const paymentLink = payload?.payload?.payment_link?.entity;
     const userId = paymentLink?.notes?.userId;
     const purchasedPlan = paymentLink?.notes?.plan || 'pro';
+    const amount = paymentLink?.amount || 0;
+    const currency = paymentLink?.currency || 'INR';
+    const transactionId = paymentLink?.id;
+
+    if (!transactionId) {
+      console.error('Webhook event missing transaction ID', event);
+      return;
+    }
 
     if (userId) {
-      const subscriptionExpiresAt = new Date();
-      subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 28);
+      try {
+        const subscriptionExpiresAt = new Date();
+        subscriptionExpiresAt.setDate(subscriptionExpiresAt.getDate() + 30);
 
-      await User.findByIdAndUpdate(userId, {
-        plan: purchasedPlan,
-        subscriptionStatus: 'active',
-        subscriptionExpiresAt,
-      });
+        const updatedUser = await User.findByIdAndUpdate(userId, {
+          plan: purchasedPlan,
+          subscriptionStatus: 'active',
+          subscriptionExpiresAt,
+          uploadsUsedToday: 0, // Reset usage today on new subscription purchase
+        }, { new: true });
+
+        if (updatedUser) {
+           await Payment.create({
+             userId: updatedUser._id,
+             planId: purchasedPlan,
+             amount: amount / 100, // Convert from paise/cents to standard unit
+             currency,
+             status: 'success',
+             provider: 'razorpay',
+             transactionId,
+             receiptUrl: paymentLink?.short_url
+           });
+           console.log(`Successfully processed Razorpay payment ${transactionId} for user ${userId}`);
+        } else {
+           console.error(`User ${userId} not found when processing Razorpay payment ${transactionId}`);
+        }
+      } catch (error) {
+        console.error('Failed to update user or create payment record on webhook:', error);
+      }
     }
   }
 };
