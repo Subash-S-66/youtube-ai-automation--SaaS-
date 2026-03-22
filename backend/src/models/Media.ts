@@ -7,6 +7,8 @@ export interface IMedia extends Document {
   originalName: string;
   size: number;
   duration?: number; // Only applicable for videos
+  imageDuration?: number; // Only applicable for images (seconds)
+  sortOrder?: number; // Lower = earlier
   path: string;
   createdAt: Date;
   updatedAt: Date;
@@ -20,6 +22,8 @@ const MediaSchema = new Schema<IMedia>(
     originalName: { type: String, required: true },
     size: { type: Number, required: true },
     duration: { type: Number },
+    imageDuration: { type: Number, default: 3 },
+    sortOrder: { type: Number, default: Date.now },
     path: { type: String, required: true },
   },
   {

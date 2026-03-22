@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
-import { createPaymentLink, handleRazorpayWebhook } from '../services/razorpayService';
+import { createOrder, createRenewOrder, handleRazorpayWebhook, confirmPaymentLink, confirmOrderPayment, convertPlanWithRemaining } from '../services/razorpayService';
 
 // @desc    Create Razorpay payment link
 // @route   POST /api/payment/create-checkout
@@ -13,11 +13,101 @@ export const createCheckout = asyncHandler(async (req: Request, res: Response) =
 
   const { planId } = req.body;
 
-  const url = await createPaymentLink(req.user.id, planId);
+  const order = await createOrder(req.user.id, planId);
 
   res.status(200).json({
     success: true,
-    url,
+    data: order,
+  });
+});
+
+// @desc    Create Razorpay order for renewal
+// @route   POST /api/payment/renew
+// @access  Private
+export const createRenewal = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user || !req.user.id) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const order = await createRenewOrder(req.user.id);
+
+  res.status(200).json({
+    success: true,
+    data: order,
+  });
+});
+
+// @desc    Confirm Razorpay payment after callback
+// @route   POST /api/payment/confirm
+// @access  Private
+export const confirmCheckout = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user || !req.user.id) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const {
+    razorpay_payment_id,
+    razorpay_order_id,
+    razorpay_signature,
+  } = req.body || {};
+
+  if (razorpay_payment_id && razorpay_order_id && razorpay_signature) {
+    const result = await confirmOrderPayment(req.user.id, {
+      orderId: razorpay_order_id,
+      paymentId: razorpay_payment_id,
+      signature: razorpay_signature,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+    return;
+  }
+
+  const {
+    payment_link_id,
+    razorpay_payment_link_id,
+    paymentLinkId,
+  } = req.body || {};
+
+  const resolvedPaymentLinkId =
+    payment_link_id ||
+    razorpay_payment_link_id ||
+    paymentLinkId;
+
+  if (!resolvedPaymentLinkId) {
+    throw new AppError('Missing payment link id', 400);
+  }
+
+  const result = await confirmPaymentLink(req.user.id, {
+    paymentLinkId: resolvedPaymentLinkId,
+  });
+
+  res.status(200).json({
+    success: true,
+    data: result,
+  });
+});
+
+// @desc    Convert current plan to a higher plan using remaining days only
+// @route   POST /api/payment/convert
+// @access  Private
+export const convertPlan = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user || !req.user.id) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const { targetPlan } = req.body || {};
+  if (!targetPlan) {
+    throw new AppError('targetPlan is required', 400);
+  }
+
+  const result = await convertPlanWithRemaining(req.user.id, targetPlan);
+
+  res.status(200).json({
+    success: true,
+    data: result,
   });
 });
 

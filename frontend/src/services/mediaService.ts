@@ -28,4 +28,19 @@ export const mediaService = {
     const response = await api.delete(`/media/${id}`);
     return response.data;
   },
+
+  updateMedia: async (id: string, data: { imageDuration?: number; sortOrder?: number }) => {
+    const response = await api.patch(`/media/${id}`, data);
+    return response.data;
+  },
+
+  reorderMedia: async (type: 'video' | 'image' | 'thumbnail', orderedIds: string[]) => {
+    const response = await api.post('/media/reorder', { type, orderedIds });
+    return response.data;
+  },
+
+  reorderMixed: async (orderedIds: string[]) => {
+    const response = await api.post('/media/reorder-mixed', { orderedIds });
+    return response.data;
+  },
 };

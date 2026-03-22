@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "set TS_NODE_FILES=true&& node -r ts-node/register src/server.ts",
+    "dev": "set TS_NODE_FILES=true&& nodemon --watch src --ext ts --exec \"node -r ts-node/register src/server.ts\"",
     "build": "tsc",
     "start": "node dist/server.js",
     "worker": "ts-node src/workers/pipelineWorker.ts",

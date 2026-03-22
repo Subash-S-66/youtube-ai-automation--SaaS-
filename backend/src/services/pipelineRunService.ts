@@ -48,8 +48,12 @@ export const enqueuePipelineJob = async ({
     }
   }
 
-  if (limitCheck.plan !== 'premium' && settings.templateConfig) {
-    throw new AppError('Template Customization is only available on the Premium plan.', 403);
+  if (settings.templateConfig && !limitCheck.features?.template_customization) {
+    throw new AppError('Template Customization is only available on Pro and Premium plans.', 403);
+  }
+
+  if ((settings.customVideoIds?.length || settings.customImageIds?.length) && !limitCheck.features?.custom_media) {
+    throw new AppError('Custom Media is only available on Pro and Premium plans.', 403);
   }
 
   if (limitCheck.remainingUploads < settings.videoCount) {

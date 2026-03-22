@@ -20,8 +20,19 @@ api.interceptors.request.use(
 );
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('api-online'));
+    }
+    return response;
+  },
   (error) => {
+    if (typeof window !== 'undefined') {
+      const status = error?.response?.status;
+      if (!status || status >= 500) {
+        window.dispatchEvent(new CustomEvent('api-offline'));
+      }
+    }
     if (error.response && error.response.status === 401) {
       if (typeof window !== 'undefined') {
         const path = window.location.pathname;

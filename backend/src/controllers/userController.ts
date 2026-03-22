@@ -13,6 +13,8 @@ const updateSettingsSchema = z.object({
     emailNotificationsEnabled: z.boolean().optional(),
     telegramNotificationsEnabled: z.boolean().optional(),
     pushNotificationsEnabled: z.boolean().optional(),
+    templateFont: z.string().optional(),
+    templateColor: z.string().optional(),
   }),
 });
 
@@ -29,12 +31,14 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
     throw new AppError(errorMessages, 400);
   }
 
-  const { emailNotificationsEnabled, telegramNotificationsEnabled, pushNotificationsEnabled } = validation.data.body;
+  const { emailNotificationsEnabled, telegramNotificationsEnabled, pushNotificationsEnabled, templateFont, templateColor } = validation.data.body;
 
   const updateFields: any = {};
   if (emailNotificationsEnabled !== undefined) updateFields.emailNotificationsEnabled = emailNotificationsEnabled;
   if (telegramNotificationsEnabled !== undefined) updateFields.telegramNotificationsEnabled = telegramNotificationsEnabled;
   if (pushNotificationsEnabled !== undefined) updateFields.pushNotificationsEnabled = pushNotificationsEnabled;
+  if (templateFont !== undefined) updateFields.templateFont = templateFont;
+  if (templateColor !== undefined) updateFields.templateColor = templateColor;
 
   const updatedUser = await User.findByIdAndUpdate(
     userId,

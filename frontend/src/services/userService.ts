@@ -5,6 +5,8 @@ export const userService = {
     emailNotificationsEnabled?: boolean;
     telegramNotificationsEnabled?: boolean;
     pushNotificationsEnabled?: boolean;
+    templateFont?: string;
+    templateColor?: string;
   }) {
     const response = await api.put('/user/settings', data);
     return response.data;

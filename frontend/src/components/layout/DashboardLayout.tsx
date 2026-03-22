@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
@@ -18,6 +18,7 @@ interface LayoutProps {
 
 export default function DashboardLayout({ children, user }: LayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isBackendOffline, setIsBackendOffline] = useState(false);
   const pathname = usePathname();
   const displayUser = user?.user
     ? {
@@ -33,6 +34,39 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
   const handleLogout = () => {
     authService.logout();
   };
+
+  useEffect(() => {
+    let retryTimer: number | null = null;
+
+    const handleOffline = () => setIsBackendOffline(true);
+    const handleOnline = () => setIsBackendOffline(false);
+    window.addEventListener('api-offline', handleOffline);
+    window.addEventListener('api-online', handleOnline);
+
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const checkServer = async () => {
+      try {
+        const res = await fetch(`${apiBase}/`, { method: 'GET' });
+        if (res.ok) {
+          setIsBackendOffline(false);
+        }
+      } catch {
+        // keep offline
+      }
+    };
+
+    if (isBackendOffline) {
+      retryTimer = window.setInterval(() => {
+        checkServer();
+      }, 10000) as unknown as number;
+    }
+
+    return () => {
+      window.removeEventListener('api-offline', handleOffline);
+      window.removeEventListener('api-online', handleOnline);
+      if (retryTimer) window.clearInterval(retryTimer);
+    };
+  }, [isBackendOffline]);
 
   const navLinks = [
     { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
@@ -196,8 +230,17 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
            </button>
            <div className="flex-1 flex justify-center ml-4 mr-4">
              {displayUser?.subscriptionExpiresAt && (new Date(displayUser.subscriptionExpiresAt).getTime() - new Date().getTime()) / (1000 * 3600 * 24) <= 3 && (
-               <div className="bg-yellow-500/20 border border-yellow-500/50 text-yellow-400 px-4 py-1.5 rounded-lg text-xs font-bold animate-pulse flex items-center text-center">
-                 Warning: your {displayUser.displayPlan || displayUser.plan} plan expires in {Math.ceil((new Date(displayUser.subscriptionExpiresAt).getTime() - new Date().getTime()) / (1000 * 3600 * 24))} days. Renew now to keep access.
+               <div className="bg-amber-500/15 border border-amber-500/40 text-amber-300 px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-3">
+                 <span className="animate-pulse">Warning:</span>
+                 <span>
+                   your {displayUser.displayPlan || displayUser.plan} plan expires in {Math.ceil((new Date(displayUser.subscriptionExpiresAt).getTime() - new Date().getTime()) / (1000 * 3600 * 24))} days.
+                 </span>
+                 <Link
+                   href="/subscription"
+                   className="ml-2 px-3 py-1 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-200 border border-amber-400/40 hover:border-amber-300/80 hover:text-amber-100 transition-all"
+                 >
+                   Renew Now
+                 </Link>
                </div>
              )}
            </div>
@@ -210,6 +253,12 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
               </div>
            </div>
         </header>
+        {isBackendOffline && (
+          <div className="bg-red-500/10 border-b border-red-500/30 text-red-300 text-xs font-semibold px-4 py-2 text-center flex items-center justify-center gap-2">
+            <span className="inline-block h-3.5 w-3.5 border-2 border-red-300/40 border-t-red-300 rounded-full animate-spin"></span>
+            Server offline, retrying every 10s…
+          </div>
+        )}
 
         {/* Page Content Background (Subtle glow) */}
         <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">

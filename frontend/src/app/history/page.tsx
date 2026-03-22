@@ -28,7 +28,7 @@ export default function HistoryPage() {
         setJobs(jobsData.data);
         setTotalPages(jobsData.pagination?.pages || 1);
       } catch (err) {
-        authService.logout();
+        authService.handleAuthError(err);
       } finally {
         setLoading(false);
       }

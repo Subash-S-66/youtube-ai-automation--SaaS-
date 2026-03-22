@@ -40,6 +40,8 @@ export interface IUser extends Document {
   lastUploadReset: Date;
   youtubeChannels: IYoutubeChannel[];
   isYoutubeConnected: boolean;
+  templateFont?: string;
+  templateColor?: string;
   telegramChatId?: string;
   fcmToken?: string | undefined;
   emailNotificationsEnabled: boolean;
@@ -170,6 +172,14 @@ const UserSchema = new Schema<IUser>(
     isYoutubeConnected: {
       type: Boolean,
       default: false,
+    },
+    templateFont: {
+      type: String,
+      default: 'Arial',
+    },
+    templateColor: {
+      type: String,
+      default: '#FFFFFF',
     },
     telegramChatId: {
       type: String,

@@ -1,16 +1,16 @@
-import express from 'express';
+import express, { Request } from 'express';
 import { protect } from '../middleware/authMiddleware';
-import { uploadMedia, getMedia, deleteMedia } from '../controllers/mediaController';
-import multer from 'multer';
+import { uploadMedia, getMedia, deleteMedia, updateMedia, reorderMedia, reorderMixedMedia } from '../controllers/mediaController';
+import multer, { FileFilterCallback } from 'multer';
 
 const router = express.Router();
 
 // Configure multer
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
+  destination: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) {
     cb(null, 'uploads/'); // Store locally in backend/uploads
   },
-  filename: function (req, file, cb) {
+  filename: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     cb(null, uniqueSuffix + '-' + file.originalname.replace(/\s+/g, '_'));
   }
@@ -19,7 +19,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB max limit
-  fileFilter: (req, file, cb) => {
+  fileFilter: (req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
     if (file.mimetype.startsWith('video/') || file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
@@ -33,6 +33,9 @@ router.use(protect);
 
 router.post('/upload', upload.single('file'), uploadMedia);
 router.get('/', getMedia);
+router.post('/reorder', reorderMedia);
+router.post('/reorder-mixed', reorderMixedMedia);
+router.patch('/:id', updateMedia);
 router.delete('/:id', deleteMedia);
 
 export default router;

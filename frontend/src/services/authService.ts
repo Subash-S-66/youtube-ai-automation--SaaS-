@@ -28,6 +28,13 @@ export const authService = {
     }
   },
 
+  handleAuthError(err: any) {
+    const status = err?.response?.status;
+    if (status === 401 || status === 403) {
+      this.logout();
+    }
+  },
+
   async verifyEmail(token: string, redirect?: string) {
     let url = `/auth/verify-email?token=${token}`;
     if (redirect) {

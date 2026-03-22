@@ -142,6 +142,14 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
 const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
+    planValueMap: z
+      .object({
+        free: z.number(),
+        basic: z.number(),
+        pro: z.number(),
+        premium: z.number(),
+      })
+      .optional(),
   }),
 });
 
@@ -152,8 +160,11 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     throw new AppError(errorMessages, 400);
   }
 
-  const { betaMode } = validation.data.body;
+  const { betaMode, planValueMap } = validation.data.body;
   const updatePayload: any = { betaMode };
+  if (planValueMap) {
+    updatePayload.planValueMap = planValueMap;
+  }
   const config = await SystemConfig.findOneAndUpdate(
     {},
     updatePayload,

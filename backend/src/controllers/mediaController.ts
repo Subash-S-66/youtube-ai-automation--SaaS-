@@ -56,15 +56,21 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
       }
   }
 
-  const media = await Media.create({
+  const mediaPayload: any = {
     userId: req.user?.id,
     type,
     filename: file.filename,
     originalName: file.originalname,
     size: file.size,
     duration,
+    sortOrder: Date.now(),
     path: file.path,
-  });
+  };
+  if (type === 'image') {
+    mediaPayload.imageDuration = 3;
+  }
+
+  const media = await Media.create(mediaPayload);
 
   res.status(201).json({
     success: true,
@@ -76,11 +82,130 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
 // @route   GET /api/media
 // @access  Private
 export const getMedia = asyncHandler(async (req: Request, res: Response) => {
-  const media = await Media.find({ userId: req.user?.id }).sort({ createdAt: -1 });
+  const media = await Media.find({ userId: req.user?.id }).sort({ sortOrder: 1, createdAt: -1 });
+  const missingOrder = media.filter(m => m.sortOrder === undefined || m.sortOrder === null);
+  if (missingOrder.length > 0) {
+    const bulk = Media.collection.initializeUnorderedBulkOp();
+    missingOrder.forEach(m => {
+      bulk.find({ _id: m._id }).updateOne({ $set: { sortOrder: m.createdAt ? m.createdAt.getTime() : Date.now() } });
+    });
+    if (bulk.length > 0) {
+      try {
+        await bulk.execute();
+      } catch {
+        // ignore bulk update errors
+      }
+    }
+  }
   res.status(200).json({
     success: true,
     data: media,
   });
+});
+
+// @desc    Update media metadata (image duration, sort order)
+// @route   PATCH /api/media/:id
+// @access  Private
+export const updateMedia = asyncHandler(async (req: Request, res: Response) => {
+  const mediaId = req.params.id;
+  if (!mediaId) {
+    throw new AppError('Media ID is required', 400);
+  }
+
+  const { imageDuration, sortOrder } = req.body || {};
+
+  const update: any = {};
+  if (imageDuration !== undefined) {
+    const parsed = Number(imageDuration);
+    if (Number.isNaN(parsed) || parsed <= 0 || parsed > 15) {
+      throw new AppError('Image duration must be between 1 and 15 seconds.', 400);
+    }
+    update.imageDuration = parsed;
+  }
+  if (sortOrder !== undefined) {
+    const parsed = Number(sortOrder);
+    if (Number.isNaN(parsed)) {
+      throw new AppError('Invalid sort order', 400);
+    }
+    update.sortOrder = parsed;
+  }
+
+  const updated = await Media.findOneAndUpdate(
+    { _id: mediaId, userId: req.user?.id },
+    { $set: update },
+    { returnDocument: 'after' }
+  );
+
+  if (!updated) {
+    throw new AppError('Media not found', 404);
+  }
+
+  res.status(200).json({
+    success: true,
+    data: updated,
+  });
+});
+
+// @desc    Reorder media items by type
+// @route   POST /api/media/reorder
+// @access  Private
+export const reorderMedia = asyncHandler(async (req: Request, res: Response) => {
+  const { type, orderedIds } = req.body || {};
+  if (!type || !Array.isArray(orderedIds)) {
+    throw new AppError('type and orderedIds are required', 400);
+  }
+
+  const allowed = ['video', 'image', 'thumbnail'];
+  if (!allowed.includes(type)) {
+    throw new AppError('Invalid media type', 400);
+  }
+
+  const userId = req.user?.id;
+  const mediaDocs = await Media.find({ userId, type, _id: { $in: orderedIds } }).select('_id');
+  if (mediaDocs.length !== orderedIds.length) {
+    throw new AppError('Some media items were not found', 404);
+  }
+
+  const bulk = Media.collection.initializeUnorderedBulkOp();
+  orderedIds.forEach((id: string, index: number) => {
+    bulk.find({ _id: id, userId, type }).updateOne({ $set: { sortOrder: index } });
+  });
+  if (bulk.length > 0) {
+    await bulk.execute();
+  }
+
+  res.status(200).json({ success: true });
+});
+
+// @desc    Reorder mixed media (videos + images)
+// @route   POST /api/media/reorder-mixed
+// @access  Private
+export const reorderMixedMedia = asyncHandler(async (req: Request, res: Response) => {
+  const { orderedIds } = req.body || {};
+  if (!Array.isArray(orderedIds)) {
+    throw new AppError('orderedIds are required', 400);
+  }
+
+  const userId = req.user?.id;
+  const mediaDocs = await Media.find({
+    userId,
+    _id: { $in: orderedIds },
+    type: { $in: ['video', 'image'] },
+  }).select('_id');
+
+  if (mediaDocs.length !== orderedIds.length) {
+    throw new AppError('Some media items were not found', 404);
+  }
+
+  const bulk = Media.collection.initializeUnorderedBulkOp();
+  orderedIds.forEach((id: string, index: number) => {
+    bulk.find({ _id: id, userId }).updateOne({ $set: { sortOrder: index } });
+  });
+  if (bulk.length > 0) {
+    await bulk.execute();
+  }
+
+  res.status(200).json({ success: true });
 });
 
 // @desc    Delete media

@@ -17,6 +17,8 @@ interface UploadLimitCheckResult {
     story_mode?: boolean;
     cta?: boolean;
     format_selection?: boolean;
+    template_customization?: boolean;
+    custom_media?: boolean;
   };
 }
 

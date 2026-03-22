@@ -5,9 +5,12 @@ import { motion } from 'framer-motion';
 import { CreditCard, CheckCircle2, RefreshCw, Zap, Sparkles } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { paymentService } from '../../services/paymentService';
+import { openRazorpayCheckout, RazorpaySuccessResponse } from '../../lib/razorpay';
 import { planService } from '../../services/planService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { cn } from '../../lib/utils';
+import UpgradeOptionsModal from '../../components/ui/UpgradeOptionsModal';
+import { computeProrationDays, getRemainingDays } from '../../lib/proration';
 
 interface Plan {
   id: string;
@@ -25,6 +28,8 @@ export default function PaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [pendingUpgradePlan, setPendingUpgradePlan] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -39,6 +44,8 @@ export default function PaymentsPage() {
         // Map backend plans to frontend structure and sort by price
         if (plansData && plansData.data) {
           const mappedPlans = plansData.data.map((p: any) => {
+             const planId = String(p.name || '').toLowerCase();
+             const rawName = String(p.name || planId || 'plan');
              const dynamicFeatures = [
                `${p.limits?.daily_upload_limit || 0} video uploads per day`,
                `${p.limits?.max_channels || 0} YouTube channels`,
@@ -46,23 +53,25 @@ export default function PaymentsPage() {
                p.features?.scheduling ? 'Scheduling enabled' : 'No scheduling',
                p.features?.story_mode ? 'Story Mode enabled' : 'No Story Mode',
                p.features?.cta ? 'Custom Call-to-Actions' : 'No custom CTAs',
-               p.features?.format_selection ? 'Multiple format selections' : 'Standard format'
+               p.features?.format_selection ? 'Multiple format selections' : 'Standard format',
+               p.features?.template_customization ? 'Subtitle font & color control' : 'No subtitle customization',
+               p.features?.custom_media ? 'Custom media library' : 'No custom media'
              ];
 
              return {
-               id: p.name,
-               name: p.name.charAt(0).toUpperCase() + p.name.slice(1),
+               id: planId,
+               name: rawName.charAt(0).toUpperCase() + rawName.slice(1),
                price: p.price,
                discountPercentage: p.discountPercentage || 0,
                limit: p.limits?.daily_upload_limit || 0,
                features: dynamicFeatures,
-               recommended: p.name === 'pro'
+               recommended: planId === 'pro'
              };
           }).sort((a: Plan, b: Plan) => a.price - b.price);
           setPlans(mappedPlans);
         }
       } catch (err) {
-        authService.logout();
+        authService.handleAuthError(err);
       } finally {
         setLoading(false);
       }
@@ -70,18 +79,89 @@ export default function PaymentsPage() {
     fetchData();
   }, []);
 
-  const handleUpgrade = async (planId: string) => {
+  const beginCheckout = async (planId: string) => {
     setProcessing(planId);
     setMessage(null);
     try {
       const response = await paymentService.createCheckoutSession(planId);
-      if (response.success && response.url) {
-        window.location.href = response.url;
+      const order = response?.data;
+      if (!order?.orderId) {
+        throw new Error('Invalid checkout response');
       }
+
+      await openRazorpayCheckout(order, {
+        onSuccess: async (rzpResponse: RazorpaySuccessResponse) => {
+          try {
+            await paymentService.confirmPayment(rzpResponse as any);
+            const userData = await authService.getMe();
+            setUser(userData.data);
+            setMessage({ text: 'Subscription upgraded successfully! Your limits have been updated.', type: 'success' });
+          } catch (err: any) {
+            setMessage({ text: err.response?.data?.message || 'Payment verification failed. Please contact support.', type: 'error' });
+          } finally {
+            setProcessing(null);
+          }
+        },
+        onDismiss: () => {
+          setProcessing(null);
+        },
+        onFailure: (error) => {
+          setMessage({ text: error.message || 'Payment failed', type: 'error' });
+          setProcessing(null);
+        },
+      });
     } catch (err: any) {
       setMessage({ text: err.response?.data?.message || 'Failed to start checkout', type: 'error' });
       setProcessing(null);
     }
+  };
+
+  const handleRenew = async () => {
+    if (currentPlanId === 'free') return;
+    setProcessing(currentPlanId);
+    setMessage(null);
+    try {
+      const response = await paymentService.renewPlan();
+      const order = response?.data;
+      if (!order?.orderId) {
+        throw new Error('Invalid checkout response');
+      }
+
+      await openRazorpayCheckout(order, {
+        onSuccess: async (rzpResponse: RazorpaySuccessResponse) => {
+          try {
+            await paymentService.confirmPayment(rzpResponse as any);
+            const userData = await authService.getMe();
+            setUser(userData.data);
+            setMessage({ text: 'Subscription renewed successfully! 30 days added.', type: 'success' });
+          } catch (err: any) {
+            setMessage({ text: err.response?.data?.message || 'Payment verification failed. Please contact support.', type: 'error' });
+          } finally {
+            setProcessing(null);
+          }
+        },
+        onDismiss: () => {
+          setProcessing(null);
+        },
+        onFailure: (error) => {
+          setMessage({ text: error.message || 'Payment failed', type: 'error' });
+          setProcessing(null);
+        },
+      });
+    } catch (err: any) {
+      setMessage({ text: err.response?.data?.message || 'Failed to start checkout', type: 'error' });
+      setProcessing(null);
+    }
+  };
+
+  const handleUpgrade = async (planId: string) => {
+    const targetRank = planRank[String(planId).toLowerCase()] ?? 0;
+    if (isSubscriptionActive && currentRank < targetRank && remainingDays > 0) {
+      setPendingUpgradePlan(planId);
+      setUpgradeModalOpen(true);
+      return;
+    }
+    await beginCheckout(planId);
   };
 
   if (loading) {
@@ -95,12 +175,27 @@ export default function PaymentsPage() {
     );
   }
 
-  const currentPlanId = user?.plan || 'free';
+  const currentPlanId = String((user?.isBetaMode ? 'free' : (user?.plan || 'free'))).toLowerCase();
   const currentPlan = plans.find(plan => plan.id === currentPlanId);
   const subscriptionExpiry = user?.user?.subscriptionExpiresAt
     ? new Date(user.user.subscriptionExpiresAt).toLocaleDateString()
     : null;
+  const subscriptionExpiryText = (() => {
+    const expiresAt = user?.user?.subscriptionExpiresAt;
+    if (!expiresAt) return null;
+    const expiryDate = new Date(expiresAt);
+    const diffMs = expiryDate.getTime() - Date.now();
+    if (diffMs <= 0) return 'expired';
+    const diffHours = Math.ceil(diffMs / (1000 * 60 * 60));
+    if (diffHours <= 24) return `expires in ${diffHours} hour${diffHours === 1 ? '' : 's'}`;
+    const diffDays = Math.ceil(diffHours / 24);
+    return `expires in ${diffDays} day${diffDays === 1 ? '' : 's'}`;
+  })();
   const displayPlanLabel = user?.isBetaMode ? 'free' : (user?.displayPlan || user?.plan || 'free');
+  const isSubscriptionActive = (user?.subscriptionStatus || user?.user?.subscriptionStatus) === 'active';
+  const planRank: Record<string, number> = { free: 0, basic: 1, pro: 2, premium: 4 };
+  const currentRank = planRank[currentPlanId] ?? 0;
+  const remainingDays = getRemainingDays(user?.user?.subscriptionExpiresAt || user?.subscriptionExpiresAt);
 
   return (
     <DashboardLayout user={user}>
@@ -134,10 +229,27 @@ export default function PaymentsPage() {
                 <span className="text-lg text-slate-400 font-semibold">
                   ${currentPlan?.price || 0} / month
                 </span>
+                {currentPlanId !== 'free' && (
+                  <span className="text-xs font-semibold text-slate-400 border border-[#1A2235] rounded-full px-2 py-0.5">30 days</span>
+                )}
               </div>
               <div className="text-xs text-slate-500">
                 Subscription Expires: <span className="text-slate-300">{subscriptionExpiry || 'N/A'}</span>
+                {subscriptionExpiryText && (
+                  <span className="ml-2 text-amber-300">{subscriptionExpiryText}</span>
+                )}
               </div>
+              {currentPlanId !== 'free' && (
+                <div className="mt-4">
+                  <button
+                    onClick={handleRenew}
+                    disabled={processing !== null}
+                    className="px-4 py-2 rounded-lg text-xs font-bold bg-gradient-to-r from-[#7C5CFF] to-[#00D4FF] text-white shadow-glow-primary hover:shadow-glow-primary-hover transition-all"
+                  >
+                    {processing ? 'Processing...' : 'Renew (Add 30 days)'}
+                  </button>
+                </div>
+              )}
               {user?.cancelAtPeriodEnd && (
                  <div className="mt-2 inline-block px-3 py-1 bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-bold rounded">
                    Cancels at Period End
@@ -176,6 +288,8 @@ export default function PaymentsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {plans.map((plan, index) => {
                 const isCurrentPlan = currentPlanId === plan.id;
+                const planId = String(plan.id || '').toLowerCase();
+                const isLowerPlan = isSubscriptionActive && currentRank > (planRank[planId] ?? 0);
                 const hasDiscount = plan.discountPercentage > 0;
                 const discountedPrice = hasDiscount ? plan.price * (1 - plan.discountPercentage / 100) : plan.price;
 
@@ -219,6 +333,9 @@ export default function PaymentsPage() {
                              <span className="text-sm text-slate-400 font-medium">/mo</span>
                            </>
                         )}
+                        {planId !== 'free' && (
+                          <span className="ml-2 text-[10px] font-semibold text-slate-400 border border-[#1A2235] rounded-full px-2 py-0.5">30 days</span>
+                        )}
                       </div>
                     </div>
 
@@ -234,26 +351,32 @@ export default function PaymentsPage() {
                     </div>
 
                     <div className="mt-auto">
-                      <button
-                        onClick={() => handleUpgrade(plan.id)}
-                        disabled={isCurrentPlan || processing !== null}
-                        className={cn(
-                          "w-full py-2.5 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center",
-                          isCurrentPlan
-                            ? "bg-[#111827] text-[#00D4FF] cursor-not-allowed border border-[#00D4FF]/30"
-                            : plan.recommended
-                              ? "bg-gradient-primary text-white shadow-glow-primary hover:shadow-glow-primary-hover"
-                              : "bg-white/5 text-white hover:bg-white/10 border border-white/10"
-                        )}
-                      >
-                        {processing === plan.id ? (
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                        ) : isCurrentPlan ? (
-                          'Current Plan'
-                        ) : (
-                          <>Upgrade <Zap className="h-3.5 w-3.5 ml-1.5" /></>
-                        )}
-                      </button>
+                      {isLowerPlan ? (
+                        <div className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-400 text-center border border-[#1A2235] bg-[#111827]">
+                          Included in your plan
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleUpgrade(plan.id)}
+                          disabled={isCurrentPlan || processing !== null}
+                          className={cn(
+                            "w-full py-2.5 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center",
+                            isCurrentPlan
+                              ? "bg-[#111827] text-[#00D4FF] cursor-not-allowed border border-[#00D4FF]/30"
+                              : plan.recommended
+                                ? "bg-gradient-primary text-white shadow-glow-primary hover:shadow-glow-primary-hover"
+                                : "bg-white/5 text-white hover:bg-white/10 border border-white/10"
+                          )}
+                        >
+                          {processing === plan.id ? (
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                          ) : isCurrentPlan ? (
+                            'Current Plan'
+                          ) : (
+                            <>Upgrade <Zap className="h-3.5 w-3.5 ml-1.5" /></>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </motion.div>
                 );
@@ -262,6 +385,33 @@ export default function PaymentsPage() {
           </div>
         </div>
       </div>
+
+      <UpgradeOptionsModal
+        open={upgradeModalOpen && !!pendingUpgradePlan}
+        currentPlan={currentPlanId}
+        targetPlan={pendingUpgradePlan || ''}
+        remainingDays={remainingDays}
+        creditDays={computeProrationDays(currentPlanId, pendingUpgradePlan || '', remainingDays)}
+        onClose={() => setUpgradeModalOpen(false)}
+        onBuy={() => {
+          if (!pendingUpgradePlan) return;
+          setUpgradeModalOpen(false);
+          beginCheckout(pendingUpgradePlan);
+        }}
+        onConvert={async () => {
+          if (!pendingUpgradePlan) return;
+          try {
+            await paymentService.convertPlan(pendingUpgradePlan);
+            const userData = await authService.getMe();
+            setUser(userData.data);
+            setMessage({ text: 'Plan converted successfully using remaining days.', type: 'success' });
+          } catch (err: any) {
+            setMessage({ text: err.response?.data?.message || 'Failed to convert plan', type: 'error' });
+          } finally {
+            setUpgradeModalOpen(false);
+          }
+        }}
+      />
 
     </DashboardLayout>
   );

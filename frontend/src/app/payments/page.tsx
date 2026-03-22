@@ -5,8 +5,11 @@ import { motion } from 'framer-motion';
 import { CreditCard, CheckCircle2, RefreshCw, Zap, Sparkles } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { paymentService } from '../../services/paymentService';
+import { openRazorpayCheckout, RazorpaySuccessResponse } from '../../lib/razorpay';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { cn } from '../../lib/utils';
+import UpgradeOptionsModal from '../../components/ui/UpgradeOptionsModal';
+import { computeProrationDays, getRemainingDays } from '../../lib/proration';
 
 interface Plan {
   id: string;
@@ -54,6 +57,8 @@ export default function PaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  const [pendingUpgradePlan, setPendingUpgradePlan] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -61,7 +66,7 @@ export default function PaymentsPage() {
         const userData = await authService.getMe();
         setUser(userData.data);
       } catch (err) {
-        authService.logout();
+        authService.handleAuthError(err);
       } finally {
         setLoading(false);
       }
@@ -69,18 +74,51 @@ export default function PaymentsPage() {
     fetchData();
   }, []);
 
-  const handleUpgrade = async (planId: string) => {
+  const beginCheckout = async (planId: string) => {
     setProcessing(planId);
     setMessage(null);
     try {
       const response = await paymentService.createCheckoutSession(planId);
-      if (response.success && response.url) {
-        window.location.href = response.url;
+      const order = response?.data;
+      if (!order?.orderId) {
+        throw new Error('Invalid checkout response');
       }
+
+      await openRazorpayCheckout(order, {
+        onSuccess: async (rzpResponse: RazorpaySuccessResponse) => {
+          try {
+            await paymentService.confirmPayment(rzpResponse as any);
+            const userData = await authService.getMe();
+            setUser(userData.data);
+            setMessage({ text: 'Subscription upgraded successfully! Your limits have been updated.', type: 'success' });
+          } catch (err: any) {
+            setMessage({ text: err.response?.data?.message || 'Payment verification failed. Please contact support.', type: 'error' });
+          } finally {
+            setProcessing(null);
+          }
+        },
+        onDismiss: () => {
+          setProcessing(null);
+        },
+        onFailure: (error) => {
+          setMessage({ text: error.message || 'Payment failed', type: 'error' });
+          setProcessing(null);
+        },
+      });
     } catch (err: any) {
       setMessage({ text: err.response?.data?.message || 'Failed to start checkout', type: 'error' });
       setProcessing(null);
     }
+  };
+
+  const handleUpgrade = async (planId: string) => {
+    const targetRank = planRank[String(planId).toLowerCase()] ?? 0;
+    if (isSubscriptionActive && currentRank < targetRank && remainingDays > 0) {
+      setPendingUpgradePlan(planId);
+      setUpgradeModalOpen(true);
+      return;
+    }
+    await beginCheckout(planId);
   };
 
   if (loading) {
@@ -95,6 +133,10 @@ export default function PaymentsPage() {
   }
 
   const currentPlanId = user?.plan || 'free';
+  const isSubscriptionActive = (user?.subscriptionStatus || user?.user?.subscriptionStatus) === 'active';
+  const planRank: Record<string, number> = { free: 0, basic: 1, pro: 2, premium: 4 };
+  const currentRank = planRank[String(currentPlanId).toLowerCase()] ?? 0;
+  const remainingDays = getRemainingDays(user?.user?.subscriptionExpiresAt || user?.subscriptionExpiresAt);
   const currentPlan = PLANS.find(plan => plan.id === currentPlanId);
   const subscriptionExpiry = user?.user?.subscriptionExpiresAt
     ? new Date(user.user.subscriptionExpiresAt).toLocaleDateString()
@@ -174,6 +216,8 @@ export default function PaymentsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {PLANS.map((plan, index) => {
                 const isCurrentPlan = currentPlanId === plan.id;
+                const planId = String(plan.id || '').toLowerCase();
+                const isLowerPlan = isSubscriptionActive && currentRank > (planRank[planId] ?? 0);
 
                 return (
                   <motion.div
@@ -198,6 +242,9 @@ export default function PaymentsPage() {
                       <h3 className="text-lg font-bold text-white mb-1 capitalize">{plan.name}</h3>
                       <div className="flex items-baseline mb-2">
                         <span className="text-3xl font-extrabold text-white tracking-tight">{plan.price}</span>
+                        {plan.id !== 'free' && (
+                          <span className="ml-2 text-[10px] font-semibold text-slate-400 border border-[#1A2235] rounded-full px-2 py-0.5">30 days</span>
+                        )}
                       </div>
                     </div>
 
@@ -213,26 +260,32 @@ export default function PaymentsPage() {
                     </div>
 
                     <div className="mt-auto">
-                      <button
-                        onClick={() => handleUpgrade(plan.id)}
-                        disabled={isCurrentPlan || processing !== null}
-                        className={cn(
-                          "w-full py-2.5 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center",
-                          isCurrentPlan
-                            ? "bg-[#111827] text-[#00D4FF] cursor-not-allowed border border-[#00D4FF]/30"
-                            : plan.recommended
-                              ? "bg-gradient-primary text-white shadow-glow-primary hover:shadow-glow-primary-hover"
-                              : "bg-white/5 text-white hover:bg-white/10 border border-white/10"
-                        )}
-                      >
-                        {processing === plan.id ? (
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                        ) : isCurrentPlan ? (
-                          'Current Plan'
-                        ) : (
-                          <>Upgrade <Zap className="h-3.5 w-3.5 ml-1.5" /></>
-                        )}
-                      </button>
+                      {isLowerPlan ? (
+                        <div className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-slate-400 text-center border border-[#1A2235] bg-[#111827]">
+                          Included in your plan
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleUpgrade(plan.id)}
+                          disabled={isCurrentPlan || processing !== null}
+                          className={cn(
+                            "w-full py-2.5 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center",
+                            isCurrentPlan
+                              ? "bg-[#111827] text-[#00D4FF] cursor-not-allowed border border-[#00D4FF]/30"
+                              : plan.recommended
+                                ? "bg-gradient-primary text-white shadow-glow-primary hover:shadow-glow-primary-hover"
+                                : "bg-white/5 text-white hover:bg-white/10 border border-white/10"
+                          )}
+                        >
+                          {processing === plan.id ? (
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                          ) : isCurrentPlan ? (
+                            'Current Plan'
+                          ) : (
+                            <>Upgrade <Zap className="h-3.5 w-3.5 ml-1.5" /></>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </motion.div>
                 );
@@ -241,6 +294,33 @@ export default function PaymentsPage() {
           </div>
         </div>
       </div>
+
+      <UpgradeOptionsModal
+        open={upgradeModalOpen && !!pendingUpgradePlan}
+        currentPlan={String(currentPlanId).toLowerCase()}
+        targetPlan={pendingUpgradePlan || ''}
+        remainingDays={remainingDays}
+        creditDays={computeProrationDays(String(currentPlanId).toLowerCase(), pendingUpgradePlan || '', remainingDays)}
+        onClose={() => setUpgradeModalOpen(false)}
+        onBuy={() => {
+          if (!pendingUpgradePlan) return;
+          setUpgradeModalOpen(false);
+          beginCheckout(pendingUpgradePlan);
+        }}
+        onConvert={async () => {
+          if (!pendingUpgradePlan) return;
+          try {
+            await paymentService.convertPlan(pendingUpgradePlan);
+            const userData = await authService.getMe();
+            setUser(userData.data);
+            setMessage({ text: 'Plan converted successfully using remaining days.', type: 'success' });
+          } catch (err: any) {
+            setMessage({ text: err.response?.data?.message || 'Failed to convert plan', type: 'error' });
+          } finally {
+            setUpgradeModalOpen(false);
+          }
+        }}
+      />
 
     </DashboardLayout>
   );

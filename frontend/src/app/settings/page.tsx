@@ -50,7 +50,7 @@ export default function SettingsPage() {
         setTelegramNotifs(me.user?.telegramNotificationsEnabled ?? true);
         setPushNotifs(me.user?.pushNotificationsEnabled ?? true);
       } catch (err) {
-        authService.logout();
+        authService.handleAuthError(err);
       } finally {
         setLoading(false);
       }

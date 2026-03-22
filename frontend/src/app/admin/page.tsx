@@ -63,6 +63,8 @@ export default function AdminDashboard() {
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
   const [betaMode, setBetaMode] = useState(false);
   const [updatingConfig, setUpdatingConfig] = useState(false);
+  const [planValueMap, setPlanValueMap] = useState({ free: 0, basic: 1, pro: 2, premium: 4 });
+  const [savingProration, setSavingProration] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlans, setSavingPlans] = useState(false);
 
@@ -190,7 +192,7 @@ export default function AdminDashboard() {
   const executeUpdateConfig = async (newBetaMode: boolean) => {
     setUpdatingConfig(true);
     try {
-      await adminService.updateSystemConfig({ betaMode: newBetaMode });
+      await adminService.updateSystemConfig({ betaMode: newBetaMode, planValueMap });
       setBetaMode(newBetaMode);
       setModalConfig({
          isOpen: true,
@@ -212,6 +214,32 @@ export default function AdminDashboard() {
       });
     } finally {
       setUpdatingConfig(false);
+    }
+  };
+
+  const handleSaveProration = async () => {
+    setSavingProration(true);
+    try {
+      await adminService.updateSystemConfig({ betaMode, planValueMap });
+      setModalConfig({
+        isOpen: true,
+        title: 'Proration Updated',
+        description: 'Plan conversion ratios saved successfully.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update proration settings.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingProration(false);
     }
   };
 
@@ -276,6 +304,8 @@ export default function AdminDashboard() {
       story_mode: !!plan.features?.story_mode,
       cta: !!plan.features?.cta,
       format_selection: !!plan.features?.format_selection,
+      template_customization: !!plan.features?.template_customization,
+      custom_media: !!plan.features?.custom_media,
     },
   });
 
@@ -398,6 +428,14 @@ const handleDeleteUser = () => {
 
           if (configRes.status === 'fulfilled' && configRes.value?.success && configRes.value.data) {
             setBetaMode(configRes.value.data.betaMode);
+            if (configRes.value.data.planValueMap) {
+              setPlanValueMap({
+                free: Number(configRes.value.data.planValueMap.free ?? 0),
+                basic: Number(configRes.value.data.planValueMap.basic ?? 1),
+                pro: Number(configRes.value.data.planValueMap.pro ?? 2),
+                premium: Number(configRes.value.data.planValueMap.premium ?? 4),
+              });
+            }
           }
 
           if (bannerRes.status === 'fulfilled' && bannerRes.value?.success && bannerRes.value.data) {
@@ -437,6 +475,23 @@ const handleDeleteUser = () => {
       <div className="max-w-7xl mx-auto py-8">
         <div className="space-y-8">
           <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Admin Panel</h1>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Link
+              href="/admin/users"
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
+            >
+              <Users className="h-4 w-4 text-[#00D4FF]" />
+              Users Directory
+            </Link>
+            <Link
+              href="/admin/tickets"
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
+            >
+              <MessageSquare className="h-4 w-4 text-[#00D4FF]" />
+              Support Tickets
+            </Link>
+          </div>
 
           {/* Control Tools */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -572,21 +627,32 @@ const handleDeleteUser = () => {
                     <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
-                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Link
-                    href="/admin/users"
-                    className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
+                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                  <p className="text-sm font-semibold text-white mb-2">Plan Conversion Ratios</p>
+                  <p className="text-xs text-slate-400 mb-3">Higher value = more days. Example: Basic 1, Pro 2, Premium 4 means 2 Basic days = 1 Pro day, 4 Basic days = 1 Premium day.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {(['free', 'basic', 'pro', 'premium'] as const).map((key) => (
+                      <div key={key}>
+                        <label className="text-xs text-slate-400 block mb-1">{key.toUpperCase()} Value</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={(planValueMap as any)[key]}
+                          onChange={(e) => setPlanValueMap(prev => ({ ...prev, [key]: Number(e.target.value) }))}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveProration}
+                    disabled={savingProration}
+                    className="mt-3 w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <Users className="h-4 w-4 text-[#00D4FF]" />
-                    Users Directory
-                  </Link>
-                  <Link
-                    href="/admin/tickets"
-                    className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
-                  >
-                    <MessageSquare className="h-4 w-4 text-[#00D4FF]" />
-                    Support Tickets
-                  </Link>
+                    {savingProration ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Proration Settings'}
+                  </button>
                 </div>
               </div>
             </div>
@@ -676,6 +742,14 @@ const handleDeleteUser = () => {
                       <label className="flex items-center cursor-pointer">
                         <input type="checkbox" checked={plan.features?.format_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, format_selection: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Format Selection</span>
+                      </label>
+                      <label className="flex items-center cursor-pointer">
+                        <input type="checkbox" checked={plan.features?.template_customization} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, template_customization: e.target.checked }})} className="mr-2" />
+                        <span className="text-xs text-slate-300">Subtitle Style (Font/Color)</span>
+                      </label>
+                      <label className="flex items-center cursor-pointer">
+                        <input type="checkbox" checked={plan.features?.custom_media} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, custom_media: e.target.checked }})} className="mr-2" />
+                        <span className="text-xs text-slate-300">Custom Media Library</span>
                       </label>
                     </div>
                   </div>

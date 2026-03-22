@@ -15,6 +15,8 @@ export const defaultPlans = [
       story_mode: false,
       cta: false,
       format_selection: false,
+      template_customization: false,
+      custom_media: false,
     },
     limits: {
       max_channels: 1,
@@ -33,6 +35,8 @@ export const defaultPlans = [
       story_mode: true,
       cta: true,
       format_selection: true,
+      template_customization: false,
+      custom_media: false,
     },
     limits: {
       max_channels: 2,
@@ -51,6 +55,8 @@ export const defaultPlans = [
       story_mode: true,
       cta: true,
       format_selection: true,
+      template_customization: true,
+      custom_media: true,
     },
     limits: {
       max_channels: 5,
@@ -69,6 +75,8 @@ export const defaultPlans = [
       story_mode: true,
       cta: true,
       format_selection: true,
+      template_customization: true,
+      custom_media: true,
     },
     limits: {
       max_channels: 20,
@@ -89,7 +97,9 @@ export const ensureDefaultPlans = async () => {
       const needsUpdate =
         features.story_mode === undefined ||
         features.cta === undefined ||
-        features.format_selection === undefined;
+        features.format_selection === undefined ||
+        features.template_customization === undefined ||
+        features.custom_media === undefined;
 
       if (needsUpdate) {
         await Plan.updateOne(
@@ -99,6 +109,8 @@ export const ensureDefaultPlans = async () => {
               'features.story_mode': planData.features.story_mode,
               'features.cta': planData.features.cta,
               'features.format_selection': planData.features.format_selection,
+              'features.template_customization': planData.features.template_customization,
+              'features.custom_media': planData.features.custom_media,
             },
           }
         );

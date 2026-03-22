@@ -21,6 +21,7 @@ import { usePersistentSettings } from '../../hooks/usePersistentSettings';
 import { requestNotificationPermission } from '../../lib/notifications';
 import { cn } from '../../lib/utils';
 import { mediaService } from '../../services/mediaService';
+import { userService } from '../../services/userService';
 
 const TOPIC_CATEGORIES = ["World News", "Tech", "Science", "Nature", "Story Mode", "Auto"];
 
@@ -96,11 +97,25 @@ function Dashboard() {
 
   const searchParams = useSearchParams();
   const router = useRouter();
+  const paymentConfirmingRef = useRef(false);
 
   useEffect(() => {
     if (searchParams.get('payment') === 'success') {
-      alert('Subscription upgraded successfully! Your limits have been updated.');
-      router.replace('/dashboard');
+      if (paymentConfirmingRef.current) return;
+      paymentConfirmingRef.current = true;
+      (async () => {
+        try {
+          const params = Object.fromEntries(searchParams.entries());
+          await paymentService.confirmPayment(params as Record<string, string>);
+          const userData = await authService.getMe();
+          setUser(userData.data);
+          setMessage({ text: 'Subscription upgraded successfully! Your limits have been updated.', type: 'success' });
+        } catch (err) {
+          setMessage({ text: 'Payment received, but verification is pending. Please refresh in a minute or contact support.', type: 'warning' });
+        } finally {
+          router.replace('/dashboard');
+        }
+      })();
     }
   }, [searchParams, router]);
 
@@ -110,6 +125,13 @@ function Dashboard() {
       try {
         const userData = await authService.getMe();
         setUser(userData.data);
+
+        if (userData.data?.user?.templateFont) {
+          setTemplateFont(userData.data.user.templateFont);
+        }
+        if (userData.data?.user?.templateColor) {
+          setTemplateColor(userData.data.user.templateColor);
+        }
 
         if (userData.data?.youtubeChannels && userData.data.youtubeChannels.length > 0) {
             setSelectedChannelId(userData.data.youtubeChannels[0].channelId);
@@ -144,7 +166,7 @@ function Dashboard() {
         // Request notification permission once user is loaded
         requestNotificationPermission();
       } catch (err) {
-        authService.logout();
+        authService.handleAuthError(err);
       } finally {
         setLoading(false);
       }
@@ -207,6 +229,8 @@ function Dashboard() {
     story_mode?: boolean;
     cta?: boolean;
     format_selection?: boolean;
+    template_customization?: boolean;
+    custom_media?: boolean;
   };
   const isFreeUser = currentPlan === 'free';
   const isPaidPlan = !isFreeUser;
@@ -216,6 +240,8 @@ function Dashboard() {
   const canUseStoryMode = planFeatures.story_mode ?? isPaidPlan;
   const canUseCta = planFeatures.cta ?? isPaidPlan;
   const canUseFormatSelection = planFeatures.format_selection ?? isPaidPlan;
+  const canUseTemplateCustomization = planFeatures.template_customization ?? false;
+  const canUseCustomMedia = planFeatures.custom_media ?? false;
   const effectiveStoryMode = canUseStoryMode && storyMode;
 
   useEffect(() => {
@@ -463,7 +489,7 @@ function Dashboard() {
         recapEnabled: effectiveStoryMode && currentPart > 1 ? recapEnabled : false,
         ctaEnabled,
         voices: finalVoices,
-        templateConfig: user?.plan === 'premium' ? { fontStyle: templateFont, subtitleColor: templateColor } : undefined,
+        templateConfig: canUseTemplateCustomization ? { fontStyle: templateFont, subtitleColor: templateColor } : undefined,
         customVideoIds: useCustomMedia ? mediaList.filter(m => m.type === 'video').map(m => m._id) : [],
         customImageIds: useCustomMedia ? mediaList.filter(m => m.type === 'image').map(m => m._id) : [],
         customThumbnailId: useCustomMedia && selectedThumbnailId ? selectedThumbnailId : undefined
@@ -820,7 +846,15 @@ function Dashboard() {
                          </div>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" className="sr-only peer" checked={useCustomMedia} onChange={(e) => setUseCustomMedia(e.target.checked)} />
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={useCustomMedia}
+                          onChange={(e) => {
+                            if (!canUseCustomMedia) { showUpgradeModal('Custom media'); return; }
+                            setUseCustomMedia(e.target.checked);
+                          }}
+                        />
                         <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FF4FD8]"></div>
                       </label>
                     </div>
@@ -856,7 +890,7 @@ function Dashboard() {
               {/* Call to Actions & Voices */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
-                {user?.plan === 'premium' && (
+                {canUseTemplateCustomization && (
                   <div className="col-span-1 sm:col-span-2 bg-[#0B0F1A] p-4 rounded-xl border border-[#00D4FF]/30 space-y-4">
                      <div className="flex items-center mb-2">
                        <Sparkles className="h-4 w-4 text-[#00D4FF] mr-2" />
@@ -865,7 +899,15 @@ function Dashboard() {
                      <div className="grid grid-cols-2 gap-4">
                        <div>
                          <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
-                         <select value={templateFont} onChange={(e) => setTemplateFont(e.target.value)} className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]">
+                         <select
+                           value={templateFont}
+                           onChange={async (e) => {
+                             const value = e.target.value;
+                             setTemplateFont(value);
+                             try { await userService.updateSettings({ templateFont: value }); } catch {}
+                           }}
+                           className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                         >
                            <option value="Arial">Arial</option>
                            <option value="Anton">Anton</option>
                            <option value="Montserrat">Montserrat</option>
@@ -874,7 +916,16 @@ function Dashboard() {
                        </div>
                        <div>
                          <label className="text-xs text-slate-400 mb-1 block">Subtitle Color</label>
-                         <input type="color" value={templateColor} onChange={(e) => setTemplateColor(e.target.value)} className="w-full h-9 bg-[#111827] border border-[#1A2235] rounded-lg p-1 cursor-pointer" />
+                         <input
+                           type="color"
+                           value={templateColor}
+                           onChange={async (e) => {
+                             const value = e.target.value;
+                             setTemplateColor(value);
+                             try { await userService.updateSettings({ templateColor: value }); } catch {}
+                           }}
+                           className="w-full h-9 bg-[#111827] border border-[#1A2235] rounded-lg p-1 cursor-pointer"
+                         />
                        </div>
                      </div>
                   </div>

@@ -12,6 +12,8 @@ export interface IPlan extends Document {
     story_mode: boolean;
     cta: boolean;
     format_selection: boolean;
+    template_customization: boolean;
+    custom_media: boolean;
   };
   limits: {
     max_channels: number;
@@ -38,6 +40,8 @@ const PlanSchema = new Schema<IPlan>(
       story_mode: { type: Boolean, default: false },
       cta: { type: Boolean, default: false },
       format_selection: { type: Boolean, default: false },
+      template_customization: { type: Boolean, default: false },
+      custom_media: { type: Boolean, default: false },
     },
     limits: {
       max_channels: { type: Number, default: 1 },

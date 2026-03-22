@@ -48,7 +48,7 @@ export const adminService = {
     return response.data;
   },
 
-  async updateSystemConfig(data: { betaMode: boolean; planLimits?: { free: number; basic: number; pro: number; premium: number } }) {
+  async updateSystemConfig(data: { betaMode: boolean; planLimits?: { free: number; basic: number; pro: number; premium: number }; planValueMap?: { free: number; basic: number; pro: number; premium: number } }) {
     const response = await api.post('/admin/config', data);
     return response.data;
   }
