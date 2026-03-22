@@ -4,6 +4,7 @@ import { AppError } from '../middleware/errorHandler';
 import Schedule from '../models/Schedule';
 import Prompt from '../models/Prompt';
 import User from '../models/User';
+import Plan from '../models/Plan';
 import { CreateScheduleInput } from '../utils/validators/scheduleValidators';
 import { getUploadLimits } from '../services/uploadLimitService';
 
@@ -17,11 +18,20 @@ export const createSchedule = asyncHandler(
     }
 
     const userId = req.user.id;
-    const { channelId, type, datetime, intervalHours, videosPerInterval, videoConfig } = req.body;
+    const {
+      channelId,
+      type,
+      datetime,
+      intervalHours,
+      videosPerInterval,
+      cron_expression,
+      videoConfig,
+    } = req.body;
 
     const limitCheck = await getUploadLimits(userId);
-    if (limitCheck.plan === 'free') {
-      throw new AppError('Scheduling is not available on the Free plan. Please upgrade to Basic or higher.', 403);
+    const planDoc = await Plan.findOne({ name: limitCheck.plan });
+    if (!planDoc || !planDoc.features.scheduling) {
+      throw new AppError('Scheduling is not available on your plan. Please upgrade.', 403);
     }
 
     const user = await User.findById(userId);
@@ -29,22 +39,23 @@ export const createSchedule = asyncHandler(
       throw new AppError('User not found', 404);
     }
 
-    const channel = user.youtubeChannels.find(c => c.channelId === channelId);
+    const channel: any = user.youtubeChannels.find(c => c.channelId === channelId);
     if (!channel) {
       throw new AppError(`YouTube channel with ID ${channelId} not found`, 404);
     }
+    if (channel.status === 'disabled_due_to_plan') {
+      throw new AppError('Channel disabled due to plan downgrade. Please upgrade.', 403);
+    }
 
     const promptId = videoConfig?.promptId;
-    if (!promptId) {
-      throw new AppError('promptId is required', 400);
-    }
-
-    const prompt = await Prompt.findById(promptId);
-    if (!prompt) {
-      throw new AppError('Prompt not found', 404);
-    }
-    if (prompt.userId.toString() !== userId) {
-      throw new AppError('Prompt does not belong to user', 403);
+    if (promptId) {
+      const prompt = await Prompt.findById(promptId);
+      if (!prompt) {
+        throw new AppError('Prompt not found', 404);
+      }
+      if (prompt.userId.toString() !== userId) {
+        throw new AppError('Prompt does not belong to user', 403);
+      }
     }
 
     if (videoConfig?.channelId && videoConfig.channelId !== channelId) {
@@ -52,7 +63,7 @@ export const createSchedule = asyncHandler(
     }
 
     const now = new Date();
-    let nextRunAt: Date;
+    let nextRunAt: Date | undefined;
     let resolvedVideoCount = Number(videoConfig?.videoCount || 1);
 
     if (type === 'one-time') {
@@ -63,12 +74,20 @@ export const createSchedule = asyncHandler(
         throw new AppError('Schedule time must be in the future', 400);
       }
       nextRunAt = datetime;
-    } else {
+    } else if (type === 'interval') {
       if (!intervalHours || !videosPerInterval) {
         throw new AppError('intervalHours and videosPerInterval are required for interval schedules', 400);
       }
       nextRunAt = new Date(now.getTime() + intervalHours * 60 * 60 * 1000);
       resolvedVideoCount = videosPerInterval;
+    } else {
+      if (!cron_expression && !intervalHours) {
+        throw new AppError('cron_expression or intervalHours is required for recurring schedules', 400);
+      }
+      nextRunAt = datetime || new Date(now.getTime() + 60 * 1000);
+      if (videosPerInterval) {
+        resolvedVideoCount = videosPerInterval;
+      }
     }
 
     if (resolvedVideoCount > 10) {
@@ -80,6 +99,7 @@ export const createSchedule = asyncHandler(
       channelId,
       type,
       nextRunAt,
+      cron_expression,
       videoConfig: {
         ...videoConfig,
         channelId,
@@ -88,9 +108,10 @@ export const createSchedule = asyncHandler(
     };
     if (type === 'one-time') {
       createPayload.datetime = datetime;
-    } else {
-      createPayload.intervalHours = intervalHours;
-      createPayload.videosPerInterval = videosPerInterval;
+    }
+    if (type === 'interval' || type === 'recurring') {
+      if (intervalHours) createPayload.intervalHours = intervalHours;
+      if (videosPerInterval) createPayload.videosPerInterval = videosPerInterval;
     }
 
     const schedule = await Schedule.create(createPayload);

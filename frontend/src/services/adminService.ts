@@ -6,8 +6,10 @@ export const adminService = {
     return response.data;
   },
 
-  async getUsers() {
-    const response = await api.get('/admin/users');
+  async getUsers(page = 1, limit = 10, search = '') {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    if (search) params.append('search', search);
+    const response = await api.get(`/admin/users?${params.toString()}`);
     return response.data;
   },
 

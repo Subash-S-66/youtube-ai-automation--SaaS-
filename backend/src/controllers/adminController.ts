@@ -265,11 +265,33 @@ export const deleteUserByAdmin = asyncHandler(async (req: Request, res: Response
 });
 
 export const getAllUsers = asyncHandler(async (req: Request, res: Response) => {
-  const users = await User.find({}).select('email plan uploadsUsedToday uploadsOnHold subscriptionExpiresAt').sort({ createdAt: -1 });
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 10;
+  const search = req.query.search as string;
+
+  const query: any = {};
+  if (search) {
+    query.email = { $regex: search, $options: 'i' };
+  }
+
+  const skip = (page - 1) * limit;
+
+  const users = await User.find(query)
+    .select('email plan uploadsUsedToday uploadsOnHold subscriptionExpiresAt')
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit);
+
+  const total = await User.countDocuments(query);
 
   res.status(200).json({
     success: true,
     data: users,
+    pagination: {
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    },
   });
 });
 
@@ -341,6 +363,31 @@ export const updateUserPlan = asyncHandler(async (req: Request, res: Response) =
       subscriptionExpiresAt: user.subscriptionExpiresAt,
       subscriptionStatus: user.subscriptionStatus,
     },
+  });
+});
+
+export const getPlans = asyncHandler(async (req: Request, res: Response) => {
+  const Plan = require('../models/Plan').default;
+  const plans = await Plan.find();
+  res.status(200).json({
+    success: true,
+    data: plans,
+  });
+});
+
+export const updatePlan = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const Plan = require('../models/Plan').default;
+  const plan = await Plan.findByIdAndUpdate(id, req.body, { new: true, runValidators: true });
+
+  if (!plan) {
+    throw new AppError('Plan not found', 404);
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Plan updated successfully',
+    data: plan,
   });
 });
 

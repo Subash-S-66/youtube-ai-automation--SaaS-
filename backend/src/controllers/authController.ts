@@ -78,6 +78,7 @@ export const register = asyncHandler(
     const createPayload: any = {
       email,
       password: hashedPassword,
+      role: 'user', // Enforce strict default role to prevent privilege escalation via body injections
       emailVerificationToken: hashedVerificationToken,
       emailVerificationExpires: verificationExpires,
       referralCode: myReferralCode,

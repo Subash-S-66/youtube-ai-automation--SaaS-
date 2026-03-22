@@ -15,13 +15,18 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+
   useEffect(() => {
     const fetchData = async () => {
+      setLoading(true);
       try {
         const userData = await authService.getMe();
         setUser(userData.data);
-        const jobsData = await pipelineService.getJobs();
+        const jobsData = await pipelineService.getJobs(page, 10);
         setJobs(jobsData.data);
+        setTotalPages(jobsData.pagination?.pages || 1);
       } catch (err) {
         authService.logout();
       } finally {
@@ -29,7 +34,7 @@ export default function HistoryPage() {
       }
     };
     fetchData();
-  }, []);
+  }, [page]);
 
   const toggleJob = (id: string) => {
     setExpandedJobId(prev => prev === id ? null : id);
@@ -156,6 +161,28 @@ export default function HistoryPage() {
           )}
         </div>
       </div>
+
+      {totalPages > 1 && (
+        <div className="p-4 flex items-center justify-between bg-[#111827] border border-[#1A2235] rounded-xl mt-6 shadow-xl">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1 || loading}
+            className="px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-slate-400">
+            Page {page} of {totalPages}
+          </span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages || loading}
+            className="px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
+          >
+            Next
+          </button>
+        </div>
+      )}
 
     </DashboardLayout>
   );

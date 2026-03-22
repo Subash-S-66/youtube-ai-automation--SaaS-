@@ -6,8 +6,8 @@ export const pipelineService = {
     return response.data;
   },
 
-  async getJobs() {
-    const response = await api.get('/pipeline/jobs');
+  async getJobs(page = 1, limit = 10) {
+    const response = await api.get(`/pipeline/jobs?page=${page}&limit=${limit}`);
     return response.data;
   },
 };

@@ -1,6 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
-export type ScheduleType = 'one-time' | 'interval';
+export type ScheduleType = 'one-time' | 'interval' | 'recurring';
+export type ScheduleStatus = 'pending' | 'completed' | 'failed' | 'cancelled';
 
 export interface ISchedule extends Document {
   userId: mongoose.Types.ObjectId;
@@ -11,10 +12,12 @@ export interface ISchedule extends Document {
   datetime?: Date;
   intervalHours?: number;
   videosPerInterval?: number;
-  nextRunAt: Date;
+  cron_expression?: string;
+  nextRunAt?: Date;
   lastRunAt?: Date;
   lastJobId?: mongoose.Types.ObjectId;
   lastError?: string;
+  status: ScheduleStatus;
   videoConfig: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
@@ -33,7 +36,7 @@ const ScheduleSchema = new Schema<ISchedule>(
     },
     type: {
       type: String,
-      enum: ['one-time', 'interval'],
+      enum: ['one-time', 'interval', 'recurring'],
       required: true,
     },
     enabled: {
@@ -53,9 +56,11 @@ const ScheduleSchema = new Schema<ISchedule>(
     videosPerInterval: {
       type: Number,
     },
+    cron_expression: {
+      type: String,
+    },
     nextRunAt: {
       type: Date,
-      required: true,
     },
     lastRunAt: {
       type: Date,
@@ -66,6 +71,11 @@ const ScheduleSchema = new Schema<ISchedule>(
     },
     lastError: {
       type: String,
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'completed', 'failed', 'cancelled'],
+      default: 'pending',
     },
     videoConfig: {
       type: Schema.Types.Mixed,

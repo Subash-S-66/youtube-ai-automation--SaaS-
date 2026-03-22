@@ -13,6 +13,8 @@ import {
   getSystemConfig,
   updateSystemConfig,
   triggerWeeklyReports,
+  getPlans,
+  updatePlan,
 } from '../controllers/adminController';
 
 const router = express.Router();
@@ -32,5 +34,7 @@ router.get('/banner', getGlobalBannerConfig);
 router.get('/config', getSystemConfig);
 router.post('/config', updateSystemConfig);
 router.post('/trigger-reports', triggerWeeklyReports);
+router.get('/plans', getPlans);
+router.put('/plans/:id', updatePlan);
 
 export default router;

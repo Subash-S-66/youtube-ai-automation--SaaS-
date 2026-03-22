@@ -46,6 +46,9 @@ export default function AdminDashboard() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<UserSummary[]>([]);
+  const [userPage, setUserPage] = useState(1);
+  const [userTotalPages, setUserTotalPages] = useState(1);
+  const [userSearch, setUserSearch] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDetails, setUserDetails] = useState<UserDetails | null>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -382,7 +385,7 @@ const handleDeleteUser = () => {
         // Start loading the heavy API endpoints without blocking the initial UI completely
         Promise.allSettled([
           adminService.getStats(),
-          adminService.getUsers(),
+          adminService.getUsers(userPage, 10, userSearch),
           adminService.getSystemConfig(),
           adminService.getGlobalBanner(),
           import('../../services/planService').then(m => m.planService.getPlans()),
@@ -391,7 +394,10 @@ const handleDeleteUser = () => {
            const [statsRes, usersRes, configRes, bannerRes, plansRes] = results;
 
            if (statsRes.status === 'fulfilled' && statsRes.value?.success) setStats(statsRes.value.data);
-           if (usersRes.status === 'fulfilled' && usersRes.value?.success) setUsers(usersRes.value.data);
+           if (usersRes.status === 'fulfilled' && usersRes.value?.success) {
+               setUsers(usersRes.value.data);
+               setUserTotalPages(usersRes.value.pagination?.pages || 1);
+           }
 
            if (configRes.status === 'fulfilled' && configRes.value?.success && configRes.value.data) {
               setBetaMode(configRes.value.data.betaMode);
@@ -429,7 +435,12 @@ const handleDeleteUser = () => {
     };
     initAdmin();
     return () => { isMounted = false; };
-  }, [router]);
+  }, [router, userPage, userSearch]);
+
+  const handleUserSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUserSearch(e.target.value);
+    setUserPage(1); // Reset to first page on new search
+  };
 
   const loadUserDetails = async (id: string) => {
     try {
@@ -786,8 +797,18 @@ if (loading) {
 
             {/* Users Table */}
             <div className="bg-[#111827] border border-[#1A2235] rounded-2xl shadow-xl overflow-hidden">
-              <div className="p-6 border-b border-[#1A2235] flex justify-between items-center">
+              <div className="p-6 border-b border-[#1A2235] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <h2 className="text-xl font-bold text-white">Users Directory</h2>
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search users..."
+                    value={userSearch}
+                    onChange={handleUserSearchChange}
+                    className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl pl-9 pr-4 py-2 text-sm text-slate-200 focus:outline-none focus:border-[#7C5CFF] transition-colors"
+                  />
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -821,6 +842,28 @@ if (loading) {
                   </tbody>
                 </table>
               </div>
+
+              {!dashboardLoading && userTotalPages > 1 && (
+                <div className="p-4 border-t border-[#1A2235] flex items-center justify-between bg-[#0B0F1A]">
+                  <button
+                    onClick={() => setUserPage(p => Math.max(1, p - 1))}
+                    disabled={userPage === 1}
+                    className="px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-sm text-slate-400">
+                    Page {userPage} of {userTotalPages}
+                  </span>
+                  <button
+                    onClick={() => setUserPage(p => Math.min(userTotalPages, p + 1))}
+                    disabled={userPage === userTotalPages}
+                    className="px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         ) : (
