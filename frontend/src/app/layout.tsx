@@ -47,7 +47,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <link rel="preconnect" href={apiOrigin} />
+        <link rel="preconnect" href={apiOrigin} crossOrigin="use-credentials" />
         <link rel="dns-prefetch" href={apiOrigin} />
       </head>
       <body
