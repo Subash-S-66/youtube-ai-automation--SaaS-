@@ -33,12 +33,16 @@ export const startPipeline = asyncHandler(
     }
 
     const userId = req.user.id;
-    const result = await enqueuePipelineJob({
+    const params: { userId: string; promptId: string; settings: Record<string, any>; acceptedYouTubeLimitWarning?: boolean } = {
       userId,
       promptId,
       settings,
-      acceptedYouTubeLimitWarning,
-    });
+    };
+    if (typeof acceptedYouTubeLimitWarning === 'boolean') {
+      params.acceptedYouTubeLimitWarning = acceptedYouTubeLimitWarning;
+    }
+
+    const result = await enqueuePipelineJob(params);
 
     if (result.warningOnly) {
       return res.status(400).json({

@@ -6,16 +6,21 @@ import { ensureAdminUser } from './utils/ensureAdminUser';
 import { ensureSystemConfigSingleton } from './utils/ensureSystemConfig';
 import { startScheduleRunner } from './workers/scheduleRunner';
 import { ensureDefaultPlans } from './config/plans';
+import mongoose from 'mongoose';
 
 // Initialize Firebase Admin
 initializeFirebaseAdmin();
 
 // Connect to Database
 connectDB().then(async () => {
-  await ensureAdminUser();
-  await ensureSystemConfigSingleton();
-  startScheduleRunner();
-  await ensureDefaultPlans();
+  if (mongoose.connection.readyState >= 1) {
+    await ensureAdminUser();
+    await ensureSystemConfigSingleton();
+    await ensureDefaultPlans();
+    startScheduleRunner();
+  } else {
+    console.warn('[MongoDB] Skipping admin init and schedule runner (no DB connection).');
+  }
 }).catch((err) => {
   console.error('Failed to ensure admin user', err);
 });

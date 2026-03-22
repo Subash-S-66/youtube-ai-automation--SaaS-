@@ -1,12 +1,20 @@
-import { Server } from 'socket.io';
 import { Server as HttpServer } from 'http';
 
-let io: Server | null = null;
+let io: any = null;
 
 export const initSocket = (server: HttpServer) => {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
-  io = new Server(server, {
+  let ServerCtor: any;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    ServerCtor = require('socket.io').Server;
+  } catch {
+    console.warn('socket.io is not installed. Realtime features are disabled.');
+    return null;
+  }
+
+  io = new ServerCtor(server, {
     cors: {
       origin: frontendUrl,
       methods: ['GET', 'POST'],
@@ -14,7 +22,7 @@ export const initSocket = (server: HttpServer) => {
     },
   });
 
-  io.on('connection', (socket) => {
+  io.on('connection', (socket: any) => {
     console.log(`Socket client connected: ${socket.id}`);
 
     // User can join their specific room to receive personalized events
@@ -31,7 +39,7 @@ export const initSocket = (server: HttpServer) => {
   return io;
 };
 
-export const getIo = (): Server => {
+export const getIo = (): any => {
   if (!io) {
     throw new Error('Socket.io is not initialized!');
   }

@@ -75,20 +75,25 @@ export const createSchedule = asyncHandler(
       throw new AppError('Maximum 10 videos per request', 400);
     }
 
-    const schedule = await Schedule.create({
+    const createPayload: Record<string, any> = {
       userId,
       channelId,
       type,
-      datetime: type === 'one-time' ? datetime : undefined,
-      intervalHours: type === 'interval' ? intervalHours : undefined,
-      videosPerInterval: type === 'interval' ? videosPerInterval : undefined,
       nextRunAt,
       videoConfig: {
         ...videoConfig,
         channelId,
         videoCount: resolvedVideoCount,
       },
-    });
+    };
+    if (type === 'one-time') {
+      createPayload.datetime = datetime;
+    } else {
+      createPayload.intervalHours = intervalHours;
+      createPayload.videosPerInterval = videosPerInterval;
+    }
+
+    const schedule = await Schedule.create(createPayload);
 
     res.status(201).json({
       success: true,
@@ -121,7 +126,8 @@ export const deleteSchedule = asyncHandler(async (req: Request, res: Response) =
     throw new AppError('Not authorized', 401);
   }
 
-  const schedule = await Schedule.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
+  const scheduleId = String(req.params.id);
+  const schedule = await Schedule.findOneAndDelete({ _id: scheduleId, userId: req.user.id } as any);
   if (!schedule) {
     throw new AppError('Schedule not found', 404);
   }
