@@ -146,21 +146,25 @@ export default function PricingPage() {
                 )}
 
                 {hasDiscount && (
-                   <div className="absolute top-0 right-4 transform -translate-y-1/2 bg-[#FF4FD8] text-white text-xs font-black uppercase tracking-wider px-3 py-1 rounded-full shadow-[0_0_15px_rgba(255,79,216,0.5)] flex items-center transform rotate-3">
+                   <div className="absolute -top-3 right-4 bg-gradient-to-r from-[#FF4FD8] to-[#7C5CFF] text-white text-[10px] font-extrabold uppercase tracking-widest px-3 py-1 rounded-full shadow-[0_0_15px_rgba(255,79,216,0.3)] flex items-center z-10">
                      Save {plan.discountPercentage}%
                    </div>
                 )}
 
                 <div className="mb-6">
                   <h3 className="text-xl font-bold text-white mb-2 capitalize">{plan.name}</h3>
-                  <div className="flex flex-col items-start mb-4">
+                  <div className="flex items-baseline mb-4">
                     {hasDiscount ? (
                        <>
-                         <span className="text-lg font-bold text-slate-500 line-through decoration-red-500 decoration-2">${plan.price}/mo</span>
-                         <span className="text-4xl font-extrabold text-white tracking-tight">${discountedPrice.toFixed(0)}<span className="text-lg text-slate-400 font-medium">/mo</span></span>
+                         <span className="text-4xl font-extrabold text-white tracking-tight mr-2">${discountedPrice.toFixed(0)}</span>
+                         <span className="text-lg font-bold text-slate-500 line-through decoration-red-500/50 mr-1">${plan.price}</span>
+                         <span className="text-lg text-slate-400 font-medium">/mo</span>
                        </>
                     ) : (
-                       <span className="text-4xl font-extrabold text-white tracking-tight">${plan.price}<span className="text-lg text-slate-400 font-medium">/mo</span></span>
+                       <>
+                         <span className="text-4xl font-extrabold text-white tracking-tight mr-1">${plan.price}</span>
+                         <span className="text-lg text-slate-400 font-medium">/mo</span>
+                       </>
                     )}
                   </div>
                   <p className="text-sm text-slate-400">Up to <span className="text-[#00D4FF] font-bold">{plan.limit}</span> videos / day</p>

@@ -189,21 +189,25 @@ export default function PaymentsPage() {
                     )}
 
                     {hasDiscount && (
-                       <div className="absolute top-0 right-4 transform -translate-y-1/2 bg-[#FF4FD8] text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full shadow-[0_0_15px_rgba(255,79,216,0.5)] flex items-center transform rotate-3">
+                       <div className="absolute -top-3 right-4 bg-gradient-to-r from-[#FF4FD8] to-[#7C5CFF] text-white text-[10px] font-extrabold uppercase tracking-widest px-3 py-1 rounded-full shadow-[0_0_15px_rgba(255,79,216,0.3)] flex items-center z-10">
                          Save {plan.discountPercentage}%
                        </div>
                     )}
 
                     <div className="mb-4">
                       <h3 className="text-lg font-bold text-white mb-1 capitalize">{plan.name}</h3>
-                      <div className="flex flex-col items-start mb-2">
+                      <div className="flex items-baseline mb-2">
                         {hasDiscount ? (
                            <>
-                             <span className="text-sm font-bold text-slate-500 line-through decoration-red-500 decoration-2">${plan.price}/mo</span>
-                             <span className="text-3xl font-extrabold text-white tracking-tight">${discountedPrice.toFixed(0)}<span className="text-sm text-slate-400 font-medium">/mo</span></span>
+                             <span className="text-3xl font-extrabold text-white tracking-tight mr-2">${discountedPrice.toFixed(0)}</span>
+                             <span className="text-sm font-bold text-slate-500 line-through decoration-red-500/50 mr-1">${plan.price}</span>
+                             <span className="text-sm text-slate-400 font-medium">/mo</span>
                            </>
                         ) : (
-                           <span className="text-3xl font-extrabold text-white tracking-tight">${plan.price}<span className="text-sm text-slate-400 font-medium">/mo</span></span>
+                           <>
+                             <span className="text-3xl font-extrabold text-white tracking-tight mr-1">${plan.price}</span>
+                             <span className="text-sm text-slate-400 font-medium">/mo</span>
+                           </>
                         )}
                       </div>
                     </div>

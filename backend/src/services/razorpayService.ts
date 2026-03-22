@@ -52,12 +52,13 @@ export const createPaymentLink = async (userId: string, planId?: string): Promis
 
   const calculatedPaise = Math.round(finalPrice * exchangeRate * 100);
 
-  // Fallback to env var if calculated amount is 0
-  const amountPaise = calculatedPaise > 0 ? calculatedPaise : Number(process.env.RAZORPAY_PLAN_AMOUNT_PAISE || 0);
+  // If finalPrice is truly 0 (either free plan, or 100% discount), amountPaise should just be 0
+  // However Razorpay might reject 0 amount links. Let's allow it to be 0 or fallback if it's missing completely.
+  const amountPaise = !Number.isNaN(calculatedPaise) ? calculatedPaise : Number(process.env.RAZORPAY_PLAN_AMOUNT_PAISE || 0);
   const currency = process.env.RAZORPAY_CURRENCY || 'INR';
 
-  if (!amountPaise || Number.isNaN(amountPaise)) {
-    throw new AppError('Razorpay configuration missing', 500);
+  if (Number.isNaN(amountPaise)) {
+    throw new AppError('Razorpay configuration missing or invalid amount', 500);
   }
 
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
