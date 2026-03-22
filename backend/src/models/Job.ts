@@ -8,6 +8,9 @@ export interface IJob extends Document {
   acceptedYouTubeLimitWarning: boolean;
   videoCount: number;
   channelId: string;
+  customVideoIds?: string[];
+  customImageIds?: string[];
+  customThumbnailId?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,6 +48,9 @@ const JobSchema = new Schema<IJob>(
       type: String,
       required: true,
     },
+    customVideoIds: [{ type: String }],
+    customImageIds: [{ type: String }],
+    customThumbnailId: { type: String },
   },
   {
     timestamps: true,

@@ -13,6 +13,7 @@ import adminRoutes from './routes/adminRoutes';
 import userRoutes from './routes/userRoutes';
 import bannerRoutes from './routes/bannerRoutes';
 import scheduleRoutes from './routes/scheduleRoutes';
+import mediaRoutes from './routes/mediaRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -98,6 +99,10 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/banner', bannerRoutes);
 app.use('/api/schedules', scheduleRoutes);
+app.use('/api/media', mediaRoutes);
+
+// Serve static uploads
+app.use('/uploads', express.static('uploads'));
 
 // Base route
 app.get('/', (req: Request, res: Response) => {

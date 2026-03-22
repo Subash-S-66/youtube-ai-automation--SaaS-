@@ -38,17 +38,27 @@ export default function PaymentsPage() {
 
         // Map backend plans to frontend structure and sort by price
         if (plansData && plansData.data) {
-          const mappedPlans = plansData.data.map((p: any) => ({
-             id: p.name,
-             name: p.name.charAt(0).toUpperCase() + p.name.slice(1),
-             price: p.price,
-             discountPercentage: p.discountPercentage || 0,
-             limit: p.limits?.daily_upload_limit || 0,
-             features: Array.isArray(p.featuresList) && p.featuresList.length > 0
-                ? p.featuresList
-                : [`${p.limits?.daily_upload_limit || 0} video uploads per day`, `${p.limits?.max_channels || 0} YouTube channels`],
-             recommended: p.name === 'pro'
-          })).sort((a: Plan, b: Plan) => a.price - b.price);
+          const mappedPlans = plansData.data.map((p: any) => {
+             const dynamicFeatures = [
+               `${p.limits?.daily_upload_limit || 0} video uploads per day`,
+               `${p.limits?.max_channels || 0} YouTube channels`,
+               p.features?.voice_selection ? 'Premium AI voices' : 'Standard voices',
+               p.features?.scheduling ? 'Scheduling enabled' : 'No scheduling',
+               p.features?.story_mode ? 'Story Mode enabled' : 'No Story Mode',
+               p.features?.cta ? 'Custom Call-to-Actions' : 'No custom CTAs',
+               p.features?.format_selection ? 'Multiple format selections' : 'Standard format'
+             ];
+
+             return {
+               id: p.name,
+               name: p.name.charAt(0).toUpperCase() + p.name.slice(1),
+               price: p.price,
+               discountPercentage: p.discountPercentage || 0,
+               limit: p.limits?.daily_upload_limit || 0,
+               features: dynamicFeatures,
+               recommended: p.name === 'pro'
+             };
+          }).sort((a: Plan, b: Plan) => a.price - b.price);
           setPlans(mappedPlans);
         }
       } catch (err) {

@@ -157,6 +157,9 @@ export const enqueuePipelineJob = async ({
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
     videoCount: settings.videoCount,
     channelId: settings.channelId,
+    customVideoIds: settings.customVideoIds || [],
+    customImageIds: settings.customImageIds || [],
+    customThumbnailId: settings.customThumbnailId || undefined,
   });
 
   const planPriorities: Record<string, number> = {

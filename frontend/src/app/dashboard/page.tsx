@@ -20,6 +20,7 @@ import { AppModalType } from '../../components/ui/AppModal';
 import { usePersistentSettings } from '../../hooks/usePersistentSettings';
 import { requestNotificationPermission } from '../../lib/notifications';
 import { cn } from '../../lib/utils';
+import { mediaService } from '../../services/mediaService';
 
 const TOPIC_CATEGORIES = ["World News", "Tech", "Science", "Nature", "Story Mode", "Auto"];
 
@@ -36,6 +37,7 @@ function Dashboard() {
   const [selectedChannelId, setSelectedChannelId] = useState<string>('');
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mediaList, setMediaList] = useState<any[]>([]);
 
   // Persistent Settings
   const [inputMode, setInputMode] = usePersistentSettings<'topic' | 'prompt'>('clipforge_inputMode', 'prompt');
@@ -60,6 +62,8 @@ function Dashboard() {
   const [randomVoice, setRandomVoice] = usePersistentSettings<boolean>('clipforge_randomVoice', true);
   const [templateFont, setTemplateFont] = usePersistentSettings<string>('clipforge_templateFont', 'Arial');
   const [templateColor, setTemplateColor] = usePersistentSettings<string>('clipforge_templateColor', '#FFFFFF');
+  const [useCustomMedia, setUseCustomMedia] = usePersistentSettings<boolean>('clipforge_useCustomMedia', false);
+  const [selectedThumbnailId, setSelectedThumbnailId] = usePersistentSettings<string>('clipforge_selectedThumbnailId', '');
 
   // Scheduling State
   const [scheduleEnabled, setScheduleEnabled] = useState<boolean>(false);
@@ -113,6 +117,9 @@ function Dashboard() {
 
         const jobsData = await pipelineService.getJobs();
         setJobs(jobsData.data);
+
+        const mediaData = await mediaService.getMedia();
+        setMediaList(mediaData.data || []);
 
         // Parse URL params for auth callback errors
         const urlParams = new URLSearchParams(window.location.search);
@@ -456,7 +463,10 @@ function Dashboard() {
         recapEnabled: effectiveStoryMode && currentPart > 1 ? recapEnabled : false,
         ctaEnabled,
         voices: finalVoices,
-        templateConfig: user?.plan === 'premium' ? { fontStyle: templateFont, subtitleColor: templateColor } : undefined
+        templateConfig: user?.plan === 'premium' ? { fontStyle: templateFont, subtitleColor: templateColor } : undefined,
+        customVideoIds: useCustomMedia ? mediaList.filter(m => m.type === 'video').map(m => m._id) : [],
+        customImageIds: useCustomMedia ? mediaList.filter(m => m.type === 'image').map(m => m._id) : [],
+        customThumbnailId: useCustomMedia && selectedThumbnailId ? selectedThumbnailId : undefined
       };
 
       if (autoUploadEnabled) {
@@ -627,8 +637,16 @@ function Dashboard() {
               </div>
 
               {/* Input Mode Toggle */}
-              <div className="flex bg-[#0B0F1A] p-1 rounded-xl border border-[#1A2235]">
+              <div className="flex items-center space-x-2">
                 <button
+                  type="button"
+                  onClick={() => router.push('/media')}
+                  className="flex items-center px-4 py-1.5 rounded-lg text-sm font-bold bg-white/5 text-white hover:bg-white/10 border border-white/10 transition-colors mr-2 shadow-sm"
+                >
+                  Media Library
+                </button>
+                <div className="flex bg-[#0B0F1A] p-1 rounded-xl border border-[#1A2235]">
+                  <button
                   type="button"
                   onClick={() => setInputMode('prompt')}
                   className={cn(
@@ -648,6 +666,7 @@ function Dashboard() {
                 >
                   <List className="h-4 w-4 mr-2" /> Topic
                 </button>
+                </div>
               </div>
             </div>
 
@@ -788,6 +807,51 @@ function Dashboard() {
                   />
                 </div>
               </div>
+
+              {/* Custom Media Toggle */}
+              {mediaList.length > 0 && (
+                 <div className="p-4 bg-gradient-to-r from-[#FF4FD8]/10 to-[#7C5CFF]/10 rounded-xl border border-[#FF4FD8]/30">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                         <FileVideo className="h-5 w-5 text-[#FF4FD8] mr-3" />
+                         <div>
+                           <p className="text-sm font-bold text-white">Use Custom Media</p>
+                           <p className="text-xs text-slate-400">Inject your uploaded assets into the video generation.</p>
+                         </div>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" className="sr-only peer" checked={useCustomMedia} onChange={(e) => setUseCustomMedia(e.target.checked)} />
+                        <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FF4FD8]"></div>
+                      </label>
+                    </div>
+
+                    <AnimatePresence>
+                      {useCustomMedia && (
+                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="mt-4 pt-4 border-t border-[#FF4FD8]/20 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                             <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
+                                <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Content Assests</span>
+                                <p className="text-sm text-white font-medium">{mediaList.filter(m => m.type === 'video').length} Videos, {mediaList.filter(m => m.type === 'image').length} Images active.</p>
+                             </div>
+                             <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
+                                <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Custom Thumbnail</span>
+                                <select
+                                  value={selectedThumbnailId}
+                                  onChange={(e) => setSelectedThumbnailId(e.target.value)}
+                                  className="w-full bg-transparent text-sm text-white focus:outline-none cursor-pointer"
+                                >
+                                  <option value="" className="bg-[#111827]">Let AI Generate Thumbnail</option>
+                                  {mediaList.filter(m => m.type === 'thumbnail').map(thumb => (
+                                     <option key={thumb._id} value={thumb._id} className="bg-[#111827]">{thumb.originalName}</option>
+                                  ))}
+                                </select>
+                             </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                 </div>
+              )}
 
               {/* Call to Actions & Voices */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
