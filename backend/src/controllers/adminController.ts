@@ -378,7 +378,7 @@ export const getPlans = asyncHandler(async (req: Request, res: Response) => {
 export const updatePlan = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const Plan = require('../models/Plan').default;
-  const plan = await Plan.findByIdAndUpdate(id, req.body, { new: true, runValidators: true });
+  const plan = await Plan.findByIdAndUpdate(id, req.body, { returnDocument: 'after', runValidators: true });
 
   if (!plan) {
     throw new AppError('Plan not found', 404);

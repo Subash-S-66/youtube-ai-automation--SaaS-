@@ -1,12 +1,10 @@
 "use client";
 
 import { useEffect, useState, useRef, RefObject } from 'react';
-import { useRouter } from 'next/navigation';
-import { Users, CreditCard, DollarSign, RefreshCw, ChevronLeft, Search, Save, History as HistoryIcon, FileText, Bell, MonitorPlay, Trash2, Settings, CheckCircle } from 'lucide-react';
+import Link from 'next/link';
+import { Users, CreditCard, RefreshCw, Bell, MonitorPlay, Settings, CheckCircle, MessageSquare } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { adminService } from '../../services/adminService';
-import { authService } from '../../services/authService';
-import DashboardLayout from '../../components/layout/DashboardLayout';
 const AppModal = dynamic(() => import('../../components/ui/AppModal'), { ssr: false });
 import { AppModalType } from '../../components/ui/AppModal';
 import { cn } from '../../lib/utils';
@@ -34,29 +32,13 @@ interface UserSummary {
   subscriptionExpiresAt?: string;
 }
 
-interface UserDetails {
-  user: any;
-  jobs: any[];
-  prompts: any[];
-}
-
 export default function AdminDashboard() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(true);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [userPage, setUserPage] = useState(1);
   const [userTotalPages, setUserTotalPages] = useState(1);
   const [userSearch, setUserSearch] = useState('');
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [userDetails, setUserDetails] = useState<UserDetails | null>(null);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-
-  // Edit forms
-  const [editPlan, setEditPlan] = useState('free');
-  const [editExpiry, setEditExpiry] = useState('');
-  const [savingPlan, setSavingPlan] = useState(false);
 
   // Tools forms
   const [notifyTitle, setNotifyTitle] = useState('');
@@ -78,12 +60,20 @@ export default function AdminDashboard() {
   const [togglingBanner, setTogglingBanner] = useState(false);
   const bannerStartRef = useRef<HTMLInputElement | null>(null);
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
-  const editExpiryRef = useRef<HTMLInputElement | null>(null);
-
   const [betaMode, setBetaMode] = useState(false);
   const [updatingConfig, setUpdatingConfig] = useState(false);
-  const [planLimits, setPlanLimits] = useState({ free: 2, basic: 10, pro: 25, premium: 100 });
-  const [savingPlanLimits, setSavingPlanLimits] = useState(false);
+  const [planDrafts, setPlanDrafts] = useState<any[]>([]);
+  const [savingPlans, setSavingPlans] = useState(false);
+
+  const openPicker = (ref: RefObject<HTMLInputElement>) => {
+    if (!ref.current) return;
+    const input = ref.current as HTMLInputElement & { showPicker?: () => void };
+    if (typeof input.showPicker === 'function') {
+      input.showPicker();
+      return;
+    }
+    input.focus();
+  };
 
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
@@ -256,41 +246,6 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleSavePlanLimits = async () => {
-    setSavingPlanLimits(true);
-    try {
-      await adminService.updateSystemConfig({
-        betaMode,
-        planLimits: {
-          free: Number(planLimits.free),
-          basic: Number(planLimits.basic),
-          pro: Number(planLimits.pro),
-          premium: Number(planLimits.premium),
-        },
-      });
-      setModalConfig({
-        isOpen: true,
-        title: 'Success',
-        description: 'Plan limits updated successfully.',
-        type: 'success',
-        confirmText: 'OK',
-        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-      });
-    } catch (err) {
-      console.error(err);
-      setModalConfig({
-        isOpen: true,
-        title: 'Error',
-        description: 'Failed to update plan limits.',
-        type: 'error',
-        confirmText: 'Dismiss',
-        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-      });
-    } finally {
-      setSavingPlanLimits(false);
-    }
-  };
-
   const handleTogglePlan = (plan: string) => {
     if (notifyTargetPlans.includes(plan)) {
       setNotifyTargetPlans(notifyTargetPlans.filter(p => p !== plan));
@@ -299,30 +254,77 @@ export default function AdminDashboard() {
     }
   };
 
-  const handlePlanChange = async (planId: string, updates: any) => {
-      try {
-          const { planService } = await import('../../services/planService');
-          await planService.updatePlan(planId, updates);
+  const handlePlanChange = (planId: string, updates: any) => {
+    setPlanDrafts(prev => prev.map(p => p._id === planId ? { ...p, ...updates } : p));
+  };
 
-          setPlans(prev => prev.map(p => p._id === planId ? { ...p, ...updates } : p));
-          setModalConfig({
-              isOpen: true,
-              title: 'Plan Updated',
-              description: 'The plan configuration has been successfully updated.',
-              type: 'success',
-              confirmText: 'OK',
-              onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-          });
-      } catch (err: any) {
-          setModalConfig({
-              isOpen: true,
-              title: 'Error',
-              description: err.response?.data?.message || 'Failed to update plan',
-              type: 'error',
-              confirmText: 'OK',
-              onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-          });
+  const getPlanPayload = (plan: any) => ({
+    is_active: plan.is_active,
+    price: Number(plan.price),
+    priority_weight: Number(plan.priority_weight),
+    limits: {
+      max_channels: Number(plan.limits?.max_channels),
+      daily_upload_limit: Number(plan.limits?.daily_upload_limit),
+    },
+    features: {
+      voice_selection: !!plan.features?.voice_selection,
+      scheduling: !!plan.features?.scheduling,
+      multi_channel: !!plan.features?.multi_channel,
+      story_mode: !!plan.features?.story_mode,
+      cta: !!plan.features?.cta,
+      format_selection: !!plan.features?.format_selection,
+    },
+  });
+
+  const hasPlanChanges = () => {
+    if (!plans.length || !planDrafts.length) return false;
+    return planDrafts.some(draft => {
+      const original = plans.find(p => p._id === draft._id);
+      if (!original) return true;
+      return JSON.stringify(getPlanPayload(original)) !== JSON.stringify(getPlanPayload(draft));
+    });
+  };
+
+  const handleSavePlans = async () => {
+    setSavingPlans(true);
+    try {
+      const { planService } = await import('../../services/planService');
+      const updates = planDrafts
+        .map(draft => {
+          const original = plans.find(p => p._id === draft._id);
+          if (!original) return { id: draft._id, data: getPlanPayload(draft) };
+          const draftPayload = getPlanPayload(draft);
+          const originalPayload = getPlanPayload(original);
+          if (JSON.stringify(draftPayload) === JSON.stringify(originalPayload)) return null;
+          return { id: draft._id, data: draftPayload };
+        })
+        .filter(Boolean) as Array<{ id: string; data: any }>;
+
+      for (const update of updates) {
+        await planService.updatePlan(update.id, update.data);
       }
+
+      setPlans(planDrafts);
+      setModalConfig({
+        isOpen: true,
+        title: 'Plans Updated',
+        description: updates.length ? 'Plans configuration saved successfully.' : 'No changes to save.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update plans',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingPlans(false);
+    }
   };
 
 const handleDeleteUser = () => {
@@ -370,16 +372,8 @@ const handleDeleteUser = () => {
     let isMounted = true;
     const initAdmin = async () => {
       try {
-        const me = await authService.getMe();
-        if (!me?.data?.user || me.data.user.role !== 'admin') {
-          if (isMounted) router.replace('/dashboard');
-          return;
-        }
-
         if (!isMounted) return;
 
-        setCurrentUser({ ...me.data.user, plan: me.data.plan, displayPlan: me.data.displayPlan, isBetaMode: me.data.isBetaMode });
-        setLoading(false);
         setDashboardLoading(true);
 
         // Start loading the heavy API endpoints without blocking the initial UI completely
@@ -390,136 +384,60 @@ const handleDeleteUser = () => {
           adminService.getGlobalBanner(),
           import('../../services/planService').then(m => m.planService.getPlans()),
         ]).then((results) => {
-           if (!isMounted) return;
-           const [statsRes, usersRes, configRes, bannerRes, plansRes] = results;
+          if (!isMounted) return;
+          const [statsRes, usersRes, configRes, bannerRes, plansRes] = results;
 
-           if (statsRes.status === 'fulfilled' && statsRes.value?.success) setStats(statsRes.value.data);
-           if (usersRes.status === 'fulfilled' && usersRes.value?.success) {
-               setUsers(usersRes.value.data);
-               setUserTotalPages(usersRes.value.pagination?.pages || 1);
-           }
+          if (statsRes.status === 'fulfilled' && statsRes.value?.success) setStats(statsRes.value.data);
+          if (usersRes.status === 'fulfilled' && usersRes.value?.success) {
+            setUsers(usersRes.value.data);
+            setUserTotalPages(usersRes.value.pagination?.pages || 1);
+          }
 
-           if (configRes.status === 'fulfilled' && configRes.value?.success && configRes.value.data) {
-              setBetaMode(configRes.value.data.betaMode);
-              if (configRes.value.data.planLimits) {
-                setPlanLimits(configRes.value.data.planLimits);
-              }
-           }
+          if (configRes.status === 'fulfilled' && configRes.value?.success && configRes.value.data) {
+            setBetaMode(configRes.value.data.betaMode);
+          }
 
-           if (bannerRes.status === 'fulfilled' && bannerRes.value?.success && bannerRes.value.data) {
-             const bd = bannerRes.value.data;
-             setBannerMessage(bd.message || '');
-             setBannerActive(!!bd.isActive);
-             setBannerType(bd.type || 'info-blue');
-             setBannerStart(bd.startAt ? new Date(bd.startAt).toISOString().slice(0, 16) : '');
-             setBannerEnd(bd.endAt ? new Date(bd.endAt).toISOString().slice(0, 16) : '');
-           } else {
-             setBannerActive(false);
-           }
+          if (bannerRes.status === 'fulfilled' && bannerRes.value?.success && bannerRes.value.data) {
+            const bd = bannerRes.value.data;
+            setBannerMessage(bd.message || '');
+            setBannerActive(!!bd.isActive);
+            setBannerType(bd.type || 'info-blue');
+            setBannerStart(bd.startAt ? new Date(bd.startAt).toISOString().slice(0, 16) : '');
+            setBannerEnd(bd.endAt ? new Date(bd.endAt).toISOString().slice(0, 16) : '');
+          } else {
+            setBannerActive(false);
+          }
 
-           if (plansRes.status === 'fulfilled' && plansRes.value?.success) {
-               setPlans(plansRes.value.data);
-           }
-           setDashboardLoading(false);
+          if (plansRes.status === 'fulfilled' && plansRes.value?.success) {
+            setPlans(plansRes.value.data);
+            setPlanDrafts(plansRes.value.data);
+          }
+          setDashboardLoading(false);
         });
 
       } catch (error) {
         console.error("Admin init error", error);
-        if (isMounted) router.replace('/login');
       } finally {
         if (isMounted) {
-          setLoading(false);
           setDashboardLoading(false);
         }
       }
     };
     initAdmin();
-    return () => { isMounted = false; };
-  }, [router, userPage, userSearch]);
-
-  const handleUserSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setUserSearch(e.target.value);
-    setUserPage(1); // Reset to first page on new search
-  };
-
-  const loadUserDetails = async (id: string) => {
-    try {
-      setSelectedUserId(id);
-      setUserDetails(null);
-      const data = await adminService.getUserDetails(id);
-      setUserDetails(data.data);
-      setEditPlan(data.data.user.plan);
-      if (data.data.user.subscriptionExpiresAt) {
-        setEditExpiry(new Date(data.data.user.subscriptionExpiresAt).toISOString().split('T')[0]);
-      } else {
-        setEditExpiry('');
-      }
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const handleUpdatePlan = async () => {
-    if (!selectedUserId) return;
-    setSavingPlan(true);
-    try {
-      await adminService.updateUserPlan(selectedUserId, {
-        plan: editPlan,
-        subscriptionExpiresAt: editExpiry ? new Date(editExpiry).toISOString() : null,
-      });
-      // Refresh user details
-      await loadUserDetails(selectedUserId);
-      // Refresh list
-      const usersData = await adminService.getUsers();
-      setUsers(usersData.data);
-    } catch (err) {
-      console.error(err);
-      alert('Failed to update plan.');
-    } finally {
-      setSavingPlan(false);
-    }
-  };
-
-  const openPicker = (ref: RefObject<HTMLInputElement>) => {
-    const el = ref.current;
-    if (!el) return;
-    if (typeof (el as any).showPicker === 'function') {
-      (el as any).showPicker();
-    } else {
-      el.focus();
-    }
-  };
-
-if (loading) {
-    return (
-      <DashboardLayout user={currentUser}>
-        <div className="space-y-6">
-          <div className="flex items-center space-x-3 text-slate-400 text-sm">
-            <RefreshCw className="h-4 w-4 animate-spin text-[#7C5CFF]" />
-            <span>Loading admin panel...</span>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="h-56 bg-[#111827] border border-[#1A2235] rounded-2xl" />
-            <div className="h-56 bg-[#111827] border border-[#1A2235] rounded-2xl" />
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  if (!currentUser || currentUser.role !== 'admin') {
-    return null; // Prevents render while redirecting
-  }
+    return () => {
+      isMounted = false;
+    };
+  }, [userPage, userSearch]);
 
   return (
-    <DashboardLayout user={currentUser}>
+    <>
       <div className="max-w-7xl mx-auto py-8">
-        {!selectedUserId ? (
-          <div className="space-y-8">
-            <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Admin Panel</h1>
+        <div className="space-y-8">
+          <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Admin Panel</h1>
 
-            {/* Control Tools */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Control Tools */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-6">
               {/* Notification Sender */}
               <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
                 <div className="flex items-center mb-6">
@@ -549,7 +467,7 @@ if (loading) {
                     <p className="text-xs text-slate-400 mb-2">Target Plans</p>
                     <div className="flex gap-2 flex-wrap">
                       {['free', 'basic', 'pro', 'premium'].map(plan => (
-                        <button key={plan} type="button" onClick={() => handleTogglePlan(plan)} className={cn("px-3 py-1 text-xs font-bold rounded-full border transition-colors", notifyTargetPlans.includes(plan) ? "bg-[#7C5CFF]/20 text-[#7C5CFF] border-[#7C5CFF]/50" : "bg-transparent text-slate-400 border-[#1A2235] hover:border-slate-500")}>
+                        <button key={plan} type="button" onClick={() => handleTogglePlan(plan)} className={cn("px-3 py-1 text-xs font-bold rounded-full border transition-colors", notifyTargetPlans.includes(plan) ? "bg-[#7C5CFF]/20 text-[#7C5CFF] border-[#7C5CFF]/50" : "bg-transparent text-slate-400 border-[#1A2235] hover:border-slate-500")}> 
                           {plan.toUpperCase()}
                         </button>
                       ))}
@@ -565,70 +483,7 @@ if (loading) {
                 </form>
               </div>
 
-              {/* Dynamic Plans Control */}
-              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center">
-                    <Settings className="h-5 w-5 text-[#7C5CFF] mr-2" />
-                    <h2 className="text-xl font-bold text-white">Plans Configuration</h2>
-                  </div>
-                </div>
-                <div className="space-y-4">
-                  {plans.map(plan => (
-                    <div key={plan._id} className="bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-4">
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-bold text-white capitalize">{plan.name}</h3>
-                        <label className="flex items-center cursor-pointer">
-                          <span className="mr-2 text-xs text-slate-400">Active</span>
-                          <div className="relative inline-flex items-center">
-                            <input type="checkbox" className="sr-only peer" checked={plan.is_active} onChange={(e) => handlePlanChange(plan._id, { is_active: e.target.checked })} />
-                            <div className="w-9 h-5 bg-[#1A2235] rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
-                          </div>
-                        </label>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                           <label className="text-xs text-slate-400 block mb-1">Price</label>
-                           <input type="number" value={plan.price} onChange={(e) => handlePlanChange(plan._id, { price: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
-                        </div>
-                        <div>
-                           <label className="text-xs text-slate-400 block mb-1">Priority Weight</label>
-                           <input type="number" value={plan.priority_weight} onChange={(e) => handlePlanChange(plan._id, { priority_weight: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                           <label className="text-xs text-slate-400 block mb-1">Max Channels</label>
-                           <input type="number" value={plan.limits?.max_channels} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_channels: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
-                        </div>
-                        <div>
-                           <label className="text-xs text-slate-400 block mb-1">Daily Uploads</label>
-                           <input type="number" value={plan.limits?.daily_upload_limit} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, daily_upload_limit: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="flex items-center cursor-pointer">
-                          <input type="checkbox" checked={plan.features?.voice_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, voice_selection: e.target.checked }})} className="mr-2" />
-                          <span className="text-xs text-slate-300">Voice Selection</span>
-                        </label>
-                        <label className="flex items-center cursor-pointer">
-                          <input type="checkbox" checked={plan.features?.scheduling} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, scheduling: e.target.checked }})} className="mr-2" />
-                          <span className="text-xs text-slate-300">Scheduling</span>
-                        </label>
-                        <label className="flex items-center cursor-pointer">
-                          <input type="checkbox" checked={plan.features?.multi_channel} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, multi_channel: e.target.checked }})} className="mr-2" />
-                          <span className="text-xs text-slate-300">Multi Channel</span>
-                        </label>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Banner Control */}
+              {/* Global Banner */}
               <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
                 <div className="flex items-center mb-6">
                   <MonitorPlay className="h-5 w-5 text-[#00D4FF] mr-2" />
@@ -652,24 +507,12 @@ if (loading) {
                       <option value="critical-rose">Critical (Rose)</option>
                     </select>
                   </div>
-                  <div className="flex gap-4">
+                  <div className="flex flex-col sm:flex-row gap-4">
                     <div className="flex-1">
                       <label htmlFor="banner-start" className="block text-xs text-slate-400 mb-1">Start At (Optional)</label>
                       <div className="relative">
-                        <input
-                          id="banner-start"
-                          ref={bannerStartRef}
-                          type="datetime-local"
-                          value={bannerStart}
-                          onChange={(e) => setBannerStart(e.target.value)}
-                          className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]"
-                        />
-                        <button
-                          type="button"
-                          aria-label="Open start date picker"
-                          onClick={() => openPicker(bannerStartRef)}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
-                        >
+                        <input id="banner-start" ref={bannerStartRef} type="datetime-local" value={bannerStart} onChange={(e) => setBannerStart(e.target.value)} className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                        <button type="button" aria-label="Open start date picker" onClick={() => openPicker(bannerStartRef)} className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                             <line x1="16" y1="2" x2="16" y2="6" />
@@ -682,20 +525,8 @@ if (loading) {
                     <div className="flex-1">
                       <label htmlFor="banner-end" className="block text-xs text-slate-400 mb-1">End At (Optional)</label>
                       <div className="relative">
-                        <input
-                          id="banner-end"
-                          ref={bannerEndRef}
-                          type="datetime-local"
-                          value={bannerEnd}
-                          onChange={(e) => setBannerEnd(e.target.value)}
-                          className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]"
-                        />
-                        <button
-                          type="button"
-                          aria-label="Open end date picker"
-                          onClick={() => openPicker(bannerEndRef)}
-                          className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
-                        >
+                        <input id="banner-end" ref={bannerEndRef} type="datetime-local" value={bannerEnd} onChange={(e) => setBannerEnd(e.target.value)} className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                        <button type="button" aria-label="Open end date picker" onClick={() => openPicker(bannerEndRef)} className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
                             <line x1="16" y1="2" x2="16" y2="6" />
@@ -712,14 +543,7 @@ if (loading) {
                       <p className="text-xs text-slate-400">Turn on/off the global banner</p>
                     </div>
                     <span className="relative inline-flex items-center">
-                    <input
-                      id="banner-active"
-                      type="checkbox"
-                      className="sr-only peer"
-                      checked={bannerActive}
-                      disabled={togglingBanner || bannering}
-                      onChange={(e) => handleBannerActiveToggle(e.target.checked)}
-                    />
+                    <input id="banner-active" type="checkbox" className="sr-only peer" checked={bannerActive} disabled={togglingBanner || bannering} onChange={(e) => handleBannerActiveToggle(e.target.checked)} />
                       <span className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></span>
                     </span>
                   </label>
@@ -730,7 +554,7 @@ if (loading) {
               </div>
 
               {/* System Config (Beta Mode) */}
-              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl lg:col-span-2">
+              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
                 <div className="flex items-center mb-6">
                   <Settings className="h-5 w-5 text-slate-300 mr-2" />
                   <h2 className="text-xl font-bold text-white">System Config</h2>
@@ -738,253 +562,142 @@ if (loading) {
                 <div className="p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between">
                   <div>
                     <p className="text-white font-bold">Beta Mode</p>
-                    <p className="text-sm text-slate-400">When enabled, all free users temporarily receive &quot;Basic&quot; plan limits. Does not modify their database record.</p>
+                    <p className="text-sm text-slate-400">When enabled, all free users temporarily receive "Basic" plan limits. Does not modify their database record.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
                     <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
-
-                <div className="mt-6 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <p className="text-white font-bold">Plan Limits (Daily Uploads)</p>
-                      <p className="text-sm text-slate-400">Control upload limits for each plan globally.</p>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {(['free', 'basic', 'pro', 'premium'] as const).map((plan) => (
-                      <div key={plan}>
-                        <label className="block text-xs text-slate-400 mb-1 capitalize">{plan}</label>
-                        <input
-                          type="number"
-                          min={1}
-                          value={(planLimits as any)[plan]}
-                          onChange={(e) => setPlanLimits(prev => ({ ...prev, [plan]: Number(e.target.value) }))}
-                          className="w-full bg-[#111827] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleSavePlanLimits}
-                    disabled={savingPlanLimits}
-                    className="mt-4 w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center"
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Link
+                    href="/admin/users"
+                    className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
                   >
-                    {savingPlanLimits ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Plan Limits'}
-                  </button>
+                    <Users className="h-4 w-4 text-[#00D4FF]" />
+                    Users Directory
+                  </Link>
+                  <Link
+                    href="/admin/tickets"
+                    className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
+                  >
+                    <MessageSquare className="h-4 w-4 text-[#00D4FF]" />
+                    Support Tickets
+                  </Link>
                 </div>
               </div>
             </div>
 
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
-                <div className="p-4 rounded-xl bg-[#7C5CFF]/10 text-[#7C5CFF] mr-4"><Users className="h-6 w-6" /></div>
-                <div><p className="text-slate-400 text-sm font-medium">Total Users</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.totalUsers || 0)}</p></div>
-              </div>
-              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
-                <div className="p-4 rounded-xl bg-[#00D4FF]/10 text-[#00D4FF] mr-4"><CreditCard className="h-6 w-6" /></div>
-                <div><p className="text-slate-400 text-sm font-medium">Active Subscriptions</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.totalActiveSubscriptions || 0)}</p></div>
-              </div>
-              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
-                <div className="p-4 rounded-xl bg-green-500/10 text-green-500 mr-4"><CheckCircle className="h-6 w-6" /></div>
-                <div><p className="text-slate-400 text-sm font-medium">Success Rate</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.jobs?.successRate || '0%')}</p></div>
-              </div>
-            </div>
-
-            {/* Users Table */}
-            <div className="bg-[#111827] border border-[#1A2235] rounded-2xl shadow-xl overflow-hidden">
-              <div className="p-6 border-b border-[#1A2235] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <h2 className="text-xl font-bold text-white">Users Directory</h2>
-                <div className="relative w-full sm:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Search users..."
-                    value={userSearch}
-                    onChange={handleUserSearchChange}
-                    className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl pl-9 pr-4 py-2 text-sm text-slate-200 focus:outline-none focus:border-[#7C5CFF] transition-colors"
-                  />
+            {/* Dynamic Plans Control */}
+            <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center">
+                  <Settings className="h-5 w-5 text-[#7C5CFF] mr-2" />
+                  <h2 className="text-xl font-bold text-white">Plans Configuration</h2>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleSavePlans}
+                  disabled={savingPlans || !hasPlanChanges()}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-[#7C5CFF] text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {savingPlans ? 'Saving...' : 'Save Changes'}
+                </button>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="bg-[#0B0F1A] text-slate-400 text-xs uppercase tracking-wider">
-                      <th className="p-4 font-medium">Email</th>
-                      <th className="p-4 font-medium">Plan</th>
-                      <th className="p-4 font-medium hidden sm:table-cell">Usage (Today)</th>
-                      <th className="p-4 font-medium hidden sm:table-cell">On Hold</th>
-                      <th className="p-4 font-medium hidden md:table-cell">Expiry</th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-sm divide-y divide-[#1A2235]">
-                    {users.map(u => (
-                      <tr key={u._id} onClick={() => loadUserDetails(u._id)} className="hover:bg-[#1A2235]/50 cursor-pointer transition-colors group">
-                        <td className="p-4 font-medium text-slate-200 group-hover:text-white transition-colors">{u.email}</td>
-                        <td className="p-4">
-                          <span className={cn("px-2.5 py-1 text-xs font-bold rounded-lg border", u.plan === 'free' ? "bg-slate-500/10 text-slate-300 border-slate-500/20" : "bg-[#7C5CFF]/10 text-[#7C5CFF] border-[#7C5CFF]/20")}>{u.plan.toUpperCase()}</span>
-                        </td>
-                        <td className="p-4 text-slate-400 hidden sm:table-cell">{u.uploadsUsedToday}</td>
-                        <td className="p-4 text-slate-400 hidden sm:table-cell">{u.uploadsOnHold}</td>
-                        <td className="p-4 text-slate-400 hidden md:table-cell">{u.subscriptionExpiresAt ? new Date(u.subscriptionExpiresAt).toLocaleDateString() : 'N/A'}</td>
-                      </tr>
-                    ))}
-                    {dashboardLoading && (
-                      <tr><td colSpan={5} className="p-8 text-center text-slate-500">Loading users...</td></tr>
-                    )}
-                    {!dashboardLoading && users.length === 0 && (
-                      <tr><td colSpan={5} className="p-8 text-center text-slate-500">No users found.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {!dashboardLoading && userTotalPages > 1 && (
-                <div className="p-4 border-t border-[#1A2235] flex items-center justify-between bg-[#0B0F1A]">
-                  <button
-                    onClick={() => setUserPage(p => Math.max(1, p - 1))}
-                    disabled={userPage === 1}
-                    className="px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
-                  >
-                    Previous
-                  </button>
-                  <span className="text-sm text-slate-400">
-                    Page {userPage} of {userTotalPages}
-                  </span>
-                  <button
-                    onClick={() => setUserPage(p => Math.min(userTotalPages, p + 1))}
-                    disabled={userPage === userTotalPages}
-                    className="px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <button onClick={() => setSelectedUserId(null)} className="flex items-center text-slate-400 hover:text-white transition-colors text-sm font-medium">
-              <ChevronLeft className="h-4 w-4 mr-1" /> Back to Directory
-            </button>
-
-            {!userDetails ? (
-              <div className="p-12 flex justify-center"><RefreshCw className="h-6 w-6 animate-spin text-slate-500" /></div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-                {/* Control Panel */}
-                <div className="lg:col-span-1 space-y-6">
-                  <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
-                    <h3 className="text-lg font-bold text-white mb-6">User Management</h3>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Email</label>
-                        <div className="text-white bg-[#0B0F1A] px-3 py-2 rounded-lg border border-[#1A2235]">{userDetails.user.email}</div>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Plan</label>
-                        <select value={editPlan} onChange={(e) => setEditPlan(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none">
-                          <option value="free">Free</option>
-                          <option value="basic">Basic</option>
-                          <option value="pro">Pro</option>
-                          <option value="premium">Premium</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Expiry Date</label>
-                        <div className="relative">
-                          <input
-                            ref={editExpiryRef}
-                            type="date"
-                            value={editExpiry}
-                            onChange={(e) => setEditExpiry(e.target.value)}
-                            className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none [color-scheme:dark]"
-                          />
-                          <button
-                            type="button"
-                            aria-label="Open expiry date picker"
-                            onClick={() => openPicker(editExpiryRef)}
-                            className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                              <line x1="16" y1="2" x2="16" y2="6" />
-                              <line x1="8" y1="2" x2="8" y2="6" />
-                              <line x1="3" y1="10" x2="21" y2="10" />
-                            </svg>
-                          </button>
+              <div className="space-y-4">
+                {planDrafts.map(plan => (
+                  <div key={plan._id} className="bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-bold text-white capitalize">{plan.name}</h3>
+                      <label className="flex items-center cursor-pointer">
+                        <span className="mr-2 text-xs text-slate-400">Active</span>
+                        <div className="relative inline-flex items-center">
+                          <input type="checkbox" className="sr-only peer" checked={plan.is_active} onChange={(e) => handlePlanChange(plan._id, { is_active: e.target.checked })} />
+                          <div className="w-9 h-5 bg-[#1A2235] rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                         </div>
+                      </label>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Price</label>
+                        <input type="number" value={plan.price} onChange={(e) => handlePlanChange(plan._id, { price: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                       </div>
-                      <button onClick={handleUpdatePlan} disabled={savingPlan} className="w-full flex justify-center items-center py-2.5 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors">
-                        {savingPlan ? <RefreshCw className="h-4 w-4 animate-spin" /> : <><Save className="h-4 w-4 mr-2" /> Save Changes</>}
-                      </button>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Priority Weight</label>
+                        <input type="number" value={plan.priority_weight} onChange={(e) => handlePlanChange(plan._id, { priority_weight: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Max Channels</label>
+                        <input type="number" value={plan.limits?.max_channels} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_channels: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Daily Uploads</label>
+                        <input type="number" value={plan.limits?.daily_upload_limit} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, daily_upload_limit: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <label className="flex items-center cursor-pointer">
+                        <input type="checkbox" checked={plan.features?.voice_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, voice_selection: e.target.checked }})} className="mr-2" />
+                        <span className="text-xs text-slate-300">Voice Selection</span>
+                      </label>
+                      <label className="flex items-center cursor-pointer">
+                        <input type="checkbox" checked={plan.features?.scheduling} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, scheduling: e.target.checked }})} className="mr-2" />
+                        <span className="text-xs text-slate-300">Scheduling</span>
+                      </label>
+                      <label className="flex items-center cursor-pointer">
+                        <input type="checkbox" checked={plan.features?.multi_channel} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, multi_channel: e.target.checked }})} className="mr-2" />
+                        <span className="text-xs text-slate-300">Multi Channel</span>
+                      </label>
+                      <label className="flex items-center cursor-pointer">
+                        <input type="checkbox" checked={plan.features?.story_mode} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, story_mode: e.target.checked }})} className="mr-2" />
+                        <span className="text-xs text-slate-300">Story Mode</span>
+                      </label>
+                      <label className="flex items-center cursor-pointer">
+                        <input type="checkbox" checked={plan.features?.cta} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, cta: e.target.checked }})} className="mr-2" />
+                        <span className="text-xs text-slate-300">Ending CTA</span>
+                      </label>
+                      <label className="flex items-center cursor-pointer">
+                        <input type="checkbox" checked={plan.features?.format_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, format_selection: e.target.checked }})} className="mr-2" />
+                        <span className="text-xs text-slate-300">Format Selection</span>
+                      </label>
                     </div>
                   </div>
-
-                  <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
-                     <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Current Usage</h3>
-                     <div className="space-y-2 text-sm text-slate-300">
-                        <div className="flex justify-between"><span>Used Today:</span> <span className="text-white font-medium">{userDetails.user.uploadsUsedToday}</span></div>
-                        <div className="flex justify-between"><span>On Hold:</span> <span className="text-white font-medium">{userDetails.user.uploadsOnHold}</span></div>
-                        <div className="flex justify-between"><span>Verified:</span> <span className={userDetails.user.isEmailVerified ? 'text-green-400' : 'text-red-400'}>{userDetails.user.isEmailVerified ? 'Yes' : 'No'}</span></div>
-                        <div className="flex justify-between"><span>YouTube:</span> <span className={userDetails.user.isYoutubeConnected ? 'text-[#00D4FF]' : 'text-slate-500'}>{userDetails.user.isYoutubeConnected ? 'Connected' : 'Disconnected'}</span></div>
-                     </div>
-                  </div>
-
-                  <div className="pt-4">
-                    <button onClick={handleDeleteUser} className="w-full flex justify-center items-center py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 font-bold rounded-lg transition-colors">
-                      <Trash2 className="h-4 w-4 mr-2" /> Delete Account
-                    </button>
-                  </div>
-                </div>
-
-                {/* History & Logs */}
-                <div className="lg:col-span-2 space-y-6">
-                  {/* Jobs */}
-                  <div className="bg-[#111827] border border-[#1A2235] rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[400px]">
-                     <div className="p-4 border-b border-[#1A2235] bg-[#0B0F1A] flex items-center">
-                       <HistoryIcon className="h-5 w-5 mr-2 text-[#7C5CFF]" />
-                       <h3 className="text-md font-bold text-white">Upload History (Jobs)</h3>
-                     </div>
-                     <div className="overflow-y-auto flex-1 p-4 space-y-3">
-                       {userDetails.jobs.length === 0 ? <p className="text-slate-500 text-sm">No jobs found.</p> : userDetails.jobs.map(job => (
-                         <div key={job._id} className="p-3 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex justify-between items-start">
-                           <div>
-                             <p className="text-xs text-slate-400 mb-1">{new Date(job.createdAt).toLocaleString()}</p>
-                             <span className={cn("text-[10px] uppercase px-2 py-0.5 rounded font-bold tracking-wider", job.status === 'success' ? 'bg-green-500/10 text-green-400' : job.status === 'failed' ? 'bg-red-500/10 text-red-400' : job.status === 'running' ? 'bg-[#00D4FF]/10 text-[#00D4FF]' : 'bg-slate-500/10 text-slate-400')}>{job.status}</span>
-                           </div>
-                           <div className="text-xs text-slate-500 max-w-[200px] truncate" title={job._id}>ID: {job._id}</div>
-                         </div>
-                       ))}
-                     </div>
-                  </div>
-
-                  {/* Prompts */}
-                  <div className="bg-[#111827] border border-[#1A2235] rounded-2xl shadow-xl overflow-hidden flex flex-col max-h-[400px]">
-                     <div className="p-4 border-b border-[#1A2235] bg-[#0B0F1A] flex items-center">
-                       <FileText className="h-5 w-5 mr-2 text-[#00D4FF]" />
-                       <h3 className="text-md font-bold text-white">Prompts History</h3>
-                     </div>
-                     <div className="overflow-y-auto flex-1 p-4 space-y-3">
-                       {userDetails.prompts.length === 0 ? <p className="text-slate-500 text-sm">No prompts found.</p> : userDetails.prompts.map(prompt => (
-                         <div key={prompt._id} className="p-3 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
-                           <p className="text-sm text-slate-200 line-clamp-2">{prompt.title || 'Untitled Prompt'}</p>
-                           <p className="text-xs text-slate-500 mt-1">{new Date(prompt.createdAt).toLocaleString()}</p>
-                         </div>
-                       ))}
-                     </div>
-                  </div>
-                </div>
-
+                ))}
               </div>
-            )}
+              <button
+                type="button"
+                onClick={handleSavePlans}
+                disabled={savingPlans || !hasPlanChanges()}
+                className="mt-4 w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {savingPlans ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Plan Changes'}
+              </button>
+            </div>
+
           </div>
-        )}
+
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
+              <div className="p-4 rounded-xl bg-[#7C5CFF]/10 text-[#7C5CFF] mr-4"><Users className="h-6 w-6" /></div>
+              <div><p className="text-slate-400 text-sm font-medium">Total Users</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.totalUsers || 0)}</p></div>
+            </div>
+            <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
+              <div className="p-4 rounded-xl bg-[#00D4FF]/10 text-[#00D4FF] mr-4"><CreditCard className="h-6 w-6" /></div>
+              <div><p className="text-slate-400 text-sm font-medium">Active Subscriptions</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.totalActiveSubscriptions || 0)}</p></div>
+            </div>
+            <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
+              <div className="p-4 rounded-xl bg-green-500/10 text-green-500 mr-4"><CheckCircle className="h-6 w-6" /></div>
+              <div><p className="text-slate-400 text-sm font-medium">Success Rate</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.jobs?.successRate || '0%')}</p></div>
+            </div>
+          </div>
+
+        </div>
       </div>
       <AppModal
         isOpen={modalConfig.isOpen}
@@ -996,6 +709,6 @@ if (loading) {
         confirmText={modalConfig.confirmText}
         cancelText={modalConfig.cancelText}
       />
-    </DashboardLayout>
+    </>
   );
 }

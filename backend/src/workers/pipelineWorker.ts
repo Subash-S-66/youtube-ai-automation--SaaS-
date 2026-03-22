@@ -305,7 +305,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                                currentPart: nextPart
                            }
                        },
-                       { upsert: true, new: true }
+                       { upsert: true, returnDocument: 'after' }
                    );
                    console.log(`Story ${settings.storyId} progressed to part ${nextPart} for user ${userId}`);
                 } catch (err) {

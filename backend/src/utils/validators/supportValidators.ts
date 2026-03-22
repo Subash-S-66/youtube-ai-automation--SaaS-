@@ -12,3 +12,14 @@ export const createSupportTicketSchema = z.object({
 });
 
 export type CreateSupportTicketInput = z.infer<typeof createSupportTicketSchema>['body'];
+
+export const replySupportTicketSchema = z.object({
+  body: z.object({
+    message: z.string({
+      required_error: 'Message is required',
+    } as any).min(3, 'Reply must be at least 3 characters long').max(2000, 'Reply is too long'),
+    closeTicket: z.boolean().optional(),
+  }),
+});
+
+export type ReplySupportTicketInput = z.infer<typeof replySupportTicketSchema>['body'];

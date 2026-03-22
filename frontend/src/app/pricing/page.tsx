@@ -96,11 +96,11 @@ export default function PricingPage() {
     );
   }
 
-  const currentPlanId = user?.plan || 'free';
+  const currentPlanId = user?.isBetaMode ? 'free' : (user?.plan || 'free');
 
   return (
     <DashboardLayout user={user}>
-      <div className="max-w-6xl mx-auto py-12 px-4 sm:px-6">
+      <div className="max-w-none mx-auto py-12 px-6 sm:px-10 lg:px-16 xl:px-24 2xl:px-32">
 
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-16">
@@ -129,7 +129,7 @@ export default function PricingPage() {
         )}
 
         {/* Pricing Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-8">
           {PLANS.map((plan, index) => {
             const isCurrentPlan = currentPlanId === plan.id;
 

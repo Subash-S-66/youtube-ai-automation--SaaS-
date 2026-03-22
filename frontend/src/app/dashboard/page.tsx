@@ -193,34 +193,64 @@ function Dashboard() {
   }, [user]);
 
   const currentPlan = ((user?.plan || user?.user?.plan || 'free') as string).toLowerCase();
+  const planFeatures = (user?.planFeatures || {}) as {
+    voice_selection?: boolean;
+    scheduling?: boolean;
+    multi_channel?: boolean;
+    story_mode?: boolean;
+    cta?: boolean;
+    format_selection?: boolean;
+  };
   const isFreeUser = currentPlan === 'free';
-  const effectiveStoryMode = !isFreeUser && storyMode;
+  const isPaidPlan = !isFreeUser;
+  const canUseVoiceSelection = planFeatures.voice_selection ?? isPaidPlan;
+  const canUseScheduling = planFeatures.scheduling ?? isPaidPlan;
+  const canUseMultiChannel = planFeatures.multi_channel ?? isPaidPlan;
+  const canUseStoryMode = planFeatures.story_mode ?? isPaidPlan;
+  const canUseCta = planFeatures.cta ?? isPaidPlan;
+  const canUseFormatSelection = planFeatures.format_selection ?? isPaidPlan;
+  const effectiveStoryMode = canUseStoryMode && storyMode;
 
   useEffect(() => {
-    if (isFreeUser && storyMode) {
+    if (!canUseStoryMode && storyMode) {
       setStoryMode(false);
     }
-    if (isFreeUser && recapEnabled) {
+    if (!canUseStoryMode && recapEnabled) {
       setRecapEnabled(false);
     }
-    if (isFreeUser && autoUploadEnabled) {
+    if (!canUseScheduling && autoUploadEnabled) {
       setAutoUploadEnabled(false);
     }
-  }, [isFreeUser, storyMode, recapEnabled, autoUploadEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
+  }, [canUseStoryMode, canUseScheduling, storyMode, recapEnabled, autoUploadEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
 
   const handleConnectYouTube = () => window.location.href = youtubeService.getAuthUrl();
   const handleUpgrade = async () => {
-    try {
-      const response = await paymentService.createCheckoutSession();
-      if (response.success && response.url) {
-        window.location.href = response.url;
-      }
-    } catch (err: any) {
-      setMessage({ text: err.response?.data?.message || 'Failed to start checkout', type: 'error' });
-    }
+    router.push('/pricing');
+  };
+
+  const showUpgradeModal = (featureLabel?: string) => {
+    setModalConfig({
+      isOpen: true,
+      title: 'Upgrade Required',
+      description: featureLabel
+        ? `${featureLabel} is not included in your plan. Upgrade your plan to use this feature.`
+        : 'This privilege is not included in your plan. Upgrade your plan to use this feature.',
+      type: 'warning',
+      confirmText: 'Upgrade',
+      cancelText: 'Dismiss',
+      onConfirm: () => {
+        setModalConfig(prev => ({ ...prev, isOpen: false }));
+        router.push('/pricing');
+      },
+      onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+    });
   };
 
   const handleVoiceToggle = (vid: string) => {
+    if (!canUseVoiceSelection) {
+      showUpgradeModal('Voice selection');
+      return;
+    }
     if (randomVoice) setRandomVoice(false);
     setSelectedVoices(prev =>
       prev.includes(vid) ? prev.filter(id => id !== vid) : [...prev, vid]
@@ -398,17 +428,8 @@ function Dashboard() {
   };
 
   const handleStoryModeToggle = () => {
-    if (isFreeUser) {
-      setModalConfig({
-        isOpen: true,
-        title: 'Upgrade Required',
-        description: 'Story Mode is only available on Basic, Pro, and Premium plans. Upgrade to unlock this feature.',
-        type: 'warning',
-        confirmText: 'Upgrade Now',
-        cancelText: 'Dismiss',
-        onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
-        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-      });
+    if (!canUseStoryMode) {
+      showUpgradeModal('Story Mode');
       return;
     }
     setStoryMode(!storyMode);
@@ -439,17 +460,8 @@ function Dashboard() {
       };
 
       if (autoUploadEnabled) {
-        if (isFreeUser) {
-          setModalConfig({
-            isOpen: true,
-            title: 'Upgrade Required',
-            description: 'Auto-upload scheduling is only available on paid plans.',
-            type: 'warning',
-            confirmText: 'Upgrade Now',
-            cancelText: 'Dismiss',
-            onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
-            onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-          });
+        if (!canUseScheduling) {
+          showUpgradeModal('Auto-upload scheduling');
           return;
         }
 
@@ -473,6 +485,10 @@ function Dashboard() {
         });
         setMessage({ text: 'Auto-upload schedule created successfully!', type: 'success' });
       } else if (scheduleEnabled && scheduleDatetime) {
+        if (!canUseScheduling) {
+          showUpgradeModal('Scheduling');
+          return;
+        }
         const { scheduleService } = require('../../services/scheduleService');
         await scheduleService.createSchedule({
           channelId: selectedChannelId,
@@ -701,7 +717,9 @@ function Dashboard() {
                   </label>
                 </div>
                 {isFreeUser && (
-                  <p className="text-xs text-slate-500 mb-2">Story Mode is available on Basic, Pro, and Premium plans.</p>
+                  <p className="text-xs text-slate-500 mb-2">
+                    {canUseStoryMode ? 'Story Mode is available on your plan.' : 'Story Mode is not included in your plan.'}
+                  </p>
                 )}
 
                 <AnimatePresence>
@@ -744,7 +762,13 @@ function Dashboard() {
                   <select
                     className="w-full bg-transparent text-slate-300 text-sm focus:outline-none cursor-pointer"
                     value={contentType}
-                    onChange={(e) => setContentType(e.target.value as any)}
+                    onChange={(e) => {
+                      if (!canUseFormatSelection) {
+                        showUpgradeModal('Format changes');
+                        return;
+                      }
+                      setContentType(e.target.value as any);
+                    }}
                   >
                     <option value="clips" className="bg-[#111827]">Clips</option>
                     <option value="images" className="bg-[#111827]">Images</option>
@@ -798,34 +822,32 @@ function Dashboard() {
                       {ctaEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                     </div>
                     <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
-                    <input type="checkbox" className="hidden" checked={ctaEnabled} onChange={() => setCtaEnabled(!ctaEnabled)} />
+                    <input
+                      type="checkbox"
+                      className="hidden"
+                      checked={ctaEnabled}
+                      onChange={() => {
+                        if (!canUseCta) {
+                          showUpgradeModal('Ending CTA');
+                          return;
+                        }
+                        setCtaEnabled(!ctaEnabled);
+                      }}
+                    />
                   </label>
 
                   <div className="mt-4 pt-4 border-t border-[#1A2235]">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Schedule this video</span>
-                      <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                      <label className={cn("relative inline-flex items-center", !canUseScheduling ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
                         <input
                           type="checkbox"
                           className="sr-only peer"
                           checked={scheduleEnabled}
                           onChange={(e) => {
-                            if (isFreeUser) {
-                              setModalConfig({
-                                isOpen: true,
-                                title: 'Upgrade Required',
-                                description: 'Scheduling is only available on paid plans.',
-                                type: 'warning',
-                                confirmText: 'Upgrade Now',
-                                cancelText: 'Dismiss',
-                                onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
-                                onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-                              });
-                              return;
-                            }
+                            if (!canUseScheduling) { showUpgradeModal('Scheduling'); return; }
                             setScheduleEnabled(e.target.checked);
                           }}
-                          disabled={isFreeUser}
                         />
                         <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
                       </label>
@@ -876,28 +898,15 @@ function Dashboard() {
                   <div className="mt-4 pt-4 border-t border-[#1A2235]">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Auto Upload Schedule</span>
-                      <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                      <label className={cn("relative inline-flex items-center", !canUseScheduling ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
                         <input
                           type="checkbox"
                           className="sr-only peer"
                           checked={autoUploadEnabled}
                           onChange={(e) => {
-                            if (isFreeUser) {
-                              setModalConfig({
-                                isOpen: true,
-                                title: 'Upgrade Required',
-                                description: 'Auto-upload scheduling is only available on paid plans.',
-                                type: 'warning',
-                                confirmText: 'Upgrade Now',
-                                cancelText: 'Dismiss',
-                                onConfirm: () => { router.push('/pricing'); setModalConfig(prev => ({ ...prev, isOpen: false })); },
-                                onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
-                              });
-                              return;
-                            }
+                            if (!canUseScheduling) { showUpgradeModal('Auto-upload scheduling'); return; }
                             setAutoUploadEnabled(e.target.checked);
                           }}
-                          disabled={isFreeUser}
                         />
                         <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
                       </label>
@@ -948,10 +957,19 @@ function Dashboard() {
                         {randomVoice && <div className="w-1.5 h-1.5 bg-[#0B0F1A] rounded-sm" />}
                       </div>
                       <span className="text-xs text-slate-400 group-hover:text-white">Random</span>
-                      <input type="checkbox" className="hidden" checked={randomVoice} onChange={(e) => {
-                        setRandomVoice(e.target.checked);
-                        if (e.target.checked) setSelectedVoices([]);
-                      }} />
+                      <input
+                        type="checkbox"
+                        className="hidden"
+                        checked={randomVoice}
+                        onChange={(e) => {
+                          if (!canUseVoiceSelection) {
+                            showUpgradeModal('Voice selection');
+                            return;
+                          }
+                          setRandomVoice(e.target.checked);
+                          if (e.target.checked) setSelectedVoices([]);
+                        }}
+                      />
                     </label>
                   </div>
 

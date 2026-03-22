@@ -10,6 +10,12 @@ export const connection: Redis | null = redisEnabled
   : null;
 
 if (connection) {
+  connection.on('connect', () => {
+    console.log('[Redis] Connected');
+  });
+  connection.on('ready', () => {
+    console.log('[Redis] Ready');
+  });
   connection.on('error', (err) => {
     console.error('Redis error:', err);
   });

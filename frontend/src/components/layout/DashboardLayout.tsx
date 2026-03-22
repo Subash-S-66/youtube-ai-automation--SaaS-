@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
-import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle, Shield } from 'lucide-react';
+import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle, Shield, Users, MessageSquare } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
 import InstallPwaButton from '../InstallPwaButton';
@@ -28,6 +28,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
       }
     : user || null;
   const isAdminRoute = pathname.startsWith('/admin');
+  const isWidePage = pathname === '/pricing';
 
   const handleLogout = () => {
     authService.logout();
@@ -36,7 +37,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
   const navLinks = [
     { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
     { name: 'History', icon: History, href: '/history' },
-    { name: 'Subscriptions', icon: CreditCard, href: '/payments' },
+    { name: 'Subscriptions', icon: CreditCard, href: '/subscription' },
     { name: 'Settings', icon: Settings, href: '/settings' },
     { name: 'Help', icon: HelpCircle, href: '/help' },
   ];
@@ -79,6 +80,59 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
               const Icon = link.icon;
               const isActive = pathname === link.href;
 
+              if (link.href === '/admin') {
+                const showAdminSubmenu = pathname.startsWith('/admin/users') || pathname.startsWith('/admin/tickets');
+                return (
+                  <div key={link.name} className="relative group">
+                    <Link
+                      href={link.href}
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className={cn(
+                        "group flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-200 relative",
+                        pathname.startsWith('/admin') ? "text-white bg-[#1A2235]/80 shadow-[0_2px_10px_rgba(0,0,0,0.2)]" : "text-slate-400 hover:text-white hover:bg-[#1A2235]/40"
+                      )}
+                    >
+                      {pathname.startsWith('/admin') && (
+                        <div className="absolute left-0 w-1 h-6 bg-[#00D4FF] rounded-r-md shadow-[0_0_10px_rgba(0,212,255,0.6)]" />
+                      )}
+                      <Icon className={cn("mr-3 flex-shrink-0 h-5 w-5 transition-colors", pathname.startsWith('/admin') ? "text-[#00D4FF]" : "text-slate-500 group-hover:text-[#7C5CFF]")} />
+                      {link.name}
+                    </Link>
+
+                    <div
+                      className={cn(
+                        "pl-8 mt-1 space-y-1 transition-all duration-200",
+                        showAdminSubmenu ? "opacity-100 max-h-40" : "opacity-0 max-h-0 overflow-hidden",
+                        "group-hover:opacity-100 group-hover:max-h-40"
+                      )}
+                    >
+                      <Link
+                        href="/admin/users"
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className={cn(
+                          "flex items-center px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200",
+                          pathname === '/admin/users' ? "text-white bg-[#1A2235]/80" : "text-slate-400 hover:text-white hover:bg-[#1A2235]/40"
+                        )}
+                      >
+                        <Users className={cn("mr-2 h-4 w-4", pathname === '/admin/users' ? "text-[#00D4FF]" : "text-slate-500")} />
+                        Users Directory
+                      </Link>
+                      <Link
+                        href="/admin/tickets"
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className={cn(
+                          "flex items-center px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200",
+                          pathname === '/admin/tickets' ? "text-white bg-[#1A2235]/80" : "text-slate-400 hover:text-white hover:bg-[#1A2235]/40"
+                        )}
+                      >
+                        <MessageSquare className={cn("mr-2 h-4 w-4", pathname === '/admin/tickets' ? "text-[#00D4FF]" : "text-slate-500")} />
+                        Support Tickets
+                      </Link>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <Link
                   key={link.name}
@@ -93,7 +147,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
                   <Icon className={cn("mr-3 flex-shrink-0 h-5 w-5 transition-colors", isActive ? "text-[#00D4FF]" : "text-slate-500 group-hover:text-[#7C5CFF]")} />
                   {link.name}
                 </Link>
-              )
+              );
             })}
           </nav>
 
@@ -165,7 +219,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto bg-[#0B0F1A] p-4 sm:p-6 lg:p-8 relative z-10">
-          <div className="max-w-6xl mx-auto space-y-6">
+          <div className={cn("mx-auto space-y-6", isWidePage ? "max-w-none" : "max-w-6xl")}>
             {children}
           </div>
         </main>

@@ -1,8 +1,9 @@
 import express from 'express';
-import { createTicket } from '../controllers/supportController';
+import { createTicket, getTickets, replyTicket, closeTicket } from '../controllers/supportController';
 import { protect } from '../middleware/authMiddleware';
+import { adminMiddleware } from '../middleware/adminMiddleware';
 import { validate } from '../middleware/validateResource';
-import { createSupportTicketSchema } from '../utils/validators/supportValidators';
+import { createSupportTicketSchema, replySupportTicketSchema } from '../utils/validators/supportValidators';
 import rateLimit from 'express-rate-limit';
 
 const router = express.Router();
@@ -17,5 +18,10 @@ const supportLimiter = rateLimit({
 });
 
 router.post('/', protect, supportLimiter, validate(createSupportTicketSchema), createTicket);
+
+// Admin routes
+router.get('/admin', protect, adminMiddleware, getTickets);
+router.post('/admin/:id/reply', protect, adminMiddleware, validate(replySupportTicketSchema), replyTicket);
+router.post('/admin/:id/close', protect, adminMiddleware, closeTicket);
 
 export default router;

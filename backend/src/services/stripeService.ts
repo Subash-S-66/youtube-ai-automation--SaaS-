@@ -90,7 +90,7 @@ export const handleWebhook = async (body: Buffer | string, signature: string) =>
             plan: 'pro',
             subscriptionStatus: 'active',
             subscriptionExpiresAt,
-          }, { new: true });
+          }, { returnDocument: 'after' });
 
           if (updatedUser && updatedUser.referredBy && !updatedUser.referralRewardGiven) {
              const referrer = await User.findById(updatedUser.referredBy);

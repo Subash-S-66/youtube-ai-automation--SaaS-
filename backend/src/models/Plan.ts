@@ -9,6 +9,9 @@ export interface IPlan extends Document {
     voice_selection: boolean;
     scheduling: boolean;
     multi_channel: boolean;
+    story_mode: boolean;
+    cta: boolean;
+    format_selection: boolean;
   };
   limits: {
     max_channels: number;
@@ -28,6 +31,9 @@ const PlanSchema = new Schema<IPlan>(
       voice_selection: { type: Boolean, default: false },
       scheduling: { type: Boolean, default: false },
       multi_channel: { type: Boolean, default: false },
+      story_mode: { type: Boolean, default: false },
+      cta: { type: Boolean, default: false },
+      format_selection: { type: Boolean, default: false },
     },
     limits: {
       max_channels: { type: Number, default: 1 },

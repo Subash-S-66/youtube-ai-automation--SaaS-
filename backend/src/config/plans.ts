@@ -12,6 +12,9 @@ export const defaultPlans = [
       voice_selection: false,
       scheduling: false,
       multi_channel: false,
+      story_mode: false,
+      cta: false,
+      format_selection: false,
     },
     limits: {
       max_channels: 1,
@@ -25,8 +28,11 @@ export const defaultPlans = [
     is_active: true,
     features: {
       voice_selection: true,
-      scheduling: false,
+      scheduling: true,
       multi_channel: false,
+      story_mode: true,
+      cta: true,
+      format_selection: true,
     },
     limits: {
       max_channels: 2,
@@ -42,6 +48,9 @@ export const defaultPlans = [
       voice_selection: true,
       scheduling: true,
       multi_channel: true,
+      story_mode: true,
+      cta: true,
+      format_selection: true,
     },
     limits: {
       max_channels: 5,
@@ -57,6 +66,9 @@ export const defaultPlans = [
       voice_selection: true,
       scheduling: true,
       multi_channel: true,
+      story_mode: true,
+      cta: true,
+      format_selection: true,
     },
     limits: {
       max_channels: 20,
@@ -71,6 +83,27 @@ export const ensureDefaultPlans = async () => {
     if (!existing) {
       await Plan.create(planData);
       console.log(`Created default plan: ${planData.name}`);
+    } else {
+      // Ensure new feature flags exist on existing plans
+      const features = existing.features || {};
+      const needsUpdate =
+        features.story_mode === undefined ||
+        features.cta === undefined ||
+        features.format_selection === undefined;
+
+      if (needsUpdate) {
+        await Plan.updateOne(
+          { _id: existing._id },
+          {
+            $set: {
+              'features.story_mode': planData.features.story_mode,
+              'features.cta': planData.features.cta,
+              'features.format_selection': planData.features.format_selection,
+            },
+          }
+        );
+        console.log(`Updated plan features: ${planData.name}`);
+      }
     }
   }
 };

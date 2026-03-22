@@ -7,6 +7,7 @@ let started = false;
 export const startScheduleRunner = () => {
   if (started) return;
   started = true;
+  console.log('[ScheduleRunner] Started');
 
   const tick = async () => {
     const now = new Date();
@@ -21,7 +22,7 @@ export const startScheduleRunner = () => {
         const claimed = await Schedule.findOneAndUpdate(
           { _id: schedule._id, running: false },
           { $set: { running: true } },
-          { new: true }
+          { returnDocument: 'after' }
         );
 
         if (!claimed) {

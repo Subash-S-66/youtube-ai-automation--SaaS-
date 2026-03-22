@@ -21,6 +21,7 @@ export const initSocket = (server: HttpServer) => {
       credentials: true,
     },
   });
+  console.log('[Socket] Initialized');
 
   io.on('connection', (socket: any) => {
     console.log(`Socket client connected: ${socket.id}`);

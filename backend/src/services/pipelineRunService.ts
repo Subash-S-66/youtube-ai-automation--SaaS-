@@ -144,7 +144,7 @@ export const enqueuePipelineJob = async ({
         'youtubeChannels.$.videosOnHold': settings.videoCount,
       },
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   const finalLimitCheck = await getUploadLimits(userId);

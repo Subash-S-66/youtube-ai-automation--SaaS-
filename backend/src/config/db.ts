@@ -14,20 +14,20 @@ const connectDB = async (): Promise<void> => {
     }
 
     const conn = await mongoose.connect(mongoUri);
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    console.log(`[MongoDB] Connected: ${conn.connection.host}`);
   } catch (error) {
     if (error instanceof Error) {
       if (process.env.ALLOW_NO_DB === 'true') {
         console.warn(`[MongoDB] Connection failed (${error.message}). Continuing without database connection.`);
         return;
       }
-      console.error(`Error: ${error.message}`);
+      console.error(`[MongoDB] Error: ${error.message}`);
     } else {
       if (process.env.ALLOW_NO_DB === 'true') {
         console.warn('[MongoDB] Unknown connection error. Continuing without database connection.');
         return;
       }
-      console.error('An unknown error occurred while connecting to MongoDB');
+      console.error('[MongoDB] Unknown error while connecting.');
     }
     process.exit(1);
   }

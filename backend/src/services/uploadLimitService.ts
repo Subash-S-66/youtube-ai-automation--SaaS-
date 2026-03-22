@@ -10,6 +10,14 @@ interface UploadLimitCheckResult {
   plan: string;
   displayPlan?: string;
   isBetaMode?: boolean;
+  features?: {
+    voice_selection?: boolean;
+    scheduling?: boolean;
+    multi_channel?: boolean;
+    story_mode?: boolean;
+    cta?: boolean;
+    format_selection?: boolean;
+  };
 }
 
 export const checkAndDowngradeExpiredPlan = async (user: any): Promise<any> => {
@@ -96,6 +104,7 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
     // Keep display label explicit so UI can show real plan with beta override.
     displayPlan: betaForFreeUsers ? 'free (beta basic)' : actualPlanName,
     isBetaMode: betaForFreeUsers,
+    features: planObj?.features || {},
   };
 };
 
@@ -111,7 +120,7 @@ export const incrementUploadCount = async (userId: string, count: number = 1): P
     {
       $set: { uploadsUsedToday: 1, uploadsOnHold: 0, lastUploadReset: now }
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!user) {
