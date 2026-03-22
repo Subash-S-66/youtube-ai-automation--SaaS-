@@ -71,8 +71,13 @@ export const startScheduleRunner = () => {
         if (claimed.type === 'one-time') {
           update.enabled = false;
         } else {
-          const intervalHours = claimed.intervalHours || 1;
-          update.nextRunAt = new Date(now.getTime() + intervalHours * 60 * 60 * 1000);
+          const intervalHours = claimed.intervalHours;
+          if (!intervalHours || intervalHours <= 0) {
+            update.lastError = update.lastError || 'Recurring schedule requires intervalHours (cron_expression not supported in runner).';
+            update.nextRunAt = new Date(now.getTime() + 60 * 60 * 1000);
+          } else {
+            update.nextRunAt = new Date(now.getTime() + intervalHours * 60 * 60 * 1000);
+          }
         }
 
         await Schedule.findByIdAndUpdate(claimed._id, update);
