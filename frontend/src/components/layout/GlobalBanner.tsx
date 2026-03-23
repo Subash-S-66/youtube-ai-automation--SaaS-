@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
+import { getApiOrigin } from '../../lib/apiBase';
 
 export default function GlobalBanner() {
   const [banner, setBanner] = useState<{
@@ -34,7 +35,7 @@ export default function GlobalBanner() {
   useEffect(() => {
     const fetchBanner = async () => {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/banner`);
+        const response = await fetch(`${getApiOrigin()}/api/banner`);
         const data = await response.json();
         if (data.success && data.data && data.data.isActive) {
           setBanner(data.data);

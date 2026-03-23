@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import GlobalBanner from "../components/layout/GlobalBanner";
 import DisableNumberScroll from "../components/DisableNumberScroll";
+import { getApiOrigin } from "../lib/apiBase";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -42,7 +43,7 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const apiOrigin = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+  const apiOrigin = getApiOrigin();
 
   return (
     <html lang="en">

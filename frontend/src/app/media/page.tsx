@@ -7,6 +7,7 @@ import DashboardLayout from '../../components/layout/DashboardLayout';
 import { authService } from '../../services/authService';
 import { mediaService } from '../../services/mediaService';
 import { cn } from '../../lib/utils';
+import { getApiOrigin } from '../../lib/apiBase';
 
 export default function MediaLibraryPage() {
   const [user, setUser] = useState<any>(null);
@@ -335,8 +336,8 @@ export default function MediaLibraryPage() {
                    >
                      {item.type === 'image' ? (
                        <>
-                         <img
-                           src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${item.path}`}
+                        <img
+                          src={`${getApiOrigin()}/${item.path}`}
                            alt={item.originalName}
                            className="absolute inset-0 w-full h-full object-cover"
                            onError={(e) => {
@@ -458,7 +459,7 @@ export default function MediaLibraryPage() {
                      className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-square shadow-lg cursor-move"
                    >
                       <img
-                        src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${img.path}`}
+                        src={`${getApiOrigin()}/${img.path}`}
                         alt={img.originalName}
                         className="absolute inset-0 w-full h-full object-cover"
                         onError={(e) => {
@@ -508,7 +509,7 @@ export default function MediaLibraryPage() {
                  {thumbnails.map(img => (
                    <motion.div key={img._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-video shadow-lg">
                       <img
-                        src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${img.path}`}
+                        src={`${getApiOrigin()}/${img.path}`}
                         alt={img.originalName}
                         className="absolute inset-0 w-full h-full object-cover"
                         onError={(e) => {
@@ -551,7 +552,7 @@ export default function MediaLibraryPage() {
                       const item = images[previewIndex % images.length];
                       return (
                         <img
-                          src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${item.path}`}
+                          src={`${getApiOrigin()}/${item.path}`}
                           alt={item.originalName}
                           className="w-full h-full object-cover"
                         />
@@ -561,7 +562,7 @@ export default function MediaLibraryPage() {
                   {previewType === 'videos' && videos.length > 0 && (
                     <video
                       key={videos[previewIndex % videos.length]?._id}
-                      src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${videos[previewIndex % videos.length]?.path}`}
+                      src={`${getApiOrigin()}/${videos[previewIndex % videos.length]?.path}`}
                       className="w-full h-full object-cover"
                       controls
                       autoPlay

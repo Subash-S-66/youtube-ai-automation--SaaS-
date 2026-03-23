@@ -8,6 +8,7 @@ import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkl
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
 import InstallPwaButton from '../InstallPwaButton';
+import { getApiBase } from '../../lib/apiBase';
 
 const InAppNotifications = dynamic(() => import('./InAppNotifications'), { ssr: false });
 
@@ -43,7 +44,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
     window.addEventListener('api-offline', handleOffline);
     window.addEventListener('api-online', handleOnline);
 
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiBase = getApiBase();
     const checkServer = async () => {
       try {
         const res = await fetch(`${apiBase}/`, { method: 'GET' });
