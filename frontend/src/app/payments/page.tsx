@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { m, AnimatePresence } from 'framer-motion';
+
+
 import { CreditCard, CheckCircle2, RefreshCw, Zap, Sparkles } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { paymentService } from '../../services/paymentService';
@@ -220,7 +223,7 @@ export default function PaymentsPage() {
                 const isLowerPlan = isSubscriptionActive && currentRank > (planRank[planId] ?? 0);
 
                 return (
-                  <motion.div
+                  <m.div
                     key={plan.id}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -287,7 +290,7 @@ export default function PaymentsPage() {
                         </button>
                       )}
                     </div>
-                  </motion.div>
+                  </m.div>
                 );
               })}
             </div>

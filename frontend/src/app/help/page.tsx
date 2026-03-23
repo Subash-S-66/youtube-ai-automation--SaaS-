@@ -6,7 +6,10 @@ import DashboardLayout from '../../components/layout/DashboardLayout';
 import { authService } from '../../services/authService';
 import { supportService } from '../../services/supportService';
 import { HelpCircle, Send, Loader2, CheckCircle2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { m, AnimatePresence } from 'framer-motion';
+
+
 
 export default function HelpPage() {
   const [user, setUser] = useState<any>(null);
@@ -86,7 +89,7 @@ export default function HelpPage() {
           <div className="absolute top-0 right-0 w-32 h-32 bg-[#7C5CFF] opacity-10 blur-3xl rounded-full"></div>
 
           {success ? (
-            <motion.div
+            <m.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               className="flex flex-col items-center justify-center text-center py-10 space-y-4"
@@ -104,7 +107,7 @@ export default function HelpPage() {
               >
                 Submit another request
               </button>
-            </motion.div>
+            </m.div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5 relative z-10">
               {error && (

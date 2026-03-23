@@ -2,7 +2,10 @@
 import NextImage from 'next/image';
 
 import { useEffect, useState, useRef } from 'react';
-import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { m, AnimatePresence } from 'framer-motion';
+
+
 import { Upload, Trash2, Video, Image as ImageIcon, Film, RefreshCw, AlertCircle, Eye } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { authService } from '../../services/authService';
@@ -586,7 +589,7 @@ export default function MediaLibraryPage() {
                    const mediaItem = item.media;
                    if (!mediaItem) return null;
                    return (
-                   <motion.div
+                   <m.div
                      key={item._id}
                      initial={{ opacity: 0 }}
                      animate={{ opacity: 1 }}
@@ -639,6 +642,8 @@ export default function MediaLibraryPage() {
                            alt={mediaItem.originalName}
                            className="absolute inset-0 w-full h-full object-cover opacity-80 pointer-events-none"
                            draggable={false}
+                           loading="lazy"
+                           decoding="async"
                            onError={(e) => {
                              (e.target as HTMLImageElement).style.display = 'none';
                            }}
@@ -715,7 +720,7 @@ export default function MediaLibraryPage() {
                      >
                        <Trash2 className="h-3.5 w-3.5" />
                      </button>
-                   </motion.div>
+                   </m.div>
                    );
                  })}
                  <button
@@ -762,7 +767,7 @@ export default function MediaLibraryPage() {
              ) : (
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                  {videos.map(v => (
-                   <motion.div
+                   <m.div
                      key={v._id}
                      initial={{ opacity: 0 }}
                      animate={{ opacity: 1 }}
@@ -839,7 +844,7 @@ export default function MediaLibraryPage() {
                       <button onClick={() => handleDelete(v._id)} className="absolute bottom-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                   </motion.div>
+                   </m.div>
                  ))}
                  <button
                    onClick={() => triggerUpload('video')}
@@ -877,7 +882,7 @@ export default function MediaLibraryPage() {
              ) : (
                <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-4">
                  {images.map(img => (
-                   <motion.div
+                   <m.div
                      key={img._id}
                      initial={{ opacity: 0 }}
                      animate={{ opacity: 1 }}
@@ -910,6 +915,8 @@ export default function MediaLibraryPage() {
                         alt={img.originalName}
                         className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                         draggable={false}
+                        loading="lazy"
+                        decoding="async"
                         onError={(e) => {
                           // Fallback if static serving fails locally
                           (e.target as HTMLImageElement).style.display = 'none';
@@ -944,7 +951,7 @@ export default function MediaLibraryPage() {
                       <button aria-label={`Delete image ${img.originalName}`} onClick={() => handleDelete(img._id)} className="absolute bottom-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                   </motion.div>
+                   </m.div>
                  ))}
                  <button
                    onClick={() => triggerUpload('image')}
@@ -976,7 +983,7 @@ export default function MediaLibraryPage() {
              ) : (
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                  {thumbnails.map(img => (
-                   <motion.div key={img._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-video shadow-lg">
+                   <m.div key={img._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-video shadow-lg">
                       <NextImage loading="lazy"
                         src={getMediaUrl(img.path)}
                         alt={img.originalName}
@@ -990,7 +997,7 @@ export default function MediaLibraryPage() {
                       <button aria-label={`Delete image ${img.originalName}`} onClick={() => handleDelete(img._id)} className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                   </motion.div>
+                   </m.div>
                  ))}
                </div>
              )}
@@ -1013,6 +1020,8 @@ export default function MediaLibraryPage() {
                   src={getMediaUrl(item.path)}
                   alt={item.originalName}
                   className="h-24 w-16 object-cover rounded-lg border border-[#1A2235] shadow-2xl"
+                  loading="lazy"
+                  decoding="async"
                 />
               ) : (
                 <div className="h-24 w-16 bg-[#111827] rounded-lg border border-[#1A2235] shadow-2xl flex items-center justify-center text-[10px] text-slate-200">
@@ -1059,6 +1068,8 @@ export default function MediaLibraryPage() {
                           src={getMediaUrl(item.path)}
                           alt={item.originalName}
                           className="w-full h-full object-cover"
+                          loading="lazy"
+                          decoding="async"
                         />
                       );
                     })()
@@ -1084,6 +1095,8 @@ export default function MediaLibraryPage() {
                             src={getMediaUrl(mediaItem.path)}
                             alt={mediaItem.originalName}
                             className="w-full h-full object-cover"
+                            loading="lazy"
+                            decoding="async"
                           />
                         );
                       }

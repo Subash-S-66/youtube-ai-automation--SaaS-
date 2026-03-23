@@ -2,7 +2,10 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { m, AnimatePresence } from 'framer-motion';
+
+
 import { Sparkles, CheckCircle, XCircle, Mail } from 'lucide-react';
 import { authService } from '../../services/authService';
 
@@ -78,15 +81,15 @@ function VerifyEmailContent() {
       )}
 
       {status === 'success' && (
-        <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="mb-4">
+        <m.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="mb-4">
           <CheckCircle className="w-16 h-16 text-green-500 shadow-glow-primary rounded-full" />
-        </motion.div>
+        </m.div>
       )}
 
       {status === 'error' && (
-        <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="mb-4">
+        <m.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="mb-4">
           <XCircle className="w-16 h-16 text-red-500 shadow-[0_0_30px_rgba(239,68,68,0.3)] rounded-full" />
-        </motion.div>
+        </m.div>
       )}
 
       <h3 className="text-xl font-bold text-white text-center">{message}</h3>
@@ -96,7 +99,7 @@ function VerifyEmailContent() {
       )}
 
       {status === 'error' && (
-        <motion.div
+        <m.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           className="w-full mt-6 pt-6 border-t border-white/10"
@@ -138,7 +141,7 @@ function VerifyEmailContent() {
               {resendMessage}
             </div>
           )}
-        </motion.div>
+        </m.div>
       )}
     </div>
   );
@@ -162,7 +165,7 @@ export default function VerifyEmail() {
         </h2>
       </div>
 
-      <motion.div
+      <m.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
@@ -181,7 +184,7 @@ export default function VerifyEmail() {
              </a>
           </div>
         </div>
-      </motion.div>
+      </m.div>
     </div>
   );
 }

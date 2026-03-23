@@ -1,8 +1,11 @@
 'use client';
 import dynamic from "next/dynamic";
 
-import { useEffect, useState, Suspense, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { m, AnimatePresence } from 'framer-motion';
+import { useEffect, useState, Suspense, useRef, useMemo, useCallback } from 'react';
+
+
+
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Play, Activity, Youtube, ListVideo, Clock, FileVideo,
@@ -123,7 +126,12 @@ function Dashboard() {
     const fetchData = async () => {
 
       try {
-        const userData = await authService.getMe();
+        const [userData, jobsData, mediaData] = await Promise.all([
+          authService.getMe(),
+          pipelineService.getJobs(),
+          mediaService.getMedia()
+        ]);
+
         setUser(userData.data);
 
         if (userData.data?.user?.templateFont) {
@@ -137,10 +145,7 @@ function Dashboard() {
             setSelectedChannelId(userData.data.youtubeChannels[0].channelId);
         }
 
-        const jobsData = await pipelineService.getJobs();
         setJobs(jobsData.data);
-
-        const mediaData = await mediaService.getMedia();
         setMediaList(mediaData.data || []);
 
         // Parse URL params for auth callback errors
@@ -256,12 +261,15 @@ function Dashboard() {
     }
   }, [canUseStoryMode, canUseScheduling, storyMode, recapEnabled, autoUploadEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
 
-  const handleConnectYouTube = () => window.location.href = youtubeService.getAuthUrl();
-  const handleUpgrade = async () => {
-    router.push('/pricing');
-  };
+  const handleConnectYouTube = useCallback(() => {
+    window.location.href = youtubeService.getAuthUrl();
+  }, []);
 
-  const showUpgradeModal = (featureLabel?: string) => {
+  const handleUpgrade = useCallback(async () => {
+    router.push('/pricing');
+  }, [router]);
+
+  const showUpgradeModal = useCallback((featureLabel?: string) => {
     setModalConfig({
       isOpen: true,
       title: 'Upgrade Required',
@@ -277,9 +285,9 @@ function Dashboard() {
       },
       onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
     });
-  };
+  }, [router]);
 
-  const handleVoiceToggle = (vid: string) => {
+  const handleVoiceToggle = useCallback((vid: string) => {
     if (!canUseVoiceSelection) {
       showUpgradeModal('Voice selection');
       return;
@@ -288,7 +296,7 @@ function Dashboard() {
     setSelectedVoices(prev =>
       prev.includes(vid) ? prev.filter(id => id !== vid) : [...prev, vid]
     );
-  };
+  }, [canUseVoiceSelection, randomVoice, showUpgradeModal]);
 
   const playVoicePreview = (e: React.MouseEvent, voiceName: string) => {
     e.stopPropagation();
@@ -632,7 +640,7 @@ function Dashboard() {
 
       <AnimatePresence>
         {message && (
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
@@ -644,7 +652,7 @@ function Dashboard() {
           >
             <ShieldAlert className="h-5 w-5 flex-shrink-0 mt-0.5" />
             <span className="text-sm font-medium">{message.text}</span>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
 
@@ -653,7 +661,7 @@ function Dashboard() {
         {/* Left Column: Form */}
         <div className="xl:col-span-2 space-y-6">
 
-          <motion.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <m.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
             <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-4">
               <div className="flex items-center">
                 <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
@@ -701,7 +709,7 @@ function Dashboard() {
               {/* Prompt vs Topic Content */}
               <AnimatePresence mode="wait">
                 {inputMode === 'prompt' ? (
-                  <motion.div
+                  <m.div
                     key="prompt-mode"
                     initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
                   >
@@ -713,9 +721,9 @@ function Dashboard() {
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                     />
-                  </motion.div>
+                  </m.div>
                 ) : (
-                  <motion.div
+                  <m.div
                     key="topic-mode"
                     initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
                     className="grid grid-cols-1 sm:grid-cols-2 gap-4"
@@ -736,7 +744,7 @@ function Dashboard() {
                       </select>
                     </div>
                     {selectedTopic === 'Custom' && (
-                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                      <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                         <label className="block text-sm font-medium text-slate-300 mb-2">Custom Topic</label>
                         <input
                           type="text"
@@ -745,9 +753,9 @@ function Dashboard() {
                           value={customTopic}
                           onChange={(e) => setCustomTopic(e.target.value)}
                         />
-                      </motion.div>
+                      </m.div>
                     )}
-                  </motion.div>
+                  </m.div>
                 )}
               </AnimatePresence>
 
@@ -771,7 +779,7 @@ function Dashboard() {
 
                 <AnimatePresence>
                   {effectiveStoryMode && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
+                    <m.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
                         <button type="button" onClick={() => { setCurrentPart(1); setStoryId(''); setStoryContext(''); }} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
@@ -787,7 +795,7 @@ function Dashboard() {
                         </span>
                         <input id="recap-enabled-toggle" aria-label="Enable Story Recap" type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} disabled={currentPart === 1} />
                       </label>
-                    </motion.div>
+                    </m.div>
                   )}
                 </AnimatePresence>
               </div>
@@ -865,7 +873,7 @@ function Dashboard() {
 
                     <AnimatePresence>
                       {useCustomMedia && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                           <div className="mt-4 pt-4 border-t border-[#FF4FD8]/20 grid grid-cols-1 sm:grid-cols-2 gap-4">
                              <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
                                 <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Content Assests</span>
@@ -887,7 +895,7 @@ function Dashboard() {
                                 </select>
                              </div>
                           </div>
-                        </motion.div>
+                        </m.div>
                       )}
                     </AnimatePresence>
                  </div>
@@ -982,7 +990,7 @@ function Dashboard() {
 
                     <AnimatePresence>
                       {scheduleEnabled && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                           <div className="mt-3">
                             <label className="block text-xs text-slate-400 mb-1">Publish Date & Time</label>
                             <div className="relative">
@@ -1019,7 +1027,7 @@ function Dashboard() {
                             </div>
                             <p className="text-xs text-slate-500 mt-2">The video will be generated and published at this time.</p>
                           </div>
-                        </motion.div>
+                        </m.div>
                       )}
                     </AnimatePresence>
                   </div>
@@ -1043,7 +1051,7 @@ function Dashboard() {
 
                     <AnimatePresence>
                       {autoUploadEnabled && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                           <div className="mt-3 grid grid-cols-2 gap-3">
                             <div>
                               <label className="block text-xs text-slate-400 mb-1">Interval (hours)</label>
@@ -1069,7 +1077,7 @@ function Dashboard() {
                             </div>
                           </div>
                           <p className="text-xs text-slate-500 mt-2">Each channel runs its own schedule. First upload starts after the selected interval.</p>
-                        </motion.div>
+                        </m.div>
                       )}
                     </AnimatePresence>
                   </div>
@@ -1117,7 +1125,7 @@ function Dashboard() {
                 </div>
               </div>
 
-              <motion.button
+              <m.button
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.99 }}
                 type="submit"
@@ -1130,14 +1138,14 @@ function Dashboard() {
                   <Play className="h-6 w-6 mr-3 fill-white" />
                 )}
                 {generating ? 'Processing Pipeline...' : 'Generate & Run Pipeline'}
-              </motion.button>
+              </m.button>
             </form>
-          </motion.div>
+          </m.div>
         </div>
 
         {/* Right Column: Status & Connections */}
         <div className="space-y-6">
-          <motion.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <m.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
              <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
                 <Youtube className="h-24 w-24" />
              </div>
@@ -1195,7 +1203,7 @@ function Dashboard() {
                   </div>
                 )}
              </div>
-          </motion.div>
+          </m.div>
         </div>
       </div>
 

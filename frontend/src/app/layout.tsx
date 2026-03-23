@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import GlobalBanner from "../components/layout/GlobalBanner";
-import DisableNumberScroll from "../components/DisableNumberScroll";
+import dynamic from "next/dynamic";
 import { getApiOrigin } from "../lib/apiBase";
+
+const GlobalBanner = dynamic(() => import("../components/layout/GlobalBanner"));
+const DisableNumberScroll = dynamic(() => import("../components/DisableNumberScroll"));
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -38,6 +40,8 @@ export const metadata: Metadata = {
   },
 };
 
+import FramerMotionProvider from "../components/layout/FramerMotionProvider";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -56,7 +60,9 @@ export default function RootLayout({
       >
         <GlobalBanner />
         <DisableNumberScroll />
-        {children}
+        <FramerMotionProvider>
+          {children}
+        </FramerMotionProvider>
       </body>
     </html>
   );

@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { m, AnimatePresence } from 'framer-motion';
+
+
+
+
 import { CheckCircle2, ShieldAlert, Sparkles, Zap, RefreshCw } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { paymentService } from '../../services/paymentService';
@@ -149,28 +154,28 @@ export default function PricingPage() {
 
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-16">
-          <motion.h1
+          <m.h1
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             className="text-4xl sm:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white via-white to-slate-400 mb-4"
           >
             Upgrade your creative flow
-          </motion.h1>
-          <motion.p
+          </m.h1>
+          <m.p
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
             className="text-lg text-slate-400"
           >
             Choose the perfect plan to scale your YouTube automation and generate more shorts every day.
-          </motion.p>
+          </m.p>
         </div>
 
         {message && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={cn("p-4 mb-8 rounded-xl border flex items-center text-sm font-medium", message.type === 'error' ? "bg-red-500/10 border-red-500/20 text-red-400" : "bg-green-500/10 border-green-500/20 text-green-400")}>
+          <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={cn("p-4 mb-8 rounded-xl border flex items-center text-sm font-medium", message.type === 'error' ? "bg-red-500/10 border-red-500/20 text-red-400" : "bg-green-500/10 border-green-500/20 text-green-400")}>
             <ShieldAlert className="h-5 w-5 mr-3 flex-shrink-0" />
             {message.text}
-          </motion.div>
+          </m.div>
         )}
 
         {/* Pricing Cards */}
@@ -183,7 +188,7 @@ export default function PricingPage() {
             const discountedPrice = hasDiscount ? plan.price * (1 - plan.discountPercentage / 100) : plan.price;
 
             return (
-              <motion.div
+              <m.div
                 key={plan.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -268,7 +273,7 @@ export default function PricingPage() {
                     </button>
                   )}
                 </div>
-              </motion.div>
+              </m.div>
             );
           })}
         </div>
