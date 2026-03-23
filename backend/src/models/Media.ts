@@ -8,6 +8,8 @@ export interface IMedia extends Document {
   size: number;
   duration?: number; // Only applicable for videos
   imageDuration?: number; // Only applicable for images (seconds)
+  trimStart?: number; // Added: Start time for video trimming
+  trimEnd?: number; // Added: End time for video trimming
   sortOrder?: number; // Lower = earlier
   path: string;
   createdAt: Date;
@@ -23,6 +25,8 @@ const MediaSchema = new Schema<IMedia>(
     size: { type: Number, required: true },
     duration: { type: Number },
     imageDuration: { type: Number, default: 3 },
+    trimStart: { type: Number },
+    trimEnd: { type: Number },
     sortOrder: { type: Number, default: Date.now },
     path: { type: String, required: true },
   },

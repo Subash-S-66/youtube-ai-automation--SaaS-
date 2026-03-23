@@ -106,8 +106,10 @@ app.use('/api/banner', bannerRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/media', mediaRoutes);
 
+import path from 'path';
+
 // Serve static uploads
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Base route
 app.get('/', (req: Request, res: Response) => {

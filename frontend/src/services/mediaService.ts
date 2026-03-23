@@ -29,7 +29,7 @@ export const mediaService = {
     return response.data;
   },
 
-  updateMedia: async (id: string, data: { imageDuration?: number; sortOrder?: number }) => {
+  async updateMedia(id: string, data: { imageDuration?: number; sortOrder?: number; trimStart?: number; trimEnd?: number }) {
     const response = await api.patch(`/media/${id}`, data);
     return response.data;
   },

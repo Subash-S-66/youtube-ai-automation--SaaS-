@@ -6,6 +6,15 @@ import multer, { FileFilterCallback } from 'multer';
 const router = express.Router();
 
 // Configure multer
+import fs from 'fs';
+import path from 'path';
+
+// Ensure uploads directory exists
+const uploadDir = path.join(__dirname, '../../uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) {
     cb(null, 'uploads/'); // Store locally in backend/uploads

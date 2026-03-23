@@ -112,7 +112,7 @@ export const updateMedia = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError('Media ID is required', 400);
   }
 
-  const { imageDuration, sortOrder } = req.body || {};
+  const { imageDuration, sortOrder, trimStart, trimEnd } = req.body || {};
 
   const update: any = {};
   if (imageDuration !== undefined) {
@@ -121,6 +121,18 @@ export const updateMedia = asyncHandler(async (req: Request, res: Response) => {
       throw new AppError('Image duration must be between 1 and 15 seconds.', 400);
     }
     update.imageDuration = parsed;
+  }
+  if (trimStart !== undefined) {
+    const parsed = Number(trimStart);
+    if (!Number.isNaN(parsed) && parsed >= 0) {
+      update.trimStart = parsed;
+    }
+  }
+  if (trimEnd !== undefined) {
+    const parsed = Number(trimEnd);
+    if (!Number.isNaN(parsed) && parsed >= 0) {
+      update.trimEnd = parsed;
+    }
   }
   if (sortOrder !== undefined) {
     const parsed = Number(sortOrder);

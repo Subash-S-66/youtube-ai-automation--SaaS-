@@ -170,6 +170,19 @@ export default function MediaLibraryPage() {
     }, 500) as unknown as number;
   };
 
+  const handleVideoTrimChange = (id: string, field: 'trimStart' | 'trimEnd', value: number) => {
+    setMedia(prev => prev.map(m => (m._id === id ? { ...m, [field]: value } : m)));
+    const existing = durationSaveTimers.current[id];
+    if (existing) window.clearTimeout(existing);
+    durationSaveTimers.current[id] = window.setTimeout(async () => {
+      try {
+        await mediaService.updateMedia(id, { [field]: value });
+      } catch (err: any) {
+        setError(err.response?.data?.message || `Failed to update video ${field}`);
+      }
+    }, 500) as unknown as number;
+  };
+
   if (loading) {
     return (
       <DashboardLayout user={user}>
@@ -242,44 +255,44 @@ export default function MediaLibraryPage() {
                 </div>
              </div>
 
-             <div className="flex bg-[#0B0F1A] rounded-xl border border-[#1A2235] p-1 overflow-hidden">
+             <div className="flex bg-[#0B0F1A] rounded-xl border border-[#1A2235] p-1 overflow-hidden h-12">
                 <button
                   onClick={() => triggerUpload('video')}
                   disabled={uploading}
-                  className="px-4 py-2 hover:bg-[#1A2235] rounded-lg text-sm font-bold text-white transition-colors disabled:opacity-50"
+                  className="px-4 py-2 hover:bg-[#1A2235] rounded-lg text-sm font-bold text-white transition-colors disabled:opacity-50 flex items-center"
                 >
                   + Video
                 </button>
                 <button
                   onClick={() => triggerUpload('image')}
                   disabled={uploading}
-                  className="px-4 py-2 hover:bg-[#1A2235] rounded-lg text-sm font-bold text-white transition-colors disabled:opacity-50"
+                  className="px-4 py-2 hover:bg-[#1A2235] rounded-lg text-sm font-bold text-white transition-colors disabled:opacity-50 flex items-center"
                 >
                   + Image
                 </button>
                 <button
                   onClick={() => triggerUpload('thumbnail')}
                   disabled={uploading}
-                  className="px-4 py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] rounded-lg text-sm font-bold text-white transition-colors shadow-glow-primary disabled:opacity-50"
+                  className="px-4 py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] rounded-lg text-sm font-bold text-white transition-colors shadow-glow-primary disabled:opacity-50 flex items-center"
                 >
-                  + Thumbnail
+                  + Thumb
                 </button>
              </div>
 
-             <div className="flex gap-2">
+             <div className="flex gap-2 h-12">
                <button
                  onClick={startVideoPreview}
                  disabled={videos.length === 0}
-                 className="px-3 py-2 rounded-lg text-xs font-bold border border-[#1A2235] bg-[#0B0F1A] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors disabled:opacity-50"
+                 className="px-4 py-2 bg-[#1A2235] hover:bg-slate-700 rounded-xl text-xs font-bold text-white transition-colors flex items-center disabled:opacity-50 text-center leading-tight whitespace-nowrap border border-[#1A2235]"
                >
-                 <Eye className="h-3.5 w-3.5 inline-block mr-1" /> Preview Videos
+                 <Eye className="h-4 w-4 mr-1.5 shrink-0" /> Preview<br/>Videos
                </button>
                <button
                  onClick={startImagePreview}
                  disabled={images.length === 0}
-                 className="px-3 py-2 rounded-lg text-xs font-bold border border-[#1A2235] bg-[#0B0F1A] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors disabled:opacity-50"
+                 className="px-4 py-2 bg-[#1A2235] hover:bg-slate-700 rounded-xl text-xs font-bold text-white transition-colors flex items-center disabled:opacity-50 text-center leading-tight whitespace-nowrap border border-[#1A2235]"
                >
-                 <Eye className="h-3.5 w-3.5 inline-block mr-1" /> Preview Images
+                 <Eye className="h-4 w-4 mr-1.5 shrink-0" /> Preview<br/>Images
                </button>
              </div>
 
@@ -339,12 +352,19 @@ export default function MediaLibraryPage() {
                    >
                      {item.type === 'image' ? (
                        <>
-                        <NextImage loading="lazy" src={`${getApiOrigin()}/${item.path}`} alt={item.originalName} fill className="object-cover" unoptimized />
+                         <img
+                           src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${item.path.replace(/\\/g, '/')}`}
+                           alt={item.originalName}
+                           className="absolute inset-0 w-full h-full object-cover opacity-80"
+                           onError={(e) => {
+                             (e.target as HTMLImageElement).style.display = 'none';
+                           }}
+                         />
                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#0B0F1A]/90 to-transparent p-2">
-                           <div className="flex items-center justify-between gap-2">
-                             <span className="text-[10px] text-white truncate">{item.originalName}</span>
-                             <div className="flex items-center gap-1 text-[10px] text-slate-200">
-                               <span className="text-slate-400">Dur</span>
+                           <div className="flex flex-col gap-1">
+                             <span className="text-[10px] text-white truncate drop-shadow-md">{item.originalName}</span>
+                             <div className="flex items-center justify-between text-[10px] text-slate-200">
+                               <span className="text-slate-400">Duration (s)</span>
                                <input
                                  id="max-videos-per-day"
                                  aria-label="Max videos per day"
@@ -355,17 +375,54 @@ export default function MediaLibraryPage() {
                                  onChange={(e) => handleDurationChange(item._id, Number(e.target.value))}
                                  className="w-12 bg-[#0B0F1A] border border-[#1A2235] rounded px-1 py-0.5 text-[10px] text-white"
                                />
-                               <span className="text-slate-400">s</span>
                              </div>
                            </div>
                          </div>
+                         <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-black/60 rounded text-[#FF4FD8] font-mono text-[10px] font-bold backdrop-blur-sm">
+                           Image
+                         </div>
                        </>
                      ) : (
-                       <div className="absolute inset-0 bg-[#0B0F1A] flex flex-col items-center justify-center p-4 text-center">
-                         <Film className="h-8 w-8 text-[#00D4FF] mb-2 opacity-50" />
-                         <span className="text-xs text-slate-400 break-all line-clamp-2">{item.originalName}</span>
-                         <span className="text-[#00D4FF] font-mono text-xs font-bold mt-2">{item.duration}s</span>
-                       </div>
+                       <>
+                         <video
+                           src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${item.path.replace(/\\/g, '/')}`}
+                           className="absolute inset-0 w-full h-full object-cover opacity-50"
+                           preload="metadata"
+                           muted
+                         />
+                         <div className="absolute inset-0 bg-gradient-to-t from-[#0B0F1A] via-transparent to-transparent flex flex-col justify-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="text-[10px] text-white truncate w-full drop-shadow-md">{item.originalName}</span>
+                            <div className="flex flex-col gap-1 mt-1">
+                              <div className="flex items-center justify-between text-[10px] text-slate-300">
+                                <span>Start (s)</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={item.duration}
+                                  step={0.1}
+                                  value={item.trimStart || 0}
+                                  onChange={(e) => handleVideoTrimChange(item._id, 'trimStart', Number(e.target.value))}
+                                  className="w-12 bg-[#0B0F1A] border border-[#1A2235] rounded px-1 py-0.5 text-white"
+                                />
+                              </div>
+                              <div className="flex items-center justify-between text-[10px] text-slate-300">
+                                <span>End (s)</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={item.duration}
+                                  step={0.1}
+                                  value={item.trimEnd || item.duration}
+                                  onChange={(e) => handleVideoTrimChange(item._id, 'trimEnd', Number(e.target.value))}
+                                  className="w-12 bg-[#0B0F1A] border border-[#1A2235] rounded px-1 py-0.5 text-white"
+                                />
+                              </div>
+                            </div>
+                         </div>
+                         <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-black/60 rounded text-[#00D4FF] font-mono text-[10px] font-bold backdrop-blur-sm">
+                           {item.duration}s
+                         </div>
+                       </>
                      )}
                    </motion.div>
                  ))}
@@ -375,9 +432,14 @@ export default function MediaLibraryPage() {
 
            {/* Videos Section */}
            <div>
-             <div className="flex items-center mb-6 border-b border-[#1A2235] pb-2">
-                <Film className="h-5 w-5 text-[#00D4FF] mr-2" />
-                <h2 className="text-xl font-bold text-white tracking-tight">Custom Videos</h2>
+             <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-2">
+               <div className="flex items-center">
+                  <Film className="h-5 w-5 text-[#00D4FF] mr-2" />
+                  <h2 className="text-xl font-bold text-white tracking-tight">Custom Videos</h2>
+               </div>
+               <button onClick={() => { setUploadType('video'); fileInputRef.current?.click(); }} className="text-xs bg-[#00D4FF]/10 text-[#00D4FF] hover:bg-[#00D4FF]/20 px-3 py-1.5 rounded-lg flex items-center transition-colors">
+                  <Upload className="w-3 h-3 mr-1" /> Add Video
+               </button>
              </div>
              {videos.length === 0 ? (
                <div className="text-center py-10 bg-[#0B0F1A] border border-[#1A2235] border-dashed rounded-2xl text-slate-500">
@@ -407,14 +469,46 @@ export default function MediaLibraryPage() {
                      }}
                      className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-[9/16] shadow-lg cursor-move"
                    >
-                      {/* For simplicity we just use a generic thumbnail placeholder unless we generate real thumbnails */}
-                      <div className="absolute inset-0 bg-[#0B0F1A] flex flex-col items-center justify-center p-4 text-center">
-                         <Film className="h-8 w-8 text-[#00D4FF] mb-2 opacity-50" />
-                         <span className="text-xs text-slate-400 break-all line-clamp-2">{v.originalName}</span>
-                         <span className="text-[#00D4FF] font-mono text-xs font-bold mt-2">{v.duration}s</span>
+                      <video
+                        src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${v.path.replace(/\\/g, '/')}`}
+                        className="absolute inset-0 w-full h-full object-cover opacity-50"
+                        preload="metadata"
+                        muted
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#0B0F1A] via-transparent to-transparent flex flex-col justify-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                         <span className="text-[10px] text-white truncate w-full drop-shadow-md">{v.originalName}</span>
+                         <div className="flex flex-col gap-1 mt-1">
+                           <div className="flex items-center justify-between text-[10px] text-slate-300">
+                             <span>Start (s)</span>
+                             <input
+                               type="number"
+                               min={0}
+                               max={v.duration}
+                               step={0.1}
+                               value={v.trimStart || 0}
+                               onChange={(e) => handleVideoTrimChange(v._id, 'trimStart', Number(e.target.value))}
+                               className="w-12 bg-[#0B0F1A] border border-[#1A2235] rounded px-1 py-0.5 text-white"
+                             />
+                           </div>
+                           <div className="flex items-center justify-between text-[10px] text-slate-300">
+                             <span>End (s)</span>
+                             <input
+                               type="number"
+                               min={0}
+                               max={v.duration}
+                               step={0.1}
+                               value={v.trimEnd || v.duration}
+                               onChange={(e) => handleVideoTrimChange(v._id, 'trimEnd', Number(e.target.value))}
+                               className="w-12 bg-[#0B0F1A] border border-[#1A2235] rounded px-1 py-0.5 text-white"
+                             />
+                           </div>
+                         </div>
                       </div>
-                      <button aria-label={`Delete video ${v.originalName}`} onClick={() => handleDelete(v._id)} className="absolute top-2 right-2 p-2 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
-                         <Trash2 className="h-4 w-4" />
+                      <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-black/60 rounded text-[#00D4FF] font-mono text-[10px] font-bold backdrop-blur-sm">
+                        {v.duration}s
+                      </div>
+                      <button onClick={() => handleDelete(v._id)} className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                    </motion.div>
                  ))}
@@ -424,9 +518,14 @@ export default function MediaLibraryPage() {
 
            {/* Images Section */}
            <div>
-             <div className="flex items-center mb-6 border-b border-[#1A2235] pb-2">
-                <ImageIcon className="h-5 w-5 text-[#FF4FD8] mr-2" />
-                <h2 className="text-xl font-bold text-white tracking-tight">Custom Images</h2>
+             <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-2">
+               <div className="flex items-center">
+                  <ImageIcon className="h-5 w-5 text-[#FF4FD8] mr-2" />
+                  <h2 className="text-xl font-bold text-white tracking-tight">Custom Images</h2>
+               </div>
+               <button onClick={() => { setUploadType('image'); fileInputRef.current?.click(); }} className="text-xs bg-[#FF4FD8]/10 text-[#FF4FD8] hover:bg-[#FF4FD8]/20 px-3 py-1.5 rounded-lg flex items-center transition-colors">
+                  <Upload className="w-3 h-3 mr-1" /> Add Image
+               </button>
              </div>
              {images.length === 0 ? (
                <div className="text-center py-10 bg-[#0B0F1A] border border-[#1A2235] border-dashed rounded-2xl text-slate-500">
@@ -456,7 +555,16 @@ export default function MediaLibraryPage() {
                      }}
                      className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-square shadow-lg cursor-move"
                    >
-                      <NextImage loading="lazy" src={`${getApiOrigin()}/${img.path}`} alt={img.originalName} fill className="object-cover" unoptimized />
+                      <img
+                        src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${img.path.replace(/\\/g, '/')}`}
+                        src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${img.path.replace(/\\/g, '/')}`}
+                        alt={img.originalName}
+                        className="absolute inset-0 w-full h-full object-cover"
+                        onError={(e) => {
+                          // Fallback if static serving fails locally
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#0B0F1A]/90 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
                          <div className="flex items-center justify-between gap-2">
                            <span className="text-[10px] text-white truncate">{img.originalName}</span>
@@ -487,9 +595,14 @@ export default function MediaLibraryPage() {
 
            {/* Thumbnails Section */}
            <div>
-             <div className="flex items-center mb-6 border-b border-[#1A2235] pb-2">
-                <ImageIcon className="h-5 w-5 text-emerald-400 mr-2" />
-                <h2 className="text-xl font-bold text-white tracking-tight">Custom Thumbnails</h2>
+             <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-2">
+               <div className="flex items-center">
+                  <ImageIcon className="h-5 w-5 text-emerald-400 mr-2" />
+                  <h2 className="text-xl font-bold text-white tracking-tight">Custom Thumbnails</h2>
+               </div>
+               <button onClick={() => { setUploadType('thumbnail'); fileInputRef.current?.click(); }} className="text-xs bg-emerald-400/10 text-emerald-400 hover:bg-emerald-400/20 px-3 py-1.5 rounded-lg flex items-center transition-colors">
+                  <Upload className="w-3 h-3 mr-1" /> Add Thumbnail
+               </button>
              </div>
              {thumbnails.length === 0 ? (
                <div className="text-center py-10 bg-[#0B0F1A] border border-[#1A2235] border-dashed rounded-2xl text-slate-500">
@@ -542,8 +655,8 @@ export default function MediaLibraryPage() {
                     (() => {
                       const item = images[previewIndex % images.length];
                       return (
-                        <NextImage loading="lazy"
-                          src={`${getApiOrigin()}/${item.path}`}
+                        <img
+                          src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${item.path.replace(/\\/g, '/')}`}
                           alt={item.originalName}
                           fill
                           className="object-cover"
@@ -555,7 +668,7 @@ export default function MediaLibraryPage() {
                   {previewType === 'videos' && videos.length > 0 && (
                     <video
                       key={videos[previewIndex % videos.length]?._id}
-                      src={`${getApiOrigin()}/${videos[previewIndex % videos.length]?.path}`}
+                      src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/${videos[previewIndex % videos.length]?.path.replace(/\\/g, '/')}`}
                       className="w-full h-full object-cover"
                       controls
                       autoPlay

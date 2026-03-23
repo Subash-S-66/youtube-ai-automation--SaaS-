@@ -1,0 +1,19 @@
+
+> frontend@0.1.0 dev
+> next dev --webpack
+
+▲ Next.js 16.1.7 (webpack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.2:3000
+- Experiments (use with caution):
+  · optimizePackageImports
+
+✓ Starting...
+ ○ (pwa) PWA support is disabled.
+✓ Ready in 3.8s
+○ Compiling /media ...
+ GET /media 200 in 14.9s (compile: 13.7s, render: 1179ms)
+ GET /media 200 in 94ms (compile: 10ms, render: 84ms)
+ GET /media 200 in 81ms (compile: 7ms, render: 74ms)
+ GET /media 200 in 567ms (compile: 144ms, render: 423ms)
+ GET /media 200 in 537ms (compile: 137ms, render: 400ms)
