@@ -1,7 +1,7 @@
 'use client';
+import dynamic from "next/dynamic";
 
 import { useEffect, useState, Suspense, useRef } from 'react';
-import dynamic from 'next/dynamic';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
@@ -723,6 +723,8 @@ function Dashboard() {
                     <div>
                       <label className="block text-sm font-medium text-slate-300 mb-2">Category</label>
                       <select
+                        id="content-category"
+                        aria-label="Content Category"
                         className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-3.5 text-slate-200 focus:outline-none border-glow-primary transition-colors"
                         value={selectedTopic}
                         onChange={(e) => setSelectedTopic(e.target.value)}
@@ -757,7 +759,7 @@ function Dashboard() {
                     <h3 className="text-sm font-semibold text-white">Story Mode</h3>
                   </div>
                   <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
-                    <input type="checkbox" className="sr-only peer" checked={effectiveStoryMode} onChange={handleStoryModeToggle} disabled={isFreeUser} />
+                    <input id="story-mode-toggle" aria-label="Toggle Story Mode" type="checkbox" className="sr-only peer" checked={effectiveStoryMode} onChange={handleStoryModeToggle} disabled={isFreeUser} />
                     <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
@@ -783,7 +785,7 @@ function Dashboard() {
                         <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-600" : "text-slate-300 group-hover:text-white")}>
                           Add Recap of Previous Parts (Disabled on Part 1)
                         </span>
-                        <input type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} disabled={currentPart === 1} />
+                        <input id="recap-enabled-toggle" aria-label="Enable Story Recap" type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} disabled={currentPart === 1} />
                       </label>
                     </motion.div>
                   )}
@@ -796,7 +798,7 @@ function Dashboard() {
                   <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
                     <Clock className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Duration
                   </label>
-                  <input type="range" min="10" max="60" className="w-full accent-[#00D4FF]" value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
+                  <input id="video-duration" aria-label="Video Duration" type="range" min="10" max="60" className="w-full accent-[#00D4FF]" value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
                   <div className="text-right text-sm text-[#00D4FF] font-medium mt-1">{duration}s</div>
                 </div>
 
@@ -804,7 +806,7 @@ function Dashboard() {
                   <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
                     <FileVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Format
                   </label>
-                  <select
+                  <select id="content-type" aria-label="Content Type"
                     className="w-full bg-transparent text-slate-300 text-sm focus:outline-none cursor-pointer"
                     value={contentType}
                     onChange={(e) => {
@@ -826,6 +828,8 @@ function Dashboard() {
                     <ListVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Count
                   </label>
                   <input
+                    id="video-count"
+                    aria-label="Number of videos to generate"
                     type="number" required min="1"
                     className="w-full bg-transparent text-slate-300 text-sm focus:outline-none border-b border-[#1A2235] pb-1 focus:border-[#00D4FF] transition-colors"
                     value={videoCount}
@@ -846,7 +850,7 @@ function Dashboard() {
                          </div>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">
-                        <input
+                        <input id="use-custom-media-toggle" aria-label="Toggle Custom Media"
                           type="checkbox"
                           className="sr-only peer"
                           checked={useCustomMedia}
@@ -870,6 +874,8 @@ function Dashboard() {
                              <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
                                 <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Custom Thumbnail</span>
                                 <select
+                                  id="thumbnail-select"
+                                  aria-label="Select Thumbnail"
                                   value={selectedThumbnailId}
                                   onChange={(e) => setSelectedThumbnailId(e.target.value)}
                                   className="w-full bg-transparent text-sm text-white focus:outline-none cursor-pointer"
@@ -900,6 +906,8 @@ function Dashboard() {
                        <div>
                          <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
                          <select
+                           id="template-font"
+                           aria-label="Template Font"
                            value={templateFont}
                            onChange={async (e) => {
                              const value = e.target.value;
@@ -917,6 +925,8 @@ function Dashboard() {
                        <div>
                          <label className="text-xs text-slate-400 mb-1 block">Subtitle Color</label>
                          <input
+                           id="template-color"
+                           aria-label="Template Color"
                            type="color"
                            value={templateColor}
                            onChange={async (e) => {
@@ -938,6 +948,8 @@ function Dashboard() {
                     </div>
                     <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
                     <input
+                      id="cta-enabled"
+                      aria-label="Enable Call to Action"
                       type="checkbox"
                       className="hidden"
                       checked={ctaEnabled}
@@ -955,7 +967,7 @@ function Dashboard() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Schedule this video</span>
                       <label className={cn("relative inline-flex items-center", !canUseScheduling ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
-                        <input
+                        <input id="schedule-enabled-toggle" aria-label="Toggle Schedule Enabled"
                           type="checkbox"
                           className="sr-only peer"
                           checked={scheduleEnabled}
@@ -975,6 +987,8 @@ function Dashboard() {
                             <label className="block text-xs text-slate-400 mb-1">Publish Date & Time</label>
                             <div className="relative">
                               <input
+                                id="schedule-datetime"
+                                aria-label="Schedule Date and Time"
                                 ref={scheduleInputRef}
                                 type="datetime-local"
                                 value={scheduleDatetime}
@@ -1014,7 +1028,7 @@ function Dashboard() {
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-slate-300">Auto Upload Schedule</span>
                       <label className={cn("relative inline-flex items-center", !canUseScheduling ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
-                        <input
+                        <input id="auto-upload-enabled-toggle" aria-label="Toggle Auto Upload Enabled"
                           type="checkbox"
                           className="sr-only peer"
                           checked={autoUploadEnabled}
@@ -1033,7 +1047,7 @@ function Dashboard() {
                           <div className="mt-3 grid grid-cols-2 gap-3">
                             <div>
                               <label className="block text-xs text-slate-400 mb-1">Interval (hours)</label>
-                              <input
+                              <input id="auto-upload-interval-hours" aria-label="Auto Upload Interval Hours"
                                 type="number"
                                 min="1"
                                 max="24"
@@ -1044,7 +1058,7 @@ function Dashboard() {
                             </div>
                             <div>
                               <label className="block text-xs text-slate-400 mb-1">Videos per interval</label>
-                              <input
+                              <input id="auto-upload-videos-per-interval" aria-label="Auto Upload Videos Per Interval"
                                 type="number"
                                 min="1"
                                 max="10"
@@ -1073,6 +1087,8 @@ function Dashboard() {
                       </div>
                       <span className="text-xs text-slate-400 group-hover:text-white">Random</span>
                       <input
+                        id="random-voice"
+                        aria-label="Enable Random Voice"
                         type="checkbox"
                         className="hidden"
                         checked={randomVoice}
@@ -1092,7 +1108,7 @@ function Dashboard() {
                     {AVAILABLE_VOICES.map(voice => (
                       <div key={voice.id} onClick={() => handleVoiceToggle(voice.id)} className={cn("flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors border", selectedVoices.includes(voice.id) && !randomVoice ? "bg-[#1A2235] border-[#7C5CFF]/50 shadow-[0_0_10px_rgba(124,92,255,0.2)]" : "bg-[#111827] border-transparent hover:bg-[#1A2235]/60")}>
                         <span className={cn("text-sm", selectedVoices.includes(voice.id) && !randomVoice ? "text-white" : "text-slate-400")}>{voice.name}</span>
-                        <button type="button" onClick={(e) => playVoicePreview(e, voice.name)} className="p-1.5 rounded bg-[#1A2235] hover:bg-[#7C5CFF] text-slate-400 hover:text-white transition-colors">
+                        <button aria-label={`Play preview for voice ${voice.name}`} type="button" onClick={(e) => playVoicePreview(e, voice.name)} className="p-1.5 rounded bg-[#1A2235] hover:bg-[#7C5CFF] text-slate-400 hover:text-white transition-colors">
                           <Volume2 className="h-3.5 w-3.5" />
                         </button>
                       </div>
@@ -1154,6 +1170,8 @@ function Dashboard() {
                   {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length > 0 && (
                     <div className="mt-2">
                       <select
+                        id="channel-select"
+                        aria-label="Select Channel"
                         value={selectedChannelId}
                         onChange={(e) => setSelectedChannelId(e.target.value)}
                         className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"

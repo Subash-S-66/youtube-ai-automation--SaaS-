@@ -1,4 +1,5 @@
 'use client';
+import NextImage from 'next/image';
 
 import { useEffect, useState, useRef } from 'react';
 import { motion } from 'framer-motion';
@@ -284,6 +285,8 @@ export default function MediaLibraryPage() {
 
              {/* Hidden file input */}
              <input
+               id="media-file-upload"
+               aria-label="Upload Media File"
                type="file"
                ref={fileInputRef}
                className="hidden"
@@ -336,20 +339,15 @@ export default function MediaLibraryPage() {
                    >
                      {item.type === 'image' ? (
                        <>
-                        <img
-                          src={`${getApiOrigin()}/${item.path}`}
-                           alt={item.originalName}
-                           className="absolute inset-0 w-full h-full object-cover"
-                           onError={(e) => {
-                             (e.target as HTMLImageElement).style.display = 'none';
-                           }}
-                         />
+                        <NextImage loading="lazy" src={`${getApiOrigin()}/${item.path}`} alt={item.originalName} fill className="object-cover" unoptimized />
                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#0B0F1A]/90 to-transparent p-2">
                            <div className="flex items-center justify-between gap-2">
                              <span className="text-[10px] text-white truncate">{item.originalName}</span>
                              <div className="flex items-center gap-1 text-[10px] text-slate-200">
                                <span className="text-slate-400">Dur</span>
                                <input
+                                 id="max-videos-per-day"
+                                 aria-label="Max videos per day"
                                  type="number"
                                  min={1}
                                  max={15}
@@ -415,7 +413,7 @@ export default function MediaLibraryPage() {
                          <span className="text-xs text-slate-400 break-all line-clamp-2">{v.originalName}</span>
                          <span className="text-[#00D4FF] font-mono text-xs font-bold mt-2">{v.duration}s</span>
                       </div>
-                      <button onClick={() => handleDelete(v._id)} className="absolute top-2 right-2 p-2 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                      <button aria-label={`Delete video ${v.originalName}`} onClick={() => handleDelete(v._id)} className="absolute top-2 right-2 p-2 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-4 w-4" />
                       </button>
                    </motion.div>
@@ -458,21 +456,15 @@ export default function MediaLibraryPage() {
                      }}
                      className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-square shadow-lg cursor-move"
                    >
-                      <img
-                        src={`${getApiOrigin()}/${img.path}`}
-                        alt={img.originalName}
-                        className="absolute inset-0 w-full h-full object-cover"
-                        onError={(e) => {
-                          // Fallback if static serving fails locally
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
-                      />
+                      <NextImage loading="lazy" src={`${getApiOrigin()}/${img.path}`} alt={img.originalName} fill className="object-cover" unoptimized />
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#0B0F1A]/90 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
                          <div className="flex items-center justify-between gap-2">
                            <span className="text-[10px] text-white truncate">{img.originalName}</span>
                            <div className="flex items-center gap-1 text-[10px] text-slate-200">
                              <span className="text-slate-400">Dur</span>
                              <input
+                               id="max-videos-per-day-mobile"
+                               aria-label="Max videos per day"
                                type="number"
                                min={1}
                                max={15}
@@ -484,7 +476,7 @@ export default function MediaLibraryPage() {
                            </div>
                          </div>
                       </div>
-                      <button onClick={() => handleDelete(img._id)} className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                      <button aria-label={`Delete image ${img.originalName}`} onClick={() => handleDelete(img._id)} className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-3.5 w-3.5" />
                       </button>
                    </motion.div>
@@ -508,18 +500,17 @@ export default function MediaLibraryPage() {
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                  {thumbnails.map(img => (
                    <motion.div key={img._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-video shadow-lg">
-                      <img
+                      <NextImage loading="lazy"
                         src={`${getApiOrigin()}/${img.path}`}
                         alt={img.originalName}
-                        className="absolute inset-0 w-full h-full object-cover"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = 'none';
-                        }}
+                        fill
+                        className="object-cover"
+                        unoptimized
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-[#0B0F1A]/80 to-transparent flex items-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
                          <span className="text-[10px] text-white truncate w-full">{img.originalName}</span>
                       </div>
-                      <button onClick={() => handleDelete(img._id)} className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
+                      <button aria-label={`Delete image ${img.originalName}`} onClick={() => handleDelete(img._id)} className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-3.5 w-3.5" />
                       </button>
                    </motion.div>
@@ -551,10 +542,12 @@ export default function MediaLibraryPage() {
                     (() => {
                       const item = images[previewIndex % images.length];
                       return (
-                        <img
+                        <NextImage loading="lazy"
                           src={`${getApiOrigin()}/${item.path}`}
                           alt={item.originalName}
-                          className="w-full h-full object-cover"
+                          fill
+                          className="object-cover"
+                          unoptimized
                         />
                       );
                     })()

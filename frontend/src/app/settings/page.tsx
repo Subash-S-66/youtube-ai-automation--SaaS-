@@ -240,7 +240,7 @@ export default function SettingsPage() {
                   <p className="text-sm text-slate-500">Receive pipeline status updates and alerts via email ({user?.user?.email}).</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" className="sr-only peer" checked={emailNotifs} onChange={(e) => setEmailNotifs(e.target.checked)} />
+                  <input id="email-notifs" aria-label="Toggle Email Notifications" type="checkbox" className="sr-only peer" checked={emailNotifs} onChange={(e) => setEmailNotifs(e.target.checked)} />
                   <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
                 </label>
               </div>
@@ -251,7 +251,7 @@ export default function SettingsPage() {
                   <p className="text-sm text-slate-500">Receive instant pipeline updates via Telegram Bot.</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" className="sr-only peer" checked={telegramNotifs} onChange={(e) => setTelegramNotifs(e.target.checked)} />
+                  <input id="telegram-notifs" aria-label="Toggle Telegram Notifications" type="checkbox" className="sr-only peer" checked={telegramNotifs} onChange={(e) => setTelegramNotifs(e.target.checked)} />
                   <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
                 </label>
               </div>
@@ -262,7 +262,7 @@ export default function SettingsPage() {
                   <p className="text-sm text-slate-500">Receive browser-based web push notifications for critical events.</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" className="sr-only peer" checked={pushNotifs} onChange={(e) => setPushNotifs(e.target.checked)} />
+                  <input id="push-notifs" aria-label="Toggle Push Notifications" type="checkbox" className="sr-only peer" checked={pushNotifs} onChange={(e) => setPushNotifs(e.target.checked)} />
                   <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
                 </label>
               </div>

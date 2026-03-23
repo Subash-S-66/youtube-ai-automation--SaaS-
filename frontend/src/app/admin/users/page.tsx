@@ -277,7 +277,7 @@ export default function AdminUsersPage() {
                       </div>
                       <div>
                         <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Plan</label>
-                        <select value={editPlan} onChange={(e) => setEditPlan(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none">
+                        <select id="edit-plan-select" aria-label="Select Plan" value={editPlan} onChange={(e) => setEditPlan(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#7C5CFF] focus:outline-none">
                           <option value="free">Free</option>
                           <option value="basic">Basic</option>
                           <option value="pro">Pro</option>
@@ -288,6 +288,8 @@ export default function AdminUsersPage() {
                         <label className="block text-xs text-slate-400 uppercase tracking-wider mb-1">Expiry Date</label>
                         <div className="relative">
                           <input
+                            id="edit-expiry-date"
+                            aria-label="Edit Expiry Date"
                             ref={editExpiryRef}
                             type="date"
                             value={editExpiry}

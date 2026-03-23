@@ -623,7 +623,7 @@ const handleDeleteUser = () => {
                     <p className="text-sm text-slate-400">When enabled, all free users temporarily receive "Basic" plan limits. Does not modify their database record.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
+                    <input id="beta-mode-toggle" aria-label="Toggle Beta Mode" type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
                     <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
@@ -634,7 +634,7 @@ const handleDeleteUser = () => {
                     {(['free', 'basic', 'pro', 'premium'] as const).map((key) => (
                       <div key={key}>
                         <label className="text-xs text-slate-400 block mb-1">{key.toUpperCase()} Value</label>
-                        <input
+                        <input id={`plan-value-map-${key}`} aria-label="Plan Value Map"
                           type="number"
                           min="0"
                           step="0.1"
@@ -681,7 +681,7 @@ const handleDeleteUser = () => {
                       <label className="flex items-center cursor-pointer">
                         <span className="mr-2 text-xs text-slate-400">Active</span>
                         <div className="relative inline-flex items-center">
-                          <input type="checkbox" className="sr-only peer" checked={plan.is_active} onChange={(e) => handlePlanChange(plan._id, { is_active: e.target.checked })} />
+                          <input aria-label={`Toggle active for ${plan.name}`} type="checkbox" className="sr-only peer" checked={plan.is_active} onChange={(e) => handlePlanChange(plan._id, { is_active: e.target.checked })} />
                           <div className="w-9 h-5 bg-[#1A2235] rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                         </div>
                       </label>
@@ -690,65 +690,65 @@ const handleDeleteUser = () => {
                     <div className="grid grid-cols-3 gap-4 mb-4">
                       <div>
                         <label className="text-xs text-slate-400 block mb-1">Price</label>
-                        <input type="number" value={plan.price} onChange={(e) => handlePlanChange(plan._id, { price: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        <input aria-label={`Price for ${plan.name}`} type="number" value={plan.price} onChange={(e) => handlePlanChange(plan._id, { price: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                       </div>
                       <div>
                         <label className="text-xs text-slate-400 block mb-1">Discount %</label>
-                        <input type="number" min="0" max="100" value={plan.discountPercentage || 0} onChange={(e) => handlePlanChange(plan._id, { discountPercentage: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        <input aria-label={`Discount percentage for ${plan.name}`} type="number" min="0" max="100" value={plan.discountPercentage || 0} onChange={(e) => handlePlanChange(plan._id, { discountPercentage: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                       </div>
                       <div>
                         <label className="text-xs text-slate-400 block mb-1">Priority Weight</label>
-                        <input type="number" value={plan.priority_weight} onChange={(e) => handlePlanChange(plan._id, { priority_weight: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        <input aria-label={`Priority weight for ${plan.name}`} type="number" value={plan.priority_weight} onChange={(e) => handlePlanChange(plan._id, { priority_weight: Number(e.target.value) })} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                       </div>
                     </div>
 
                     <div className="mb-4">
                       <label className="text-xs text-slate-400 block mb-1">Features List (Comma separated for display)</label>
-                      <input type="text" value={(plan.featuresList || []).join(', ')} onChange={(e) => handlePlanChange(plan._id, { featuresList: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} placeholder="E.g., 100 uploads, Fast AI, 24/7 Support" className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                      <input aria-label={`Features list for ${plan.name}`} type="text" value={(plan.featuresList || []).join(', ')} onChange={(e) => handlePlanChange(plan._id, { featuresList: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })} placeholder="E.g., 100 uploads, Fast AI, 24/7 Support" className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4 mb-4">
                       <div>
                         <label className="text-xs text-slate-400 block mb-1">Max Channels</label>
-                        <input type="number" value={plan.limits?.max_channels} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_channels: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        <input aria-label={`Max channels for ${plan.name}`} type="number" value={plan.limits?.max_channels} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_channels: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                       </div>
                       <div>
                         <label className="text-xs text-slate-400 block mb-1">Daily Uploads</label>
-                        <input type="number" value={plan.limits?.daily_upload_limit} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, daily_upload_limit: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
+                        <input aria-label={`Daily upload limit for ${plan.name}`} type="number" value={plan.limits?.daily_upload_limit} onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, daily_upload_limit: Number(e.target.value) }})} className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]" />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <label className="flex items-center cursor-pointer">
-                        <input type="checkbox" checked={plan.features?.voice_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, voice_selection: e.target.checked }})} className="mr-2" />
+                        <input aria-label={`Toggle voice_selection feature for ${plan.name}`} type="checkbox" checked={plan.features?.voice_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, voice_selection: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Voice Selection</span>
                       </label>
                       <label className="flex items-center cursor-pointer">
-                        <input type="checkbox" checked={plan.features?.scheduling} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, scheduling: e.target.checked }})} className="mr-2" />
+                        <input aria-label={`Toggle scheduling feature for ${plan.name}`} type="checkbox" checked={plan.features?.scheduling} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, scheduling: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Scheduling</span>
                       </label>
                       <label className="flex items-center cursor-pointer">
-                        <input type="checkbox" checked={plan.features?.multi_channel} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, multi_channel: e.target.checked }})} className="mr-2" />
+                        <input aria-label={`Toggle multi_channel feature for ${plan.name}`} type="checkbox" checked={plan.features?.multi_channel} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, multi_channel: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Multi Channel</span>
                       </label>
                       <label className="flex items-center cursor-pointer">
-                        <input type="checkbox" checked={plan.features?.story_mode} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, story_mode: e.target.checked }})} className="mr-2" />
+                        <input aria-label={`Toggle story_mode feature for ${plan.name}`} type="checkbox" checked={plan.features?.story_mode} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, story_mode: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Story Mode</span>
                       </label>
                       <label className="flex items-center cursor-pointer">
-                        <input type="checkbox" checked={plan.features?.cta} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, cta: e.target.checked }})} className="mr-2" />
+                        <input aria-label={`Toggle cta feature for ${plan.name}`} type="checkbox" checked={plan.features?.cta} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, cta: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Ending CTA</span>
                       </label>
                       <label className="flex items-center cursor-pointer">
-                        <input type="checkbox" checked={plan.features?.format_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, format_selection: e.target.checked }})} className="mr-2" />
+                        <input aria-label={`Toggle format_selection feature for ${plan.name}`} type="checkbox" checked={plan.features?.format_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, format_selection: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Format Selection</span>
                       </label>
                       <label className="flex items-center cursor-pointer">
-                        <input type="checkbox" checked={plan.features?.template_customization} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, template_customization: e.target.checked }})} className="mr-2" />
+                        <input aria-label={`Toggle template_customization feature for ${plan.name}`} type="checkbox" checked={plan.features?.template_customization} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, template_customization: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Subtitle Style (Font/Color)</span>
                       </label>
                       <label className="flex items-center cursor-pointer">
-                        <input type="checkbox" checked={plan.features?.custom_media} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, custom_media: e.target.checked }})} className="mr-2" />
+                        <input aria-label={`Toggle custom_media feature for ${plan.name}`} type="checkbox" checked={plan.features?.custom_media} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, custom_media: e.target.checked }})} className="mr-2" />
                         <span className="text-xs text-slate-300">Custom Media Library</span>
                       </label>
                     </div>
