@@ -1,6 +1,6 @@
 import express, { Request } from 'express';
 import { protect } from '../middleware/authMiddleware';
-import { uploadMedia, getMedia, deleteMedia, updateMedia, reorderMedia, reorderMixedMedia } from '../controllers/mediaController';
+import { uploadMedia, getMedia, deleteMedia, updateMedia, reorderMedia, reorderMixedMedia, getSequence, addToSequence, reorderSequence, deleteSequenceItem } from '../controllers/mediaController';
 import multer, { FileFilterCallback } from 'multer';
 
 const router = express.Router();
@@ -42,6 +42,10 @@ router.use(protect);
 
 router.post('/upload', upload.single('file'), uploadMedia);
 router.get('/', getMedia);
+router.get('/sequence', getSequence);
+router.post('/sequence', addToSequence);
+router.post('/sequence/reorder', reorderSequence);
+router.delete('/sequence/:id', deleteSequenceItem);
 router.post('/reorder', reorderMedia);
 router.post('/reorder-mixed', reorderMixedMedia);
 router.patch('/:id', updateMedia);

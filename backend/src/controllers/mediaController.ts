@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import Media from '../models/Media';
+import MediaSequence from '../models/MediaSequence';
 import fs from 'fs';
 import path from 'path';
 
@@ -64,7 +65,7 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
     size: file.size,
     duration,
     sortOrder: Date.now(),
-    path: file.path,
+    path: `uploads/${file.filename}`,
   };
   if (type === 'image') {
     mediaPayload.imageDuration = 3;
@@ -101,6 +102,106 @@ export const getMedia = asyncHandler(async (req: Request, res: Response) => {
     success: true,
     data: media,
   });
+});
+
+// @desc    Get sequence items (videos + images)
+// @route   GET /api/media/sequence
+// @access  Private
+export const getSequence = asyncHandler(async (req: Request, res: Response) => {
+  const items = await MediaSequence.find({ userId: req.user?.id })
+    .sort({ sortOrder: 1, createdAt: 1 })
+    .populate('mediaId');
+
+  const data = items.map((item: any) => ({
+    _id: item._id,
+    mediaId: item.mediaId?._id,
+    type: item.type,
+    sortOrder: item.sortOrder,
+    media: item.mediaId,
+  }));
+
+  res.status(200).json({ success: true, data });
+});
+
+// @desc    Add media item to sequence (allows duplicates)
+// @route   POST /api/media/sequence
+// @access  Private
+export const addToSequence = asyncHandler(async (req: Request, res: Response) => {
+  const { mediaId } = req.body || {};
+  if (!mediaId) {
+    throw new AppError('mediaId is required', 400);
+  }
+
+  const media = await Media.findOne({ _id: mediaId, userId: req.user?.id });
+  if (!media) {
+    throw new AppError('Media not found', 404);
+  }
+  if (media.type === 'thumbnail') {
+    throw new AppError('Thumbnails cannot be added to the sequence', 400);
+  }
+
+  const created = await MediaSequence.create({
+    userId: req.user?.id,
+    mediaId: media._id,
+    type: media.type,
+    sortOrder: Date.now(),
+  });
+
+  const populated = await MediaSequence.findById(created._id).populate('mediaId');
+
+  res.status(201).json({
+    success: true,
+    data: {
+      _id: populated?._id,
+      mediaId: populated?.mediaId?._id,
+      type: populated?.type,
+      sortOrder: populated?.sortOrder,
+      media: populated?.mediaId,
+    },
+  });
+});
+
+// @desc    Reorder sequence items
+// @route   POST /api/media/sequence/reorder
+// @access  Private
+export const reorderSequence = asyncHandler(async (req: Request, res: Response) => {
+  const { orderedIds } = req.body || {};
+  if (!Array.isArray(orderedIds)) {
+    throw new AppError('orderedIds are required', 400);
+  }
+
+  const userId = req.user?.id;
+  const items = await MediaSequence.find({ userId, _id: { $in: orderedIds } }).select('_id');
+  if (items.length !== orderedIds.length) {
+    throw new AppError('Some sequence items were not found', 404);
+  }
+
+  const bulk = MediaSequence.collection.initializeUnorderedBulkOp();
+  orderedIds.forEach((id: string, index: number) => {
+    bulk.find({ _id: id, userId }).updateOne({ $set: { sortOrder: index } });
+  });
+  if (bulk.length > 0) {
+    await bulk.execute();
+  }
+
+  res.status(200).json({ success: true });
+});
+
+// @desc    Remove a sequence item
+// @route   DELETE /api/media/sequence/:id
+// @access  Private
+export const deleteSequenceItem = asyncHandler(async (req: Request, res: Response) => {
+  const seqId = req.params.id;
+  if (!seqId) {
+    throw new AppError('Sequence item ID is required', 400);
+  }
+
+  const deleted = await MediaSequence.findOneAndDelete({ _id: seqId, userId: req.user?.id });
+  if (!deleted) {
+    throw new AppError('Sequence item not found', 404);
+  }
+
+  res.status(200).json({ success: true });
 });
 
 // @desc    Update media metadata (image duration, sort order)
@@ -244,6 +345,7 @@ export const deleteMedia = asyncHandler(async (req: Request, res: Response) => {
   }
 
   await media.deleteOne();
+  await MediaSequence.deleteMany({ userId: req.user?.id, mediaId: media._id });
 
   res.status(200).json({
     success: true,

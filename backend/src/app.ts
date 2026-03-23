@@ -17,6 +17,7 @@ import mediaRoutes from './routes/mediaRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
+import { getAllowedOrigins } from './utils/cors';
 
 const app: Application = express();
 
@@ -38,6 +39,7 @@ app.set('trust proxy', 1);
 import { globalLimiter } from './middleware/rateLimiter';
 
 // Security Middleware
+const isProduction = process.env.NODE_ENV === 'production';
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -51,6 +53,8 @@ app.use(helmet({
     },
   },
   crossOriginEmbedderPolicy: false,
+  // Allow frontend (different origin in dev) to load /uploads assets.
+  crossOriginResourcePolicy: isProduction ? { policy: 'same-site' } : false,
 }));
 
 // Apply generic API rate limiting
@@ -58,13 +62,7 @@ app.use('/api', globalLimiter);
 
 // CORS Middleware
 // Supports single or comma-separated frontend URLs via FRONTEND_URL or FRONTEND_URLS.
-const allowedOrigins = (() => {
-  const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'http://localhost:3000';
-  return raw
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-})();
+const allowedOrigins = getAllowedOrigins();
 
 app.use(cors({
   origin: function (origin, callback) {

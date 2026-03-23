@@ -1,9 +1,10 @@
 import { Server as HttpServer } from 'http';
+import { getAllowedOrigins } from './utils/cors';
 
 let io: any = null;
 
 export const initSocket = (server: HttpServer) => {
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const allowedOrigins = getAllowedOrigins();
 
   let ServerCtor: any;
   try {
@@ -16,7 +17,7 @@ export const initSocket = (server: HttpServer) => {
 
   io = new ServerCtor(server, {
     cors: {
-      origin: frontendUrl,
+      origin: allowedOrigins.length ? allowedOrigins : true,
       methods: ['GET', 'POST'],
       credentials: true,
     },

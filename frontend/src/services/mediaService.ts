@@ -43,4 +43,24 @@ export const mediaService = {
     const response = await api.post('/media/reorder-mixed', { orderedIds });
     return response.data;
   },
+
+  getSequence: async () => {
+    const response = await api.get('/media/sequence');
+    return response.data;
+  },
+
+  addToSequence: async (mediaId: string) => {
+    const response = await api.post('/media/sequence', { mediaId });
+    return response.data;
+  },
+
+  reorderSequence: async (orderedIds: string[]) => {
+    const response = await api.post('/media/sequence/reorder', { orderedIds });
+    return response.data;
+  },
+
+  deleteSequenceItem: async (id: string) => {
+    const response = await api.delete(`/media/sequence/${id}`);
+    return response.data;
+  },
 };

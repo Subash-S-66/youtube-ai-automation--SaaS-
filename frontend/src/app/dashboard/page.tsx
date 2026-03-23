@@ -793,8 +793,8 @@ function Dashboard() {
               </div>
 
               {/* General Settings */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235]">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235] col-span-2 sm:col-span-1">
                   <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
                     <Clock className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Duration
                   </label>
