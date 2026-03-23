@@ -57,9 +57,14 @@ app.use(helmet({
 app.use('/api', globalLimiter);
 
 // CORS Middleware
-const allowedOrigins = process.env.FRONTEND_URL
-  ? [process.env.FRONTEND_URL]
-  : ['http://localhost:3000'];
+// Supports single or comma-separated frontend URLs via FRONTEND_URL or FRONTEND_URLS.
+const allowedOrigins = (() => {
+  const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'http://localhost:3000';
+  return raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+})();
 
 app.use(cors({
   origin: function (origin, callback) {
