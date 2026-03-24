@@ -1,8 +1,8 @@
 'use client';
 import dynamic from "next/dynamic";
 
-import { useEffect, useState, Suspense, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useState, Suspense, useRef, useCallback } from 'react';
+import { m, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
@@ -125,14 +125,21 @@ function Dashboard() {
 
   useEffect(() => {
     const fetchData = async () => {
-
       try {
-        const userData = await authService.getMe();
-        setUser(userData.data);
+        const [userResult, jobsResult, mediaResult, sequenceResult] = await Promise.allSettled([
+          authService.getMe(),
+          pipelineService.getJobs(),
+          mediaService.getMedia(),
+          mediaService.getSequence()
+        ]);
 
-        if (userData.data?.user?.templateFont) {
-          setTemplateFont(userData.data.user.templateFont);
-        }
+        if (userResult.status === 'fulfilled') {
+          const userData = userResult.value;
+          setUser(userData.data);
+
+          if (userData.data?.user?.templateFont) {
+            setTemplateFont(userData.data.user.templateFont);
+          }
           if (userData.data?.user?.templateColor) {
             setTemplateColor(userData.data.user.templateColor);
           }
@@ -165,18 +172,23 @@ function Dashboard() {
             if (cached.selectedTopic) setSelectedTopic(cached.selectedTopic);
             if (cached.customTopic !== undefined) setCustomTopic(cached.customTopic);
           }
+        } else {
+          throw userResult.reason; // Rethrow to handle auth error below
+        }
 
-        const jobsData = await pipelineService.getJobs();
-        setJobs(jobsData.data);
+        if (jobsResult.status === 'fulfilled') {
+          setJobs(jobsResult.value.data);
+        }
 
-          const mediaData = await mediaService.getMedia();
-          setMediaList(mediaData.data || []);
-          try {
-            const sequenceData = await mediaService.getSequence();
-            setSequenceItems(sequenceData.data || []);
-          } catch {
-            setSequenceItems([]);
-          }
+        if (mediaResult.status === 'fulfilled') {
+          setMediaList(mediaResult.value.data || []);
+        }
+
+        if (sequenceResult.status === 'fulfilled') {
+          setSequenceItems(sequenceResult.value.data || []);
+        } else {
+          setSequenceItems([]);
+        }
 
         // Parse URL params for auth callback errors
         const urlParams = new URLSearchParams(window.location.search);
@@ -441,7 +453,7 @@ function Dashboard() {
     runPipelineGeneration();
   };
 
-    const runPipelineGeneration = async () => {
+    const runPipelineGeneration = useCallback(async () => {
       setGenerating(true);
       setMessage(null);
       try {
@@ -521,7 +533,11 @@ function Dashboard() {
       }
       setGenerating(false);
     }
-  };
+  }, [
+    selectedChannelId, channelInputCache, inputMode, prompt, selectedTopic, customTopic,
+    storyId, effectiveStoryMode, currentPart, storyContext, recapEnabled, ctaEnabled,
+    selectedVoices, randomVoice // eslint-disable-line react-hooks/exhaustive-deps
+  ]);
 
   const handleApiError = (err: any) => {
      const errorMsg = err.response?.data?.message || err.message || 'An unknown error occurred.';
@@ -734,7 +750,7 @@ function Dashboard() {
 
       <AnimatePresence>
         {message && (
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
@@ -746,7 +762,7 @@ function Dashboard() {
           >
             <ShieldAlert className="h-5 w-5 flex-shrink-0 mt-0.5" />
             <span className="text-sm font-medium">{message.text}</span>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
 
@@ -755,7 +771,7 @@ function Dashboard() {
         {/* Left Column: Form */}
         <div className="xl:col-span-2 space-y-6">
 
-          <motion.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <m.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
             <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-4">
                 <div className="flex items-center">
                   <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
@@ -838,7 +854,7 @@ function Dashboard() {
               {/* Prompt vs Topic Content */}
               <AnimatePresence mode="wait">
                 {inputMode === 'prompt' ? (
-                  <motion.div
+                  <m.div
                     key="prompt-mode"
                     initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
                   >
@@ -858,9 +874,9 @@ function Dashboard() {
                           confirmStoryReset(() => setPrompt(value));
                         }}
                     />
-                  </motion.div>
+                  </m.div>
                 ) : (
-                  <motion.div
+                  <m.div
                     key="topic-mode"
                     initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
                     className="grid grid-cols-1 sm:grid-cols-2 gap-4"
@@ -884,7 +900,7 @@ function Dashboard() {
                       </select>
                     </div>
                     {selectedTopic === 'Custom' && (
-                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                      <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                         <label className="block text-sm font-medium text-slate-300 mb-2">Custom Topic</label>
                         <input
                           type="text"
@@ -896,9 +912,9 @@ function Dashboard() {
                               confirmStoryReset(() => setCustomTopic(value));
                             }}
                         />
-                      </motion.div>
+                      </m.div>
                     )}
-                  </motion.div>
+                  </m.div>
                 )}
               </AnimatePresence>
 
@@ -1056,7 +1072,7 @@ function Dashboard() {
 
                     <AnimatePresence>
                       {scheduleEnabled && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                           <div className="mt-3">
                             <label className="block text-xs text-slate-400 mb-1">Publish Date & Time</label>
                             <div className="relative">
@@ -1093,7 +1109,7 @@ function Dashboard() {
                             </div>
                             <p className="text-xs text-slate-500 mt-2">The video will be generated and published at this time.</p>
                           </div>
-                        </motion.div>
+                        </m.div>
                       )}
                     </AnimatePresence>
                   </div>
@@ -1117,7 +1133,7 @@ function Dashboard() {
 
                     <AnimatePresence>
                       {autoUploadEnabled && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                           <div className="mt-3 grid grid-cols-2 gap-3">
                             <div>
                               <label className="block text-xs text-slate-400 mb-1">Interval (hours)</label>
@@ -1143,7 +1159,7 @@ function Dashboard() {
                             </div>
                           </div>
                           <p className="text-xs text-slate-500 mt-2">Each channel runs its own schedule. First upload starts after the selected interval.</p>
-                        </motion.div>
+                        </m.div>
                       )}
                     </AnimatePresence>
                   </div>
@@ -1211,7 +1227,7 @@ function Dashboard() {
 
                       <AnimatePresence>
                         {effectiveStoryMode && (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
+                          <m.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
                             <div className="flex items-center justify-between">
                               <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
                               <button type="button" onClick={() => { setCurrentPart(1); setStoryId(''); setStoryContext(''); }} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
@@ -1227,7 +1243,7 @@ function Dashboard() {
                               </span>
                               <input id="recap-enabled-toggle" aria-label="Enable Story Recap" type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} />
                             </label>
-                          </motion.div>
+                          </m.div>
                         )}
                       </AnimatePresence>
                     </div>
@@ -1259,7 +1275,7 @@ function Dashboard() {
 
                         <AnimatePresence>
                           {templateConfigOpen && (
-                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                            <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                               <div className="mt-4 pt-4 border-t border-[#00D4FF]/20 grid grid-cols-2 gap-4">
                                 <div>
                                   <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
@@ -1298,7 +1314,7 @@ function Dashboard() {
                                   />
                                 </div>
                               </div>
-                            </motion.div>
+                            </m.div>
                           )}
                         </AnimatePresence>
                       </div>
@@ -1342,7 +1358,7 @@ function Dashboard() {
 
                     <AnimatePresence>
                       {useCustomMedia && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                           <div className="mt-4 pt-4 border-t border-[#FF4FD8]/20 grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
                               <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Sequence Builder</span>
@@ -1365,12 +1381,12 @@ function Dashboard() {
                               </select>
                             </div>
                           </div>
-                        </motion.div>
+                        </m.div>
                         )}
                       </AnimatePresence>
                   </div>
 
-                <motion.button
+                <m.button
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.99 }}
                 type="submit"
@@ -1383,14 +1399,14 @@ function Dashboard() {
                   <Play className="h-6 w-6 mr-3 fill-white" />
                 )}
                 {generating ? 'Processing Pipeline...' : 'Generate & Run Pipeline'}
-              </motion.button>
+              </m.button>
             </form>
-          </motion.div>
+          </m.div>
         </div>
 
         {/* Right Column: Status & Connections */}
         <div className="space-y-6">
-          <motion.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <m.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
              <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
                 <Youtube className="h-24 w-24" />
              </div>
@@ -1448,7 +1464,7 @@ function Dashboard() {
                   </div>
                 )}
              </div>
-          </motion.div>
+          </m.div>
         </div>
       </div>
 

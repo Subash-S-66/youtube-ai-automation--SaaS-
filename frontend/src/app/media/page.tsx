@@ -1,8 +1,8 @@
 'use client';
 import NextImage from 'next/image';
 
-import { useEffect, useState, useRef } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { m } from 'framer-motion';
 import { Upload, Trash2, Video, Image as ImageIcon, Film, RefreshCw, AlertCircle, Eye } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { authService } from '../../services/authService';
@@ -49,7 +49,7 @@ export default function MediaLibraryPage() {
     fetchData();
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [userData, mediaData, sequenceData] = await Promise.all([
         authService.getMe(),
@@ -65,9 +65,9 @@ export default function MediaLibraryPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -101,7 +101,7 @@ export default function MediaLibraryPage() {
       autoAddToSequenceRef.current = false;
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  };
+  }, [uploadType, fetchData]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getVideoDuration = (file: File): Promise<number> => {
     return new Promise((resolve) => {
@@ -115,7 +115,7 @@ export default function MediaLibraryPage() {
     });
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = useCallback(async (id: string) => {
     if (!confirm('Are you sure you want to delete this file?')) return;
     try {
       await mediaService.deleteMedia(id);
@@ -123,7 +123,7 @@ export default function MediaLibraryPage() {
     } catch (err: any) {
       setError(err.response?.data?.message || "Failed to delete media");
     }
-  };
+  }, [fetchData]);
 
   const clearPreviewTimer = () => {
     if (previewTimerRef.current) {
@@ -157,14 +157,14 @@ export default function MediaLibraryPage() {
     setPreviewRunning(true);
   };
 
-  const getPreviewLength = () => {
+  const getPreviewLength = useCallback(() => {
     if (previewType === 'images') return images.length;
     if (previewType === 'videos') return videos.length;
-    if (previewType === 'sequence') return sequenceList.length;
+    if (previewType === 'sequence') return sequenceItems.filter(item => item?.media).length;
     return 0;
-  };
+  }, [previewType, images.length, videos.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const advancePreview = () => {
+  const advancePreview = useCallback(() => {
     const total = getPreviewLength();
     if (total <= 0) return;
     const next = previewIndex + 1;
@@ -174,7 +174,7 @@ export default function MediaLibraryPage() {
     } else {
       setPreviewIndex(next);
     }
-  };
+  }, [previewIndex, loopPreview, getPreviewLength]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scheduleNextImage = (durationSec: number) => {
     clearPreviewTimer();
@@ -192,8 +192,8 @@ export default function MediaLibraryPage() {
       const item = images[previewIndex % images.length];
       scheduleNextImage(item?.imageDuration || 3);
     }
-    if (previewType === 'sequence' && sequenceList.length > 0) {
-      const seq = sequenceList[previewIndex % sequenceList.length];
+    if (previewType === 'sequence' && sequenceItems.filter(item => item?.media).length > 0) {
+      const seq = sequenceList[previewIndex % sequenceItems.filter(item => item?.media).length];
       const mediaItem = seq?.media;
       if (mediaItem?.type === 'image') {
         scheduleNextImage(mediaItem?.imageDuration || 3);
@@ -204,7 +204,7 @@ export default function MediaLibraryPage() {
     };
   }, [previewType, previewRunning, previewIndex, images, sequenceList]);
 
-  const handleReorder = async (type: 'video' | 'image', newOrder: any[]) => {
+  const handleReorder = useCallback(async (type: 'video' | 'image', newOrder: any[]) => {
     setMedia(prev => {
       const others = prev.filter(m => m.type !== type);
       return [...newOrder, ...others];
@@ -215,9 +215,9 @@ export default function MediaLibraryPage() {
       setError(err.response?.data?.message || 'Failed to reorder media');
       await fetchData();
     }
-  };
+  }, [fetchData]);
 
-  const handleDurationChange = (id: string, value: number) => {
+  const handleDurationChange = useCallback((id: string, value: number) => {
     setMedia(prev => prev.map(m => (m._id === id ? { ...m, imageDuration: value } : m)));
     const existing = durationSaveTimers.current[id];
     if (existing) window.clearTimeout(existing);
@@ -228,9 +228,9 @@ export default function MediaLibraryPage() {
         setError(err.response?.data?.message || 'Failed to update image duration');
       }
     }, 500) as unknown as number;
-  };
+  }, []);
 
-  const handleVideoTrimChange = (id: string, field: 'trimStart' | 'trimEnd', value: number) => {
+  const handleVideoTrimChange = useCallback((id: string, field: 'trimStart' | 'trimEnd', value: number) => {
     setMedia(prev => prev.map(m => (m._id === id ? { ...m, [field]: value } : m)));
     const existing = durationSaveTimers.current[id];
     if (existing) window.clearTimeout(existing);
@@ -241,7 +241,7 @@ export default function MediaLibraryPage() {
         setError(err.response?.data?.message || `Failed to update video ${field}`);
       }
     }, 500) as unknown as number;
-  };
+  }, []);
 
   const totalVideoDuration = videos.reduce((acc, curr) => acc + (curr.duration || 0), 0);
   const maxVideoDuration = 70;
@@ -249,7 +249,7 @@ export default function MediaLibraryPage() {
   const maxThumbnails = 10;
 
 
-  const handleMixedReorder = async (newOrder: any[]) => {
+  const handleMixedReorder = useCallback(async (newOrder: any[]) => {
     try {
       setSequenceItems(newOrder);
       await mediaService.reorderSequence(newOrder.map((m: any) => m._id));
@@ -257,9 +257,9 @@ export default function MediaLibraryPage() {
       setError(err.response?.data?.message || 'Failed to reorder media');
       await fetchData();
     }
-  };
+  }, [fetchData]);
 
-  const triggerUpload = (type: 'video'|'image'|'thumbnail', addToSequenceOnUpload = false) => {
+  const triggerUpload = useCallback((type: 'video'|'image'|'thumbnail', addToSequenceOnUpload = false) => {
     setUploadType(type);
     autoAddToSequenceRef.current = addToSequenceOnUpload;
     if (fileInputRef.current) {
@@ -267,9 +267,9 @@ export default function MediaLibraryPage() {
       else fileInputRef.current.accept = "image/jpeg,image/png,image/webp";
       fileInputRef.current.click();
     }
-  };
+  }, []);
 
-  const addToSequence = async (mediaId: string) => {
+  const addToSequence = useCallback(async (mediaId: string) => {
     try {
       const result = await mediaService.addToSequence(mediaId);
       if (result?.data) {
@@ -280,15 +280,15 @@ export default function MediaLibraryPage() {
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to add to sequence');
     }
-  };
+  }, [fetchData]);
 
-  const handleSequenceDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+  const handleSequenceDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const mediaId = e.dataTransfer.getData('text/media-id');
     if (!mediaId) return;
     await addToSequence(mediaId);
     setSequenceDropActive(false);
-  };
+  }, [addToSequence]);
 
   const startTouchDrag = (id: string) => {
     if (touchTimerRef.current) window.clearTimeout(touchTimerRef.current);
@@ -513,7 +513,7 @@ export default function MediaLibraryPage() {
                 <div className="flex gap-2 md:justify-end">
                   <button
                     onClick={startSequencePreview}
-                    disabled={sequenceList.length === 0}
+                    disabled={sequenceItems.filter(item => item?.media).length === 0}
                     className="px-3 py-1.5 bg-[#1A2235] hover:bg-slate-700 rounded-lg text-xs font-bold text-white transition-colors flex items-center disabled:opacity-50 border border-[#1A2235] whitespace-nowrap"
                   >
                     <Eye className="h-3.5 w-3.5 mr-1.5 shrink-0" /> Preview Sequence
@@ -586,7 +586,7 @@ export default function MediaLibraryPage() {
                    const mediaItem = item.media;
                    if (!mediaItem) return null;
                    return (
-                   <motion.div
+                   <m.div
                      key={item._id}
                      initial={{ opacity: 0 }}
                      animate={{ opacity: 1 }}
@@ -639,6 +639,7 @@ export default function MediaLibraryPage() {
                            alt={mediaItem.originalName}
                            className="absolute inset-0 w-full h-full object-cover opacity-80 pointer-events-none"
                            draggable={false}
+                           loading="lazy"
                            onError={(e) => {
                              (e.target as HTMLImageElement).style.display = 'none';
                            }}
@@ -715,7 +716,7 @@ export default function MediaLibraryPage() {
                      >
                        <Trash2 className="h-3.5 w-3.5" />
                      </button>
-                   </motion.div>
+                   </m.div>
                    );
                  })}
                  <button
@@ -762,7 +763,7 @@ export default function MediaLibraryPage() {
              ) : (
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                  {videos.map(v => (
-                   <motion.div
+                   <m.div
                      key={v._id}
                      initial={{ opacity: 0 }}
                      animate={{ opacity: 1 }}
@@ -839,7 +840,7 @@ export default function MediaLibraryPage() {
                       <button onClick={() => handleDelete(v._id)} className="absolute bottom-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                   </motion.div>
+                   </m.div>
                  ))}
                  <button
                    onClick={() => triggerUpload('video')}
@@ -877,7 +878,7 @@ export default function MediaLibraryPage() {
              ) : (
                <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-4">
                  {images.map(img => (
-                   <motion.div
+                   <m.div
                      key={img._id}
                      initial={{ opacity: 0 }}
                      animate={{ opacity: 1 }}
@@ -910,6 +911,7 @@ export default function MediaLibraryPage() {
                         alt={img.originalName}
                         className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                         draggable={false}
+                        loading="lazy"
                         onError={(e) => {
                           // Fallback if static serving fails locally
                           (e.target as HTMLImageElement).style.display = 'none';
@@ -944,7 +946,7 @@ export default function MediaLibraryPage() {
                       <button aria-label={`Delete image ${img.originalName}`} onClick={() => handleDelete(img._id)} className="absolute bottom-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                   </motion.div>
+                   </m.div>
                  ))}
                  <button
                    onClick={() => triggerUpload('image')}
@@ -976,7 +978,7 @@ export default function MediaLibraryPage() {
              ) : (
                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                  {thumbnails.map(img => (
-                   <motion.div key={img._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-video shadow-lg">
+                   <m.div key={img._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="group relative bg-[#111827] rounded-xl border border-[#1A2235] overflow-hidden aspect-video shadow-lg">
                       <NextImage loading="lazy"
                         src={getMediaUrl(img.path)}
                         alt={img.originalName}
@@ -990,7 +992,7 @@ export default function MediaLibraryPage() {
                       <button aria-label={`Delete image ${img.originalName}`} onClick={() => handleDelete(img._id)} className="absolute top-2 right-2 p-1.5 bg-red-500/80 hover:bg-red-600 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
                          <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                   </motion.div>
+                   </m.div>
                  ))}
                </div>
              )}
@@ -1013,6 +1015,7 @@ export default function MediaLibraryPage() {
                   src={getMediaUrl(item.path)}
                   alt={item.originalName}
                   className="h-24 w-16 object-cover rounded-lg border border-[#1A2235] shadow-2xl"
+                  loading="lazy"
                 />
               ) : (
                 <div className="h-24 w-16 bg-[#111827] rounded-lg border border-[#1A2235] shadow-2xl flex items-center justify-center text-[10px] text-slate-200">
@@ -1059,6 +1062,7 @@ export default function MediaLibraryPage() {
                           src={getMediaUrl(item.path)}
                           alt={item.originalName}
                           className="w-full h-full object-cover"
+                          loading="lazy"
                         />
                       );
                     })()
@@ -1073,9 +1077,9 @@ export default function MediaLibraryPage() {
                       onEnded={advancePreview}
                     />
                   )}
-                  {previewType === 'sequence' && sequenceList.length > 0 && (
+                  {previewType === 'sequence' && sequenceItems.filter(item => item?.media).length > 0 && (
                     (() => {
-                      const seq = sequenceList[previewIndex % sequenceList.length];
+                      const seq = sequenceList[previewIndex % sequenceItems.filter(item => item?.media).length];
                       const mediaItem = seq?.media;
                       if (!mediaItem) return null;
                       if (mediaItem.type === 'image') {
@@ -1084,6 +1088,7 @@ export default function MediaLibraryPage() {
                             src={getMediaUrl(mediaItem.path)}
                             alt={mediaItem.originalName}
                             className="w-full h-full object-cover"
+                            loading="lazy"
                           />
                         );
                       }

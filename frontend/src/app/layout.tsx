@@ -4,6 +4,7 @@ import "./globals.css";
 import GlobalBanner from "../components/layout/GlobalBanner";
 import DisableNumberScroll from "../components/DisableNumberScroll";
 import { getApiOrigin } from "../lib/apiBase";
+import FramerMotionProvider from "../components/layout/FramerMotionProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -54,9 +55,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <GlobalBanner />
-        <DisableNumberScroll />
-        {children}
+        <FramerMotionProvider>
+          <GlobalBanner />
+          <DisableNumberScroll />
+          {children}
+        </FramerMotionProvider>
       </body>
     </html>
   );
