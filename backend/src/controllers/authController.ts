@@ -276,7 +276,6 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
   res.json({
     success: true,
     message: 'Email verified successfully',
-    token: jwtToken,
     user: {
       _id: user.id,
       email: user.email,

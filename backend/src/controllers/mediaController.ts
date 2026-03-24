@@ -9,6 +9,27 @@ import path from 'path';
 // @desc    Upload new media
 // @route   POST /api/media/upload
 // @access  Private
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+
+async function probeVideoDuration(filePath: string): Promise<number> {
+  try {
+    const { stdout } = await execAsync(
+      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`
+    );
+    const parsed = parseFloat(stdout.trim());
+    if (isNaN(parsed) || parsed <= 0) {
+      throw new Error('Invalid duration from ffprobe');
+    }
+    return Math.ceil(parsed);
+  } catch (err) {
+    console.warn(`[mediaController] ffprobe failed for ${filePath}:`, err);
+    return -1; // Signal that probe failed
+  }
+}
+
 export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
@@ -43,10 +64,22 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
     }
   }
 
-  // Duration is passed from client. For a robust MVP, we trust it but cap it at 70
   let duration = 0;
   if (type === 'video') {
-      duration = Number(req.body.duration) || 0;
+      const probedDuration = await probeVideoDuration(file.path);
+      if (probedDuration > 0) {
+        duration = probedDuration;
+        // Validate probed duration does not itself exceed the max
+        if (duration > 70) {
+          fs.unlinkSync(file.path);
+          throw new AppError(`Video duration (${duration}s) exceeds the maximum allowed of 70 seconds.`, 400);
+        }
+      } else {
+        // ffprobe unavailable — fall back to client-reported value with a cap
+        const clientDuration = Number(req.body.duration) || 0;
+        duration = Math.min(clientDuration, 70);
+        console.warn(`[mediaController] ffprobe unavailable, trusting client duration: ${duration}s`);
+      }
 
       const currentVideos = await Media.find({ userId: req.user?.id, type: 'video' });
       const currentTotalDuration = currentVideos.reduce((acc, curr) => acc + (curr.duration || 0), 0);

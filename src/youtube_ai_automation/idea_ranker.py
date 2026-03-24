@@ -98,7 +98,7 @@ def _is_similar_topic(candidate: str, used_topics_raw: list[str]) -> bool:
             continue
         overlap = candidate_tokens & used_tokens
         smaller = min(len(candidate_tokens), len(used_tokens))
-        if smaller > 0 and len(overlap) / smaller >= 0.6:
+        if smaller > 0 and len(overlap) >= 2 and (len(overlap) / smaller) >= 0.75:
             return True
     return False
 

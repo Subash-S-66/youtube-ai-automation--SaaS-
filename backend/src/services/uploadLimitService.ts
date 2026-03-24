@@ -75,16 +75,11 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
   const now = new Date();
   const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
+  // The actual DB reset now happens in the daily cron job `dailyResetCron.ts`
+  // which acts as the single source of truth. We use the saved values exclusively
+  // to avoid in-memory state desync or race conditions.
   let uploadsUsedToday = updatedUser.uploadsUsedToday;
   let uploadsOnHold = updatedUser.uploadsOnHold || 0;
-
-  // The actual DB reset now happens in the daily cron job.
-  // We still do an in-memory override here just in case a user makes a request
-  // right at midnight before the cron job finishes processing them.
-  if (updatedUser.lastUploadReset < startOfUTCDay) {
-    uploadsUsedToday = 0;
-    uploadsOnHold = 0;
-  }
 
   const actualPlanName = updatedUser.plan as string;
   const betaForFreeUsers = !!systemConfig?.betaMode && actualPlanName === 'free';

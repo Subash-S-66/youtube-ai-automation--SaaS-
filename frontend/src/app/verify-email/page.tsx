@@ -32,13 +32,10 @@ function VerifyEmailContent() {
         setStatus('success');
         setMessage(data.message || 'Email verified successfully!');
 
-        if (data.token) {
-          localStorage.setItem('token', data.token);
-        }
-
         const redirectUrl = data.redirectUrl || '/dashboard';
 
         // Redirect to dashboard (or provided redirect) after a short delay
+        // Relies on HTTP-only cookie set by backend for authentication
         setTimeout(() => {
           router.push(redirectUrl);
         }, 2000);

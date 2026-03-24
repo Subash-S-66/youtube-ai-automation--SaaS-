@@ -322,7 +322,7 @@ def download_scene_videos(
     max_per_scene = max(min_per_scene, int(clips_per_scene_max))
 
     import os
-    from src.youtube_ai_automation.clip_tracker import ClipTracker
+    from youtube_ai_automation.clip_tracker import ClipTracker
     clip_tracker = ClipTracker(os.getenv("MONGO_URI"))
     mongo_used_clips = clip_tracker.get_used_clips()
 
@@ -402,7 +402,7 @@ def download_scene_videos(
             return local_paths
 
         for clip_idx, selected in enumerate(selected_batch, start=1):
-            out_path = output_dir / f"scene{idx}_clip{clip_idx}.mp4"
+            out_path = output_dir / f"scene{idx:03d}_clip{clip_idx}.mp4"
             try:
                 clip_url = str(selected.get("url", ""))
                 _download_file(clip_url, out_path)
@@ -433,7 +433,8 @@ def download_scene_videos(
         for future in futures:
             all_paths.extend(future.result())
 
-    # Sort the paths to ensure sequential scene ordering is preserved (since futures complete out of order)
+    # Sort the paths to ensure sequential scene ordering is preserved (since futures complete out of order).
+    # Since filenames are zero-padded (e.g. scene001_clip1.mp4), lexicographical sort will be correct.
     all_paths.sort()
 
     if not all_paths:

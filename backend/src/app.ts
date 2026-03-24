@@ -15,6 +15,7 @@ import bannerRoutes from './routes/bannerRoutes';
 import scheduleRoutes from './routes/scheduleRoutes';
 import mediaRoutes from './routes/mediaRoutes';
 import webhookRoutes from './routes/webhookRoutes';
+import planRoutes from './routes/planRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -105,6 +106,7 @@ app.use('/api/banner', bannerRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/webhook', webhookRoutes);
+app.use('/api/plans', planRoutes);
 
 import path from 'path';
 

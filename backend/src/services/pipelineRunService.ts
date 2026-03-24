@@ -48,6 +48,14 @@ export const enqueuePipelineJob = async ({
     }
   }
 
+  // Prevent unbounded story growth
+  if (settings.storyMode && settings.currentPart && Number(settings.currentPart) > 100) {
+    throw new AppError(
+      'Story has reached the maximum of 100 parts. Please reset your story to start a new one.',
+      400
+    );
+  }
+
   if (settings.templateConfig && !limitCheck.features?.template_customization) {
     throw new AppError('Template Customization is only available on Pro and Premium plans.', 403);
   }
@@ -136,8 +144,10 @@ export const enqueuePipelineJob = async ({
     };
   }
 
-  if (settings.storyMode && settings.storyId && settings.resetStory) {
-    await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
+  if (settings.storyMode && settings.storyId) {
+    if (settings.resetStory) {
+      await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
+    }
   }
 
   const updatedUser = await User.findOneAndUpdate(

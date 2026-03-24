@@ -7,10 +7,34 @@ import { scheduleQueue, ScheduleJobPayload } from '../queues/scheduleQueue';
 let started = false;
 let scheduleWorker: Worker | null = null;
 
-export const startScheduleRunner = () => {
+export const startScheduleRunner = async () => {
   if (started) return;
   started = true;
   console.log('[ScheduleRunner] Worker Started');
+
+  // Seed orphaned schedules into the queue (one-time check to migrate from polling)
+  try {
+    const orphanedSchedules = await Schedule.find({ enabled: true, running: false });
+    let queuedCount = 0;
+    for (const schedule of orphanedSchedules) {
+      if (schedule.nextRunAt) {
+        await scheduleQueue.add(
+          'runSchedule',
+          { scheduleId: schedule._id.toString() },
+          {
+            delay: Math.max(0, schedule.nextRunAt.getTime() - Date.now()),
+            jobId: `schedule-${schedule._id.toString()}-${schedule.nextRunAt.getTime()}`
+          }
+        );
+        queuedCount++;
+      }
+    }
+    if (queuedCount > 0) {
+      console.log(`[ScheduleRunner] Seeded ${queuedCount} existing schedules into BullMQ.`);
+    }
+  } catch (seedErr) {
+    console.error('[ScheduleRunner] Failed to seed existing schedules on startup:', seedErr);
+  }
 
   scheduleWorker = new Worker<ScheduleJobPayload>(
     'scheduleQueue',
@@ -85,15 +109,20 @@ export const startScheduleRunner = () => {
           const nextRunTime = new Date(now.getTime() + intervalHours * 60 * 60 * 1000);
           update.nextRunAt = nextRunTime;
 
-          // Enqueue the next run
-          await scheduleQueue.add(
-            'runSchedule',
-            { scheduleId: claimed._id.toString() },
-            {
-              delay: nextRunTime.getTime() - Date.now(),
-              jobId: `schedule-${claimed._id.toString()}-${nextRunTime.getTime()}`
-            }
-          );
+          // Enqueue the next run before updating the DB to prevent race condition stalling
+          try {
+            await scheduleQueue.add(
+              'runSchedule',
+              { scheduleId: claimed._id.toString() },
+              {
+                delay: nextRunTime.getTime() - Date.now(),
+                jobId: `schedule-${claimed._id.toString()}-${nextRunTime.getTime()}`
+              }
+            );
+          } catch (qErr: any) {
+            console.error(`[ScheduleRunner] Failed to enqueue next run for ${claimed._id}`, qErr);
+            update.lastError = `Failed to queue next run: ${qErr.message}`;
+          }
         }
       }
 

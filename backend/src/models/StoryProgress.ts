@@ -39,6 +39,9 @@ const StoryProgressSchema = new Schema<IStoryProgress>(
 // Compound index to ensure a user only has one progress entry per storyId
 StoryProgressSchema.index({ userId: 1, storyId: 1 }, { unique: true });
 
+// Auto-expire abandoned stories after 90 days of inactivity
+StoryProgressSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 90 });
+
 const StoryProgress = mongoose.model<IStoryProgress>('StoryProgress', StoryProgressSchema);
 
 export default StoryProgress;

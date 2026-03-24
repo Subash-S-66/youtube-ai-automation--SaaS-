@@ -401,12 +401,14 @@ def generate_voice(
     """
     Generate voice audio from script text.
 
-    Tries Gemini Audio first, then Edge TTS, then silent audio as last resort.
-    Never crashes the pipeline - always returns a valid audio file.
+    Tries Gemini Audio first, then Edge TTS with multiple voice rotations.
+    Raises RuntimeError if all attempts fail — never returns silent audio,
+    as a muted video upload is worse than a visible pipeline failure.
 
     Returns:
-        (audio_path, has_narration) - has_narration is False only when
-        all TTS engines failed and silent audio was used.
+        (audio_path, True) on success
+    Raises:
+        RuntimeError: if all voice generation attempts are exhausted
     """
     if rotate_profile:
         selected_voice, selected_rate = pick_voice_profile(voice=voice, rate=rate)
@@ -417,9 +419,7 @@ def generate_voice(
     # Sanitize text to avoid invisible characters that break TTS
     clean_script = _sanitize_tts_text(script)
     if not clean_script:
-        LOGGER.error("Script is empty after sanitization. Generating silent audio.")
-        duration = _estimate_duration_seconds(script)
-        return _write_silent_audio(output_path, duration), False
+        raise RuntimeError("Script is empty after sanitization, unable to generate voice.")
 
     edge_error = ""
     global _EDGE_TTS_DISABLED_REASON
@@ -475,6 +475,6 @@ def generate_voice(
                     import time
                     time.sleep(max(0.0, EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS))
 
-    # --- Stage 2: Hard fail so we never skip narration ---
-    raise RuntimeError(f"Edge TTS failed after retries: {edge_error}")
+    # --- Stage 3: Hard fail so we never skip narration ---
+    raise RuntimeError(f"All voice generation attempts failed: {edge_error}")
 

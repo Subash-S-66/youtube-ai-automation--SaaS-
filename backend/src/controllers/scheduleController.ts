@@ -16,8 +16,14 @@ const VideoConfigSchema = z.object({
   videoCount: z.number().optional(),
   storyMode: z.boolean().optional(),
   storyId: z.string().optional(),
-  // Add other expected config options as needed, preventing arbitrary JSON injection
-}).passthrough();
+  theme: z.string().optional(),
+  videoStyle: z.string().optional(),
+  enableCTA: z.boolean().optional(),
+  voice: z.string().optional(),
+  voiceRate: z.string().optional(),
+  musicVolume: z.number().optional(),
+  useImages: z.boolean().optional(),
+});
 
 // @desc    Create a schedule
 // @route   POST /api/schedules
@@ -115,7 +121,7 @@ export const createSchedule = asyncHandler(
       nextRunAt,
       cron_expression,
       videoConfig: {
-        ...videoConfig,
+        ...validatedVideoConfig,
         channelId,
         videoCount: resolvedVideoCount,
       },
@@ -129,6 +135,18 @@ export const createSchedule = asyncHandler(
     }
 
     const schedule = await Schedule.create(createPayload);
+
+    // Enqueue delayed job
+    if (nextRunAt) {
+      await scheduleQueue.add(
+        'runSchedule',
+        { scheduleId: schedule._id.toString() },
+        {
+          delay: Math.max(0, nextRunAt.getTime() - Date.now()),
+          jobId: `schedule-${schedule._id.toString()}-${nextRunAt.getTime()}`
+        }
+      );
+    }
 
     res.status(201).json({
       success: true,
