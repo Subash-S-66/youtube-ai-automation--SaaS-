@@ -415,7 +415,7 @@ const handleDeleteUser = () => {
           adminService.getUsers(userPage, 10, userSearch),
           adminService.getSystemConfig(),
           adminService.getGlobalBanner(),
-          import('../../services/planService').then(m => m.planService.getPlans()),
+          import('../../services/planService').then(m => m.planService.getAdminPlans()),
         ]).then((results) => {
           if (!isMounted) return;
           const [statsRes, usersRes, configRes, bannerRes, plansRes] = results;

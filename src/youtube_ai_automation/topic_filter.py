@@ -60,8 +60,8 @@ def _is_similar_to_used(candidate: str, used_topics: set[str], raw_used: list[st
             continue
         overlap = candidate_tokens & used_tokens
         smaller = min(len(candidate_tokens), len(used_tokens))
-        # If 60%+ of the smaller set overlaps, topics are about the same thing
-        if smaller > 0 and len(overlap) / smaller >= 0.6:
+        # If 75%+ of the smaller set overlaps, and they share at least 2 tokens, they are similar
+        if smaller > 0 and len(overlap) >= 2 and (len(overlap) / smaller) >= 0.75:
             return True
     return False
 

@@ -364,6 +364,39 @@ const applySuccessfulPayment = async ({
     throw new AppError('User not found when applying payment', 404);
   }
 
+  // Handle referral reward if applicable
+  if (updatedUser.referredBy && !updatedUser.referralRewardGiven) {
+    try {
+      const referrer = await User.findById(updatedUser.referredBy);
+      if (referrer) {
+        // Extend referrer's subscription by 7 days
+        const currentExpiry = referrer.subscriptionExpiresAt && referrer.subscriptionExpiresAt > new Date()
+          ? referrer.subscriptionExpiresAt
+          : new Date();
+        const newExpiry = new Date(currentExpiry);
+        newExpiry.setDate(newExpiry.getDate() + 7);
+
+        referrer.subscriptionExpiresAt = newExpiry;
+        referrer.subscriptionStatus = 'active';
+
+        // Upgrade them to at least 'basic' if they are on 'free'
+        if (!referrer.plan || referrer.plan === 'free') {
+          referrer.plan = 'basic';
+        }
+
+        await referrer.save();
+
+        // Mark reward as given for the new user
+        updatedUser.referralRewardGiven = true;
+        await updatedUser.save();
+        console.log(`Successfully applied referral reward to user ${referrer._id} for referring ${updatedUser._id}`);
+      }
+    } catch (referralErr) {
+      console.error('Failed to process referral reward:', referralErr);
+      // We don't throw here to ensure the payment success still processes
+    }
+  }
+
   const paymentPayload: any = {
     userId: updatedUser._id,
     planId: purchasedPlan,

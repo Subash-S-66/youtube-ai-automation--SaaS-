@@ -2,6 +2,11 @@ import api from '../lib/api';
 
 export const planService = {
   async getPlans() {
+    const response = await api.get('/plans');
+    return response.data;
+  },
+
+  async getAdminPlans() {
     const response = await api.get('/admin/plans');
     return response.data;
   },

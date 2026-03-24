@@ -77,4 +77,7 @@ Thumbs.db
 # Tools
 tools/ffmpeg/
 backend/node_modules
-backend/uploadsbackend.log\n*.log\nbackend/*.log
+backend/uploads
+backend.log
+*.log
+backend/*.log

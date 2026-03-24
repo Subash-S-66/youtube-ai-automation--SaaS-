@@ -136,8 +136,15 @@ export const enqueuePipelineJob = async ({
     };
   }
 
-  if (settings.storyMode && settings.storyId && settings.resetStory) {
-    await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
+  if (settings.storyMode && settings.storyId) {
+    if (settings.resetStory) {
+      await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
+    }
+
+    // Guard against excessive story loops
+    if (settings.currentPart && settings.currentPart > 100) {
+      throw new AppError('Story has reached the maximum of 100 parts. Please reset.', 400);
+    }
   }
 
   const updatedUser = await User.findOneAndUpdate(

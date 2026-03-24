@@ -9,6 +9,17 @@ import path from 'path';
 // @desc    Upload new media
 // @route   POST /api/media/upload
 // @access  Private
+async function probeVideoDuration(filePath: string): Promise<number> {
+  const { execFile } = require('child_process');
+  const { promisify } = require('util');
+  const execFileAsync = promisify(execFile);
+  const { stdout } = await execFileAsync('ffprobe', [
+    '-v', 'error', '-show_entries', 'format=duration',
+    '-of', 'default=noprint_wrappers=1:nokey=1', filePath
+  ]);
+  return Math.ceil(parseFloat(stdout.trim()));
+}
+
 export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
@@ -43,10 +54,14 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
     }
   }
 
-  // Duration is passed from client. For a robust MVP, we trust it but cap it at 70
   let duration = 0;
   if (type === 'video') {
-      duration = Number(req.body.duration) || 0;
+      try {
+        duration = await probeVideoDuration(file.path);
+      } catch (probeErr) {
+        console.warn('Failed to probe video duration with ffprobe, falling back to client-provided duration.', probeErr);
+        duration = Number(req.body.duration) || 0;
+      }
 
       const currentVideos = await Media.find({ userId: req.user?.id, type: 'video' });
       const currentTotalDuration = currentVideos.reduce((acc, curr) => acc + (curr.duration || 0), 0);

@@ -106,7 +106,7 @@ def _prepare_youtube_credentials() -> None:
         _safe_write_text(token_path, token_json)
 
 
-from src.youtube_ai_automation.services.webhook_service import send_job_status
+from youtube_ai_automation.services.webhook_service import send_job_status
 
 def _notify_telegram(message: str) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()

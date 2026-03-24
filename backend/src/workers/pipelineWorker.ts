@@ -205,57 +205,49 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "MONGO_URI", value: process.env.MONGO_URI || "" }
       ];
 
-      const triggerSuccess = await triggerAzureJob(AZURE_JOB_NAME, envVars);
+      const { success: triggerSuccess, accessToken } = await triggerAzureJob(AZURE_JOB_NAME, envVars);
 
       if (triggerSuccess) {
          await appendLogSafe(jobId, `\nSuccessfully dispatched Azure Container App Job: ${AZURE_JOB_NAME}\n`);
 
-         // Mock polling to wait for Azure Job completion
-         // In production, poll the Azure REST API endpoint until status === "Succeeded" or "Failed"
          let jobStatus = 'running';
-         let pollCount = 0;
-
-         while (jobStatus === 'running' && pollCount < 60) {
-            // Simulate 10-second polling interval
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Shortened for dev
-            pollCount++;
-
-            // Mock Azure Job Completion check:
-            if (pollCount >= 5) { // Pretend job finishes after 5 ticks
-               jobStatus = 'Succeeded';
-            }
-         }
-
          const user = await User.findById(userId);
-         const dbJob = await JobModel.findById(jobId);
-         const acceptedLimitWarning = dbJob?.acceptedYouTubeLimitWarning || false;
 
-         // Let's pretend the Python pipeline appended the marker to logs, but since we are mocking,
-         // we simulate parsing it. If the dbJob.logs already contains a marker, we use it.
-         // Otherwise, we fallback to Succeeded/Failed based on jobStatus.
-         let finalStatusMarker = 'FAILED';
+         if (accessToken) {
+            // Real Azure API polling
+            const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
+            const resourceGroup = process.env.RESOURCE_GROUP;
+            const pollUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions?api-version=2023-05-01`;
 
-         if (jobStatus === 'Succeeded') {
-            finalStatusMarker = 'SUCCESS';
-            // Simulating a case where it could be rejected by YouTube (for testing purposes, we assume SUCCESS if jobStatus is Succeeded, unless logs explicitly say otherwise).
-            if (dbJob && dbJob.logs && dbJob.logs.includes('PIPELINE_STATUS:YOUTUBE_REJECTED')) {
-                finalStatusMarker = 'YOUTUBE_REJECTED';
-            } else if (dbJob && dbJob.logs && dbJob.logs.includes('PIPELINE_STATUS:SUCCESS')) {
-                finalStatusMarker = 'SUCCESS';
-            } else {
-                // Manually append SUCCESS marker as mock since we simulate Success
-                await appendLogSafe(jobId, `\n[Azure Container App] Job Execution Succeeded.\nPIPELINE_STATUS:SUCCESS`, 'success');
+            const jobTimeoutMs = 15 * 60 * 1000; // 15 mins
+            const startTime = Date.now();
+            let axios = require('axios');
+
+            while (jobStatus !== 'Succeeded' && jobStatus !== 'Failed' && (Date.now() - startTime < jobTimeoutMs)) {
+               await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10 seconds
+               try {
+                  const execRes = await axios.get(pollUrl, {
+                     headers: { Authorization: `Bearer ${accessToken}` }
+                  });
+                  const executions = execRes.data?.value;
+                  if (executions && executions.length > 0) {
+                     // Check the most recent execution status
+                     jobStatus = executions[0]?.properties?.status;
+                  }
+               } catch (pollErr) {
+                  console.warn('Failed to poll Azure execution status:', pollErr);
+               }
             }
          } else {
-            finalStatusMarker = 'FAILED';
-            if (dbJob && dbJob.logs && dbJob.logs.includes('PIPELINE_STATUS:FAILED')) {
-                // already failed
-            } else {
-                await appendLogSafe(jobId, `\n[Azure Container App] Job Execution Failed or Timed Out.\nPIPELINE_STATUS:FAILED`, 'failed');
-            }
+            // Fallback for dev mode where trigger is mocked
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            jobStatus = 'Succeeded';
          }
 
-         // Fetch the latest logs to evaluate markers
+         let finalStatusMarker = jobStatus === 'Succeeded' ? 'SUCCESS' : 'FAILED';
+
+         // Fetch the latest logs to evaluate specific backend markers
+         // since Python webhook may have updated them asynchronously
          const finalDbJob = await JobModel.findById(jobId);
          const finalLogs = finalDbJob?.logs || '';
 

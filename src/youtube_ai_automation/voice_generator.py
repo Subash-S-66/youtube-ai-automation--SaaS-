@@ -401,12 +401,12 @@ def generate_voice(
     """
     Generate voice audio from script text.
 
-    Tries Gemini Audio first, then Edge TTS, then silent audio as last resort.
-    Never crashes the pipeline - always returns a valid audio file.
+    Tries Gemini Audio first, then Edge TTS. If all voice generation attempts fail,
+    this function will raise a RuntimeError to ensure the pipeline fails and does
+    not silently upload a muted video.
 
     Returns:
-        (audio_path, has_narration) - has_narration is False only when
-        all TTS engines failed and silent audio was used.
+        (audio_path, has_narration)
     """
     if rotate_profile:
         selected_voice, selected_rate = pick_voice_profile(voice=voice, rate=rate)
@@ -475,6 +475,6 @@ def generate_voice(
                     import time
                     time.sleep(max(0.0, EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS))
 
-    # --- Stage 2: Hard fail so we never skip narration ---
-    raise RuntimeError(f"Edge TTS failed after retries: {edge_error}")
+    # --- Stage 3: Hard fail so we never skip narration ---
+    raise RuntimeError(f"All voice generation attempts failed: {edge_error}")
 

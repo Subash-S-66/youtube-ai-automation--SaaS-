@@ -1,11 +1,31 @@
 import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import JobModel from '../models/Job';
+import crypto from 'crypto';
 
 // @desc    Receive job status updates from Python pipeline
 // @route   POST /api/webhook/job-status
-// @access  Public (should verify secret in production)
+// @access  Private (verified via x-webhook-secret)
 export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Response) => {
+  const webhookSecret = process.env.WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    throw new Error('WEBHOOK_SECRET is not configured on the server');
+  }
+
+  const providedSecret = req.headers['x-webhook-secret'];
+  if (!providedSecret || typeof providedSecret !== 'string') {
+    res.status(401).json({ error: 'Missing webhook secret' });
+    return;
+  }
+
+  const expectedBuffer = Buffer.from(webhookSecret);
+  const providedBuffer = Buffer.from(providedSecret);
+
+  if (expectedBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+    res.status(401).json({ error: 'Invalid webhook secret' });
+    return;
+  }
+
   const { jobId, status, logs } = req.body;
 
   if (!jobId || !status) {
