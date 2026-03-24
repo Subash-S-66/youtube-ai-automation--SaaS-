@@ -586,71 +586,23 @@ def _build_short_from_optimized_idea(
 
     if needed_clips > 0:
         remaining_queries = scene_queries[len(videos):]
+        from youtube_ai_automation.services.media_service import fetch_media
+
         if content_type == "images":
-            LOGGER.info("Media mode 'images': Downloading stock images")
-            from youtube_ai_automation.image_fetcher import fetch_images
-            for idx, query in enumerate(remaining_queries, start=1):
-                try:
-                    # fetch 1 image per scene
-                    imgs = fetch_images(
-                        query=query,
-                        output_dir=CLIPS_DIR,
-                        count=1,
-                        pexels_key=PEXELS_API_KEY,
-                        pixabay_key=PIXABAY_API_KEY,
-                    )
-                    if imgs:
-                        videos.extend(imgs)
-                except Exception as e:
-                    LOGGER.warning(f"Failed to fetch image for query '{query}': {e}")
+            LOGGER.info("Media mode 'images': Downloading stock images via MediaService")
+            videos.extend(fetch_media(remaining_queries, CLIPS_DIR, PEXELS_API_KEY, PIXABAY_API_KEY, use_images=True))
         elif content_type == "mixed":
-            LOGGER.info("Media mode 'mixed': Downloading video and image clips")
-            from youtube_ai_automation.image_fetcher import fetch_images
-            initial_video_count = len(videos)
+            LOGGER.info("Media mode 'mixed': Downloading video and image clips via MediaService")
             for idx, query in enumerate(remaining_queries, start=1):
                 try:
-                    # Intro (1st scene) -> Video, Explanation (Middle scenes) -> Images, Highlights (Last scene) -> Video
-                    # Adjust idx relative to total queries to keep intro/outro logic intact
-                    global_idx = initial_video_count + idx
-                    if global_idx == 1 or global_idx == len(scene_queries):
-                        clips = download_scene_videos(
-                            scenes=[query],
-                            output_dir=CLIPS_DIR,
-                            pexels_key=PEXELS_API_KEY,
-                            pixabay_key=PIXABAY_API_KEY,
-                            scene_duration=scene_duration,
-                            min_resolution=720,
-                            used_clips_file=USED_CLIPS_FILE,
-                            clips_per_scene_min=1,
-                            clips_per_scene_max=1,
-                        )
-                        videos.extend(clips)
-                    else:
-                        imgs = fetch_images(
-                            query=query,
-                            output_dir=CLIPS_DIR,
-                            count=1,
-                            pexels_key=PEXELS_API_KEY,
-                            pixabay_key=PIXABAY_API_KEY,
-                        )
-                        if imgs:
-                            videos.extend(imgs)
+                    is_image = idx != 1 and idx != len(remaining_queries)
+                    clips = fetch_media([query], CLIPS_DIR, PEXELS_API_KEY, PIXABAY_API_KEY, use_images=is_image)
+                    videos.extend(clips)
                 except Exception as e:
-                    LOGGER.warning(f"Failed to fetch mixed media for query '{query}': {e}")
+                    LOGGER.warning(f"Failed to fetch media for mixed scene '{query}': {e}")
         else:
-            LOGGER.info("Media mode 'clips': Downloading scene clips with %.1fs cuts", scene_duration)
-            fetched_videos = download_scene_videos(
-                scenes=remaining_queries,
-                output_dir=CLIPS_DIR,
-                pexels_key=PEXELS_API_KEY,
-                pixabay_key=PIXABAY_API_KEY,
-                scene_duration=scene_duration,
-                min_resolution=720,
-                used_clips_file=USED_CLIPS_FILE,
-                clips_per_scene_min=1,
-                clips_per_scene_max=3,
-            )
-            videos.extend(fetched_videos)
+            LOGGER.info("Media mode 'clips': Downloading stock videos via MediaService")
+            videos.extend(fetch_media(remaining_queries, CLIPS_DIR, PEXELS_API_KEY, PIXABAY_API_KEY, use_images=False))
 
     LOGGER.info("Prepared %s media clips", len(videos))
 
@@ -1026,11 +978,13 @@ def _build_video_from_content(
     content_type = settings.get("contentType", "clips").lower()
     user_media_paths = settings.get("userMediaPaths", [])
 
-    LOGGER.info("Generating voice narration")
-    audio_file = _generate_narration_with_retries(
+    LOGGER.info("Generating voice narration via VoiceService")
+    from youtube_ai_automation.services.voice_service import generate_audio
+
+    audio_file, _ = generate_audio(
         script=content.script,
+        voice=preferred_voice,
         output_path=AUDIO_PATH,
-        preferred_voice=preferred_voice,
     )
 
     scene_duration = _choose_scene_duration()
@@ -1117,19 +1071,8 @@ def _build_video_from_content(
                 except Exception as e:
                     LOGGER.warning(f"Failed to fetch mixed media for query '{query}': {e}")
         else:
-            LOGGER.info("Media mode 'clips': Downloading scene clips with %.1fs cuts", scene_duration)
-            fetched_videos = download_scene_videos(
-                scenes=remaining_queries,
-                output_dir=CLIPS_DIR,
-                pexels_key=PEXELS_API_KEY,
-                pixabay_key=PIXABAY_API_KEY,
-                scene_duration=scene_duration,
-                min_resolution=720,
-                used_clips_file=USED_CLIPS_FILE,
-                clips_per_scene_min=1,
-                clips_per_scene_max=3,
-            )
-            videos.extend(fetched_videos)
+            LOGGER.info("Media mode 'clips': Downloading stock videos via MediaService")
+            videos.extend(fetch_media(remaining_queries, CLIPS_DIR, PEXELS_API_KEY, PIXABAY_API_KEY, use_images=False))
 
     LOGGER.info("Prepared %s media clips", len(videos))
 
@@ -1144,12 +1087,15 @@ def _build_video_from_content(
     )
 
     music_path = Path(BACKGROUND_MUSIC_PATH) if BACKGROUND_MUSIC_PATH else None
-    LOGGER.info("Creating final short video")
-    video_file = create_scene_based_video(
-        videos=videos,
+    LOGGER.info("Creating final short video via VideoService")
+    from youtube_ai_automation.services.video_service import create_video
+
+    video_file = create_video(
+        media_files=videos,
         audio_path=audio_file,
         subtitle_path=subtitle_file,
         output_path=VIDEO_PATH,
+        use_images=content_type == "images",
         width=1080,
         height=1920,
         fps=30,
@@ -1166,11 +1112,12 @@ def _build_video_from_content(
     mark_topic_as_used(content.topic)
 
     if upload:
-        LOGGER.info("Uploading to YouTube")
+        LOGGER.info("Uploading to YouTube via UploadService")
         LOGGER.info("Upload description preview: %s", content.upload_description()[:220])
         LOGGER.info("Upload hashtags: %s", " ".join(content.hashtags))
         
         try:
+            from youtube_ai_automation.services.upload_service import upload_video
             upload_result = upload_video(
                 video_path=video_file,
                 title=content.title,

@@ -52,6 +52,24 @@ EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS = float(os.getenv("EDGE_TTS_VOICE_SWITCH_DEL
 EDGE_TTS_INTER_CHUNK_DELAY_SECONDS = float(os.getenv("EDGE_TTS_INTER_CHUNK_DELAY_SECONDS", "1.2"))
 
 
+def _probe_media_duration(output_path: Path) -> float:
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(output_path),
+    ]
+    try:
+        import subprocess
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+
 def _is_nonrecoverable_edge_error(message: str) -> bool:
     """
     Detect Edge TTS failures that are unlikely to recover by retrying voices/chunks.
@@ -186,6 +204,9 @@ async def _save_voice_async(script: str, voice: str, rate: str, output_path: Pat
                 communicator = edge_tts.Communicate(text=chunks[0], voice=voice, rate=rate, proxy=proxy)
                 await communicator.save(str(output_path))
                 if output_path.exists() and output_path.stat().st_size > 1000:
+                    duration = _probe_media_duration(output_path)
+                    if duration < 1.0: # Less than 1 second is suspicious for a whole chunk
+                        raise RuntimeError(f"Generated audio too short: {duration}s")
                     return output_path
                 raise RuntimeError("Empty or too-small audio file")
             except Exception as e:
@@ -217,6 +238,9 @@ async def _save_voice_async(script: str, voice: str, rate: str, output_path: Pat
                 communicator = edge_tts.Communicate(text=chunk, voice=voice, rate=rate, proxy=proxy)
                 await communicator.save(str(part_path))
                 if part_path.exists() and part_path.stat().st_size > 500:
+                    duration = _probe_media_duration(part_path)
+                    if duration < 0.5:
+                        raise RuntimeError(f"Generated chunk too short: {duration}s")
                     part_files.append(part_path)
                     break
                 raise RuntimeError("Empty audio chunk")

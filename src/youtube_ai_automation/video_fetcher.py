@@ -161,6 +161,9 @@ def _best_pexels_file(video_files: list[dict[str, Any]], min_resolution: int) ->
     return best_url, best_width, best_height, best_score
 
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
 def _search_pexels_candidates(
     query: str,
     api_key: str,
@@ -235,6 +238,7 @@ def _best_pixabay_file(video_obj: dict[str, Any], min_resolution: int) -> tuple[
     return None
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
 def _search_pixabay_candidates(
     query: str,
     api_key: str,
@@ -317,7 +321,19 @@ def download_scene_videos(
     min_per_scene = max(1, int(clips_per_scene_min))
     max_per_scene = max(min_per_scene, int(clips_per_scene_max))
 
-    for idx, scene in enumerate(scenes, start=1):
+    import os
+    from src.youtube_ai_automation.clip_tracker import ClipTracker
+    clip_tracker = ClipTracker(os.getenv("MONGO_URI"))
+    mongo_used_clips = clip_tracker.get_used_clips()
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Need a lock for thread-safe operations on shared collections
+    import threading
+    lock = threading.Lock()
+
+    def process_scene(idx: int, scene: str) -> list[Path]:
+        local_paths = []
         query = " ".join(scene.split())[:90]
         pexels_candidates: list[dict[str, Any]] = []
         pixabay_candidates: list[dict[str, Any]] = []
@@ -351,43 +367,74 @@ def download_scene_videos(
                 LOGGER.debug("Pixabay source unavailable for scene %s: %s", idx, exc)
 
         combined_candidates = _merge_candidates(pexels_candidates, pixabay_candidates)
+
+        with lock:
+            exclude_all = selected_urls.union(mongo_used_clips)
+
         available_candidates = filter_candidates(
             candidates=combined_candidates,
             used_clips_file=used_file,
-            exclude_urls=selected_urls,
+            exclude_urls=exclude_all,
             min_resolution=effective_min_resolution,
         )
         if not available_candidates:
-            continue
+            return local_paths
 
         target_clip_count = random.randint(min_per_scene, max_per_scene)
-        selected_batch = choose_candidates(
-            candidates=available_candidates,
-            used_clips_file=used_file,
-            count=target_clip_count,
-            exclude_urls=selected_urls,
-            top_k=12,
-            min_resolution=effective_min_resolution,
-            allow_used_fallback=False,
-        )
+
+        with lock:
+            selected_batch = choose_candidates(
+                candidates=available_candidates,
+                used_clips_file=used_file,
+                count=target_clip_count,
+                exclude_urls=selected_urls,
+                top_k=12,
+                min_resolution=effective_min_resolution,
+                allow_used_fallback=False,
+            )
+
+            # Immediately reserve URLs to prevent other threads from grabbing them
+            if selected_batch:
+                 for s in selected_batch:
+                     selected_urls.add(_url_key(str(s.get("url", ""))))
+
         if not selected_batch:
-            continue
+            return local_paths
 
         for clip_idx, selected in enumerate(selected_batch, start=1):
             out_path = output_dir / f"scene{idx}_clip{clip_idx}.mp4"
             try:
-                _download_file(str(selected.get("url", "")), out_path)
-                selected_urls.add(_url_key(str(selected.get("url", ""))))
-                mark_clip_as_used(
-                    url=str(selected.get("url", "")),
-                    source=str(selected.get("source", "")),
-                    query=query,
-                    path=used_file,
-                    local_path=str(out_path),
-                )
-                all_paths.append(out_path)
+                clip_url = str(selected.get("url", ""))
+                _download_file(clip_url, out_path)
+
+                with lock:
+                    clip_tracker.mark_clip_used(_url_key(clip_url))
+                    mark_clip_as_used(
+                        url=clip_url,
+                        source=str(selected.get("source", "")),
+                        query=query,
+                        path=used_file,
+                        local_path=str(out_path),
+                    )
+                local_paths.append(out_path)
             except Exception as exc:
                 LOGGER.debug("Clip download skipped for scene %s (%s): %s", idx, selected.get("source", ""), exc)
+                with lock:
+                    # Unreserve it if it failed
+                    try:
+                        selected_urls.remove(_url_key(str(selected.get("url", ""))))
+                    except KeyError:
+                        pass
+
+        return local_paths
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(process_scene, idx, scene) for idx, scene in enumerate(scenes, start=1)]
+        for future in futures:
+            all_paths.extend(future.result())
+
+    # Sort the paths to ensure sequential scene ordering is preserved (since futures complete out of order)
+    all_paths.sort()
 
     if not all_paths:
         return _build_fallback_scene_clips(

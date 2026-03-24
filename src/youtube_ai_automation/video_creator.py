@@ -639,15 +639,36 @@ def create_scene_based_video(
     prepared: list[Path] = []
     for idx, (clip, dur) in enumerate(zip(selected, durations), start=1):
         prepared_clip = temp_dir / f"scene_{idx:02d}.mp4"
-        _prepare_scene_clip(
-            source=clip,
-            output=prepared_clip,
-            duration=dur,
-            width=width,
-            height=height,
-            fps=fps,
-        )
-        prepared.append(prepared_clip)
+        try:
+            _prepare_scene_clip(
+                source=clip,
+                output=prepared_clip,
+                duration=dur,
+                width=width,
+                height=height,
+                fps=fps,
+            )
+            prepared.append(prepared_clip)
+        except RuntimeError as e:
+            LOGGER.warning("Skipping bad clip %s: %s", clip, e)
+            # Create a placeholder clip so the entire video doesn't fail
+            try:
+                # Generate a simple black/color placeholder
+                cmd = [
+                    "ffmpeg", "-y", "-f", "lavfi",
+                    f"-i", f"color=c=black:s={width}x{height}:r={fps}:d={dur}",
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-pix_fmt", "yuv420p",
+                    str(prepared_clip)
+                ]
+                import subprocess
+                subprocess.run(cmd, check=True, capture_output=True)
+                prepared.append(prepared_clip)
+            except Exception as inner_e:
+                LOGGER.error("Failed to generate placeholder for %s: %s", clip, inner_e)
+
+    if not prepared:
+        raise RuntimeError("All scene clips failed and placeholders couldn't be generated.")
 
     concat_file = output_path.parent / "scenes_concat.txt"
     _build_concat_file(prepared, concat_file)

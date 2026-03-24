@@ -7,6 +7,17 @@ import User from '../models/User';
 import Plan from '../models/Plan';
 import { CreateScheduleInput } from '../utils/validators/scheduleValidators';
 import { getUploadLimits } from '../services/uploadLimitService';
+import { scheduleQueue } from '../queues/scheduleQueue';
+import { z } from 'zod';
+
+const VideoConfigSchema = z.object({
+  promptId: z.string().optional(),
+  channelId: z.string().optional(),
+  videoCount: z.number().optional(),
+  storyMode: z.boolean().optional(),
+  storyId: z.string().optional(),
+  // Add other expected config options as needed, preventing arbitrary JSON injection
+}).passthrough();
 
 // @desc    Create a schedule
 // @route   POST /api/schedules
@@ -65,6 +76,9 @@ export const createSchedule = asyncHandler(
     const now = new Date();
     let nextRunAt: Date | undefined;
     let resolvedVideoCount = Number(videoConfig?.videoCount || 1);
+
+    // Enforce schema validation on videoConfig to avoid arbitrary JSON injection
+    const validatedVideoConfig = videoConfig ? VideoConfigSchema.parse(videoConfig) : undefined;
 
     if (type === 'one-time') {
       if (!datetime) {

@@ -17,12 +17,17 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
     token = req.headers.authorization.split(' ')[1] || '';
   }
   // Get token from short-lived state parameter (e.g. for OAuth callback)
-  else if (req.query.state && typeof req.query.state === 'string') {
-    token = req.query.state;
-  }
+  // DEPRECATED: Do not use req.query.state for tokens as it logs them in server access logs
+  // else if (req.query.state && typeof req.query.state === 'string') {
+  //   token = req.query.state;
+  // }
   // Get token from cookies
   else if (req.cookies && req.cookies.jwt) {
     token = req.cookies.jwt;
+  }
+  // Use a dedicated short-lived cookie for OAuth
+  else if (req.cookies && req.cookies.oauth_state) {
+    token = req.cookies.oauth_state;
   }
 
   if (token) {

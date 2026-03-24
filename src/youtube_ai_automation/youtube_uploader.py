@@ -73,8 +73,30 @@ def _get_authenticated_service(client_secret_file: str, scopes: list[str], token
                 "YouTube OAuth token expired and has no refresh token. Re-auth is required."
             )
         if not creds or not creds.valid:
-            flow = InstalledAppFlow.from_client_secrets_file(client_secret_file, scopes)
-            creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+            import os
+
+            # Use YOUTUBE_TOKEN environment variable if available (passed from the backend)
+            # This is the proper headless token sync mechanism in Docker
+            env_token = os.environ.get("YOUTUBE_TOKEN")
+            if env_token:
+                try:
+                    import json
+                    token_data = json.loads(env_token)
+                    creds = Credentials.from_authorized_user_info(token_data)
+
+                    if not creds.valid and creds.expired and creds.refresh_token:
+                        creds.refresh(Request())
+                except Exception as e:
+                    LOGGER.error(f"Failed to use YOUTUBE_TOKEN from environment: {e}")
+                    raise RuntimeError("Invalid YouTube token provided by backend. Re-auth required.")
+            else:
+                # Local development fallback
+                if os.environ.get("NON_INTERACTIVE") == "1" or not os.environ.get("DISPLAY"):
+                    raise RuntimeError("YouTube token expired/missing and running headlessly. Please re-authenticate via frontend UI.")
+
+                flow = InstalledAppFlow.from_client_secrets_file(client_secret_file, scopes)
+                creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+
         token_path.parent.mkdir(parents=True, exist_ok=True)
         token_path.write_text(creds.to_json(), encoding="utf-8")
 

@@ -2,7 +2,15 @@ import crypto from 'crypto';
 
 const algorithm = 'aes-256-cbc';
 // Ensure the key is exactly 32 bytes (256 bits) long.
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex').substring(0, 32);
+if (!process.env.ENCRYPTION_KEY) {
+  throw new Error('ENCRYPTION_KEY must be set in production');
+}
+
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+if (ENCRYPTION_KEY.length !== 32) {
+  throw new Error('ENCRYPTION_KEY must be exactly 32 bytes/characters long for aes-256-cbc');
+}
+
 const IV_LENGTH = 16;
 
 export function encrypt(text: string): string {

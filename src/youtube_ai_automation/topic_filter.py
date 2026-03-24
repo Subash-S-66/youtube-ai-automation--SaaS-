@@ -66,7 +66,24 @@ def _is_similar_to_used(candidate: str, used_topics: set[str], raw_used: list[st
     return False
 
 
+import os
+from .topic_tracker import TopicTracker
+
 def _read_used_topics(path: Path = USED_TOPICS_FILE) -> list[UsedTopicEntry]:
+    tracker = TopicTracker(os.getenv("MONGO_URI"))
+    if tracker.collection is not None:
+        try:
+            records = tracker.get_all_topics()
+            entries = [
+                UsedTopicEntry(topic=str(row.get("topic", "")).strip(), used_at=str(row.get("used_at", "")))
+                for row in records
+                if str(row.get("topic", "")).strip()
+            ]
+            return entries
+        except Exception as e:
+            LOGGER.error("Failed reading from MongoDB: %s", e)
+
+    # Fallback to local file
     if not path.exists():
         return []
     try:
@@ -83,6 +100,11 @@ def _read_used_topics(path: Path = USED_TOPICS_FILE) -> list[UsedTopicEntry]:
 
 
 def _write_used_topics(entries: list[UsedTopicEntry], path: Path = USED_TOPICS_FILE) -> None:
+    tracker = TopicTracker(os.getenv("MONGO_URI"))
+    if tracker.collection is not None:
+        for entry in entries[-500:]:
+             tracker.mark_topic_used(entry.topic)
+
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "used_topics": [{"topic": item.topic, "used_at": item.used_at} for item in entries[-500:]]

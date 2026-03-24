@@ -9,6 +9,7 @@ import User from '../models/User';
 import Prompt from '../models/Prompt';
 import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
+import { triggerAzureJob } from './azureJobTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 
@@ -193,35 +194,18 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       console.log(`Triggering Azure Container App Job: ${AZURE_JOB_NAME}`);
 
       // Setup payload configuring environment variables for the container run
-      const payload = {
-        template: {
-          containers: [
-            {
-              name: "pipeline-worker",
-              env: [
-                { name: "USER_ID", value: userId },
-                { name: "PROMPT", value: geminiPrompt },
-                { name: "SETTINGS", value: JSON.stringify(settings) },
-                { name: "YOUTUBE_TOKEN", value: youtubeToken },
-                { name: "JOB_ID", value: jobId },
-                { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
-                { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
-                { name: "MONGO_URI", value: process.env.MONGO_URI || "" }
-              ]
-            }
-          ]
-        }
-      };
+      const envVars = [
+        { name: "USER_ID", value: userId },
+        { name: "PROMPT", value: geminiPrompt },
+        { name: "SETTINGS", value: JSON.stringify(settings) },
+        { name: "YOUTUBE_TOKEN", value: youtubeToken },
+        { name: "JOB_ID", value: jobId },
+        { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
+        { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
+        { name: "MONGO_URI", value: process.env.MONGO_URI || "" }
+      ];
 
-      // Since we don't have `@azure/arm-appcontainers` installed and the instructions said:
-      // "Do NOT change business logic" but "Ensure worker calls Azure Job instead of local execution",
-      // we mock the REST call here to simulate triggering the Azure job.
-
-      // In a real implementation with valid Azure AD credentials (managed identity / service principal),
-      // you would request a bearer token and POST to:
-      // https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/start?api-version=2023-05-01
-
-      const triggerSuccess = true; // Simulate successful POST
+      const triggerSuccess = await triggerAzureJob(AZURE_JOB_NAME, envVars);
 
       if (triggerSuccess) {
          await appendLogSafe(jobId, `\nSuccessfully dispatched Azure Container App Job: ${AZURE_JOB_NAME}\n`);

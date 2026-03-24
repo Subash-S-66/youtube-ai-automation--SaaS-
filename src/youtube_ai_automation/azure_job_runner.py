@@ -106,6 +106,8 @@ def _prepare_youtube_credentials() -> None:
         _safe_write_text(token_path, token_json)
 
 
+from src.youtube_ai_automation.services.webhook_service import send_job_status
+
 def _notify_telegram(message: str) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "").strip()
@@ -116,6 +118,11 @@ def _notify_telegram(message: str) -> None:
     except Exception as exc:
         LOGGER.warning("Telegram notify failed: %s", exc, exc_info=True)
         return
+
+def _notify_backend(status: str, logs: str = "") -> None:
+    job_id = os.getenv("JOB_ID", "").strip()
+    if job_id:
+        send_job_status(job_id, status, logs)
 
 
 def _acquire_arm_token(tenant_id: str, client_id: str, client_secret: str) -> str:
@@ -245,6 +252,8 @@ def main() -> None:
 
     LOGGER.info("Azure job starting. mode=%s count=%s upload=%s", run_mode, count, upload)
     _notify_telegram(f"Azure job starting. mode={run_mode} count={count} upload={upload}")
+    _notify_backend("running", f"Job started in mode={run_mode}")
+
     _run_network_preflight(check_trend_sources=run_mode in {"auto", "optimized"}, upload=upload)
 
     try:
@@ -252,16 +261,19 @@ def main() -> None:
             run_news_pipeline(upload=upload, publish_at=publish_at, count=count)
             report = load_upload_report(UPLOAD_REPORT_FILE)
             _notify_telegram(build_upload_summary_message(report))
+            _notify_backend("SUCCESS", "Pipeline completed successfully.")
             return
         if run_mode == "optimized":
             run_optimized_pipeline(topic=topic, niche=niche, upload=upload, publish_at=publish_at, count=count)
             report = load_upload_report(UPLOAD_REPORT_FILE)
             _notify_telegram(build_upload_summary_message(report))
+            _notify_backend("SUCCESS", "Pipeline completed successfully.")
             return
         if run_mode == "auto":
             run_auto_pipeline(topic=topic, niche=niche, upload=upload, publish_at=publish_at, count=count)
             report = load_upload_report(UPLOAD_REPORT_FILE)
             _notify_telegram(build_upload_summary_message(report))
+            _notify_backend("SUCCESS", "Pipeline completed successfully.")
             return
         if run_mode in {"manual", "single"}:
             if not topic:
@@ -269,12 +281,21 @@ def main() -> None:
             run_pipeline(topic=topic, upload=upload, niche=niche, generate_topic=False, publish_at=publish_at)
             report = load_upload_report(UPLOAD_REPORT_FILE)
             _notify_telegram(build_upload_summary_message(report))
+            _notify_backend("SUCCESS", "Pipeline completed successfully.")
             return
 
         raise SystemExit(f"Unknown RUN_MODE: {run_mode}")
     except Exception as exc:
         LOGGER.exception("Azure job failed: %s", exc)
         _notify_telegram(f"Azure job failed: {exc}")
+
+        # Determine if failed due to YouTube limits
+        err_str = str(exc).lower()
+        if "quota" in err_str or "upload limit" in err_str or "daily limit" in err_str:
+            _notify_backend("YOUTUBE_REJECTED", f"PIPELINE_STATUS:YOUTUBE_REJECTED\nAzure job failed: {exc}")
+        else:
+            _notify_backend("FAILED", f"PIPELINE_STATUS:FAILED\nAzure job failed: {exc}")
+
         raise
     finally:
         _sync_token_to_azure_job(token_path, initial_token)

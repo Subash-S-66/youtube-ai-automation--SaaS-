@@ -14,6 +14,7 @@ import userRoutes from './routes/userRoutes';
 import bannerRoutes from './routes/bannerRoutes';
 import scheduleRoutes from './routes/scheduleRoutes';
 import mediaRoutes from './routes/mediaRoutes';
+import webhookRoutes from './routes/webhookRoutes';
 import { errorHandler, AppError } from './middleware/errorHandler';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -103,6 +104,7 @@ app.use('/api/user', userRoutes);
 app.use('/api/banner', bannerRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/media', mediaRoutes);
+app.use('/api/webhook', webhookRoutes);
 
 import path from 'path';
 
@@ -112,6 +114,16 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // Base route
 app.get('/', (req: Request, res: Response) => {
   res.json({ success: true, message: 'Welcome to the API' });
+});
+
+import mongoose from 'mongoose';
+app.get('/health', (req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    redis: process.env.REDIS_URL ? 'enabled' : 'disabled',
+    uptime: process.uptime()
+  });
 });
 
 // Handle undefined routes

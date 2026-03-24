@@ -72,20 +72,18 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
 
   const updatedUser = await checkAndDowngradeExpiredPlan(user);
 
-  // UTC day reset check
   const now = new Date();
   const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
   let uploadsUsedToday = updatedUser.uploadsUsedToday;
   let uploadsOnHold = updatedUser.uploadsOnHold || 0;
 
+  // The actual DB reset now happens in the daily cron job.
+  // We still do an in-memory override here just in case a user makes a request
+  // right at midnight before the cron job finishes processing them.
   if (updatedUser.lastUploadReset < startOfUTCDay) {
     uploadsUsedToday = 0;
-    uploadsOnHold = 0; // Assuming holds don't carry over days, or adjust as needed
-    updatedUser.uploadsUsedToday = 0;
-    updatedUser.uploadsOnHold = 0;
-    updatedUser.lastUploadReset = now;
-    await updatedUser.save();
+    uploadsOnHold = 0;
   }
 
   const actualPlanName = updatedUser.plan as string;
@@ -111,24 +109,9 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
 };
 
 export const incrementUploadCount = async (userId: string, count: number = 1): Promise<void> => {
-  const now = new Date();
-  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-
-  const user = await User.findOneAndUpdate(
-    {
-      _id: userId,
-      lastUploadReset: { $lt: startOfUTCDay }
-    },
-    {
-      $set: { uploadsUsedToday: 1, uploadsOnHold: 0, lastUploadReset: now }
-    },
-    { returnDocument: 'after' }
+  // Reset logic is now handled by daily cron. Just increment.
+  await User.updateOne(
+    { _id: userId },
+    { $inc: { uploadsUsedToday: count } }
   );
-
-  if (!user) {
-    await User.updateOne(
-      { _id: userId },
-      { $inc: { uploadsUsedToday: count } }
-    );
-  }
 };

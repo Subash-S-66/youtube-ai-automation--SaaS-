@@ -1,0 +1,21 @@
+import os
+import requests
+import logging
+
+LOGGER = logging.getLogger("webhook_service")
+
+def send_job_status(job_id: str, status: str, logs: str = "") -> None:
+    webhook_url = os.getenv("WEBHOOK_URL")
+    if not webhook_url or not job_id:
+        return
+
+    try:
+        payload = {
+            "jobId": job_id,
+            "status": status,
+            "logs": logs
+        }
+        response = requests.post(webhook_url, json=payload, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        LOGGER.warning(f"Failed to send webhook update for job {job_id}: {e}")

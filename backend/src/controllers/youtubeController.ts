@@ -28,7 +28,17 @@ export const connectYouTube = asyncHandler(async (req: Request, res: Response) =
 
   // Create a short-lived signed token with the user's ID
   const stateToken = generateStateToken(req.user.id);
-  const authUrl = getGoogleAuthUrl(stateToken);
+
+  // Set as HTTP-only cookie
+  res.cookie('oauth_state', stateToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 5 * 60 * 1000, // 5 minutes
+  });
+
+  // Pass a generic string or empty state for the actual OAuth URL param since we rely on the cookie
+  const authUrl = getGoogleAuthUrl('youtube-auth');
 
   // Redirect user to Google OAuth consent screen
   res.redirect(authUrl);
@@ -38,6 +48,8 @@ export const connectYouTube = asyncHandler(async (req: Request, res: Response) =
 // @route   GET /api/youtube/callback
 // @access  Private (protected by state token via middleware)
 export const youtubeCallback = asyncHandler(async (req: Request, res: Response) => {
+  // Clear the state cookie
+  res.clearCookie('oauth_state');
   const code = req.query.code as string;
   const error = req.query.error as string;
 
