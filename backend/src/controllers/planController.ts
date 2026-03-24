@@ -6,7 +6,7 @@ import Plan from '../models/Plan';
 // @route   GET /api/plans
 // @access  Public
 export const getPublicPlans = asyncHandler(async (req: Request, res: Response) => {
-  const plans = await Plan.find({ isActive: true })
+  const plans = await Plan.find({ is_active: true })
     .select('name price discountPercentage features limits featuresList')
     .sort({ price: 1 });
 
