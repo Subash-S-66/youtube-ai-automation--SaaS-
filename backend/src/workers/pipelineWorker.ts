@@ -210,41 +210,97 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       if (triggerSuccess) {
          await appendLogSafe(jobId, `\nSuccessfully dispatched Azure Container App Job: ${AZURE_JOB_NAME}\n`);
 
-         let jobStatus = 'running';
          const user = await User.findById(userId);
 
-         if (accessToken) {
-            // Real Azure API polling
-            const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
-            const resourceGroup = process.env.RESOURCE_GROUP;
-            const pollUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions?api-version=2023-05-01`;
+         // Poll Azure Container Apps execution status
+         const pollIntervalMs = 10000;
+         const pollStart = Date.now();
+         const jobTimeoutMs = 15 * 60 * 1000; // 15 mins
+         let finalStatusMarker = 'FAILED';
 
-            const jobTimeoutMs = 15 * 60 * 1000; // 15 mins
-            const startTime = Date.now();
-            let axios = require('axios');
+         // Get ARM token for polling
+         const armTokenUrl = `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/oauth2/v2.0/token`;
+         const armTokenParams = new URLSearchParams({
+           grant_type: 'client_credentials',
+           client_id: process.env.AZURE_CLIENT_ID || '',
+           client_secret: process.env.AZURE_CLIENT_SECRET || '',
+           scope: 'https://management.azure.com/.default',
+         });
 
-            while (jobStatus !== 'Succeeded' && jobStatus !== 'Failed' && (Date.now() - startTime < jobTimeoutMs)) {
-               await new Promise(resolve => setTimeout(resolve, 10000)); // Poll every 10 seconds
-               try {
-                  const execRes = await axios.get(pollUrl, {
-                     headers: { Authorization: `Bearer ${accessToken}` }
-                  });
-                  const executions = execRes.data?.value;
-                  if (executions && executions.length > 0) {
-                     // Check the most recent execution status
-                     jobStatus = executions[0]?.properties?.status;
-                  }
-               } catch (pollErr) {
-                  console.warn('Failed to poll Azure execution status:', pollErr);
-               }
-            }
-         } else {
-            // Fallback for dev mode where trigger is mocked
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            jobStatus = 'Succeeded';
+         let armAccessToken = '';
+         try {
+           const tokenRes = await fetch(armTokenUrl, {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+             body: armTokenParams.toString(),
+           });
+           const tokenData = await tokenRes.json() as { access_token?: string };
+           armAccessToken = tokenData.access_token || '';
+         } catch (tokenErr) {
+           console.error(`Failed to acquire ARM token for polling job ${jobId}:`, tokenErr);
          }
 
-         let finalStatusMarker = jobStatus === 'Succeeded' ? 'SUCCESS' : 'FAILED';
+         if (armAccessToken) {
+           const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
+           const AZURE_RESOURCE_GROUP = process.env.RESOURCE_GROUP;
+           const executionsUrl = `https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions?api-version=2023-05-01`;
+
+           while (Date.now() - pollStart < jobTimeoutMs) {
+             await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+
+             try {
+               const execRes = await fetch(executionsUrl, {
+                 headers: { Authorization: `Bearer ${armAccessToken}` },
+               });
+
+               if (!execRes.ok) {
+                 console.warn(`ARM polling HTTP ${execRes.status} for job ${jobId}`);
+                 continue;
+               }
+
+               const execData = await execRes.json() as {
+                 value?: Array<{ properties?: { status?: string; startTime?: string } }>
+               };
+
+               const executions = execData.value || [];
+               if (executions.length === 0) continue;
+
+               // Sort by startTime descending, take latest
+               const sorted = executions.sort((a, b) => {
+                 const timeA = a.properties?.startTime || '';
+                 const timeB = b.properties?.startTime || '';
+                 return timeB.localeCompare(timeA);
+               });
+
+               const latestStatus = sorted[0]?.properties?.status || '';
+               await appendLogSafe(jobId, `\n[Azure] Execution status: ${latestStatus}`);
+
+               if (latestStatus === 'Succeeded') {
+                 finalStatusMarker = 'SUCCESS';
+                 break;
+               } else if (
+                 latestStatus === 'Failed' ||
+                 latestStatus === 'Stopped' ||
+                 latestStatus === 'Degraded'
+               ) {
+                 finalStatusMarker = 'FAILED';
+                 break;
+               }
+               // Running/Pending/Scheduled — keep polling
+             } catch (pollErr) {
+               console.warn(`ARM polling error for job ${jobId}:`, pollErr);
+             }
+           }
+
+           if (Date.now() - pollStart >= jobTimeoutMs) {
+             await appendLogSafe(jobId, `\n[Azure] Job timed out after ${jobTimeoutMs}ms`);
+             finalStatusMarker = 'FAILED';
+           }
+         } else {
+           // No ARM token available — fall back to webhook-driven status
+           await appendLogSafe(jobId, `\n[Azure] No ARM token — relying on webhook for status updates.`);
+           finalStatusMarker = 'FAILED'; // Default pessimistic until webhook updates
+         }
 
          // Fetch the latest logs to evaluate specific backend markers
          // since Python webhook may have updated them asynchronously

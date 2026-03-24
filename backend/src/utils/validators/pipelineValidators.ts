@@ -28,8 +28,8 @@ export const runPipelineSchema = z.object({
          fontStyle: z.string().optional(),
          subtitleColor: z.string().optional()
       }).optional(),
-      customVideoIds: z.array(z.string()).max(50).optional(),
-      customImageIds: z.array(z.string()).max(50).optional(),
+      customVideoIds: z.array(z.string().max(100)).max(50).optional(),
+      customImageIds: z.array(z.string().max(100)).max(50).optional(),
       customThumbnailId: z.string().max(100).optional(),
     }, {
       message: 'settings are required',

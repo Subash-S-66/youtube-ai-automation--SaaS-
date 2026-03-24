@@ -7,21 +7,26 @@ import crypto from 'crypto';
 // @route   POST /api/webhook/job-status
 // @access  Private (verified via x-webhook-secret)
 export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Response) => {
-  const webhookSecret = process.env.WEBHOOK_SECRET;
-  if (!webhookSecret) {
-    throw new Error('WEBHOOK_SECRET is not configured on the server');
-  }
+  const secret = req.headers['x-webhook-secret'];
+  const expectedSecret = process.env.WEBHOOK_SECRET;
 
-  const providedSecret = req.headers['x-webhook-secret'];
-  if (!providedSecret || typeof providedSecret !== 'string') {
-    res.status(401).json({ error: 'Missing webhook secret' });
+  if (!expectedSecret) {
+    res.status(500).json({ error: 'WEBHOOK_SECRET environment variable is not configured' });
     return;
   }
 
-  const expectedBuffer = Buffer.from(webhookSecret);
-  const providedBuffer = Buffer.from(providedSecret);
+  if (!secret || typeof secret !== 'string') {
+    res.status(401).json({ error: 'Missing x-webhook-secret header' });
+    return;
+  }
 
-  if (expectedBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+  const secretBuffer = Buffer.from(secret);
+  const expectedBuffer = Buffer.from(expectedSecret);
+
+  if (
+    secretBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(secretBuffer, expectedBuffer)
+  ) {
     res.status(401).json({ error: 'Invalid webhook secret' });
     return;
   }
