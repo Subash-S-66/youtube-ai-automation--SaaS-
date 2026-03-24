@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 
 import { useEffect, useState, Suspense, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Play, Activity, Youtube, ListVideo, Clock, FileVideo,
@@ -39,6 +40,8 @@ function Dashboard() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mediaList, setMediaList] = useState<any[]>([]);
+  const [sequenceItems, setSequenceItems] = useState<any[]>([]);
+  const [channelInputCache, setChannelInputCache] = useState<Record<string, { inputMode?: 'topic' | 'prompt'; prompt?: string; selectedTopic?: string; customTopic?: string }>>({});
 
   // Persistent Settings
   const [inputMode, setInputMode] = usePersistentSettings<'topic' | 'prompt'>('clipforge_inputMode', 'prompt');
@@ -63,6 +66,7 @@ function Dashboard() {
   const [randomVoice, setRandomVoice] = usePersistentSettings<boolean>('clipforge_randomVoice', true);
   const [templateFont, setTemplateFont] = usePersistentSettings<string>('clipforge_templateFont', 'Arial');
   const [templateColor, setTemplateColor] = usePersistentSettings<string>('clipforge_templateColor', '#FFFFFF');
+  const [templateConfigOpen, setTemplateConfigOpen] = usePersistentSettings<boolean>('clipforge_templateConfigOpen', true);
   const [useCustomMedia, setUseCustomMedia] = usePersistentSettings<boolean>('clipforge_useCustomMedia', false);
   const [selectedThumbnailId, setSelectedThumbnailId] = usePersistentSettings<string>('clipforge_selectedThumbnailId', '');
 
@@ -129,19 +133,50 @@ function Dashboard() {
         if (userData.data?.user?.templateFont) {
           setTemplateFont(userData.data.user.templateFont);
         }
-        if (userData.data?.user?.templateColor) {
-          setTemplateColor(userData.data.user.templateColor);
-        }
+          if (userData.data?.user?.templateColor) {
+            setTemplateColor(userData.data.user.templateColor);
+          }
+          if (userData.data?.user?.lastChannelInputs) {
+            setChannelInputCache(userData.data.user.lastChannelInputs);
+          }
+          if (userData.data?.user?.lastInputMode) {
+            setInputMode(userData.data.user.lastInputMode);
+          }
+          if (userData.data?.user?.lastPrompt !== undefined) {
+            setPrompt(userData.data.user.lastPrompt);
+          }
+          if (userData.data?.user?.lastSelectedTopic) {
+            setSelectedTopic(userData.data.user.lastSelectedTopic);
+          }
+          if (userData.data?.user?.lastCustomTopic !== undefined) {
+            setCustomTopic(userData.data.user.lastCustomTopic);
+          }
 
-        if (userData.data?.youtubeChannels && userData.data.youtubeChannels.length > 0) {
-            setSelectedChannelId(userData.data.youtubeChannels[0].channelId);
-        }
+          const initialChannelId = userData.data?.youtubeChannels && userData.data.youtubeChannels.length > 0
+            ? userData.data.youtubeChannels[0].channelId
+            : '';
+          if (initialChannelId) {
+            setSelectedChannelId(initialChannelId);
+          }
+          if (initialChannelId && userData.data?.user?.lastChannelInputs?.[initialChannelId]) {
+            const cached = userData.data.user.lastChannelInputs[initialChannelId];
+            if (cached.inputMode) setInputMode(cached.inputMode);
+            if (cached.prompt !== undefined) setPrompt(cached.prompt);
+            if (cached.selectedTopic) setSelectedTopic(cached.selectedTopic);
+            if (cached.customTopic !== undefined) setCustomTopic(cached.customTopic);
+          }
 
         const jobsData = await pipelineService.getJobs();
         setJobs(jobsData.data);
 
-        const mediaData = await mediaService.getMedia();
-        setMediaList(mediaData.data || []);
+          const mediaData = await mediaService.getMedia();
+          setMediaList(mediaData.data || []);
+          try {
+            const sequenceData = await mediaService.getSequence();
+            setSequenceItems(sequenceData.data || []);
+          } catch {
+            setSequenceItems([]);
+          }
 
         // Parse URL params for auth callback errors
         const urlParams = new URLSearchParams(window.location.search);
@@ -243,6 +278,29 @@ function Dashboard() {
   const canUseTemplateCustomization = planFeatures.template_customization ?? false;
   const canUseCustomMedia = planFeatures.custom_media ?? false;
   const effectiveStoryMode = canUseStoryMode && storyMode;
+  const uploadLimitPerDay = user?.uploadLimitPerDay ?? user?.uploadLimit ?? 0;
+  const remainingUploads = user?.remainingUploads ?? 0;
+  const remainingPct = uploadLimitPerDay > 0 ? remainingUploads / uploadLimitPerDay : 0;
+  const remainingColor = remainingUploads === 0
+    ? 'text-red-400'
+    : remainingPct <= 0.1
+      ? 'text-orange-400'
+      : 'text-green-400';
+  const sequenceList = sequenceItems.filter(item => item?.media);
+  const sequenceVideoCount = sequenceList.filter(item => item.media?.type === 'video').length;
+  const sequenceImageCount = sequenceList.filter(item => item.media?.type === 'image').length;
+  const sequenceTotalDuration = Math.round(sequenceList.reduce((acc, item) => {
+    const mediaItem = item?.media;
+    if (!mediaItem) return acc;
+    if (mediaItem.type === 'image') {
+      return acc + (mediaItem.imageDuration || 3);
+    }
+    const duration = mediaItem.duration || 0;
+    const trimStart = mediaItem.trimStart || 0;
+    const trimEnd = mediaItem.trimEnd ?? duration;
+    const clipDuration = Math.max(0, (trimEnd || 0) - (trimStart || 0));
+    return acc + clipDuration;
+  }, 0));
 
   useEffect(() => {
     if (!canUseStoryMode && storyMode) {
@@ -259,6 +317,34 @@ function Dashboard() {
   const handleConnectYouTube = () => window.location.href = youtubeService.getAuthUrl();
   const handleUpgrade = async () => {
     router.push('/pricing');
+  };
+
+  const resetStoryProgress = () => {
+    setCurrentPart(1);
+    setStoryId('');
+    setStoryContext('');
+  };
+
+  const confirmStoryReset = (onConfirm: () => void) => {
+    const shouldConfirm = effectiveStoryMode && (currentPart > 1 || !!storyContext || !!storyId);
+    if (!shouldConfirm) {
+      onConfirm();
+      return;
+    }
+    setModalConfig({
+      isOpen: true,
+      title: 'Reset Story Progress?',
+      description: 'Changing the prompt or topic will reset your story progress and you won’t be able to continue the current story.',
+      type: 'warning',
+      confirmText: 'Reset & Continue',
+      cancelText: 'Cancel',
+      onConfirm: () => {
+        resetStoryProgress();
+        setModalConfig(prev => ({ ...prev, isOpen: false }));
+        onConfirm();
+      },
+      onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+    });
   };
 
   const showUpgradeModal = (featureLabel?: string) => {
@@ -355,12 +441,28 @@ function Dashboard() {
     runPipelineGeneration();
   };
 
-  const runPipelineGeneration = async () => {
-    setGenerating(true);
-    setMessage(null);
-    try {
-      // 1. Manage Story ID
-      let currentStoryId = storyId;
+    const runPipelineGeneration = async () => {
+      setGenerating(true);
+      setMessage(null);
+      try {
+        try {
+          const updatedCache = selectedChannelId
+            ? {
+                ...channelInputCache,
+                [selectedChannelId]: { inputMode, prompt, selectedTopic, customTopic },
+              }
+            : channelInputCache;
+          await userService.updateSettings({
+            lastInputMode: inputMode,
+            lastPrompt: prompt,
+            lastSelectedTopic: selectedTopic,
+            lastCustomTopic: customTopic,
+            lastChannelInputs: updatedCache,
+          });
+          if (selectedChannelId) setChannelInputCache(updatedCache);
+        } catch {}
+        // 1. Manage Story ID
+        let currentStoryId = storyId;
       if (effectiveStoryMode && currentPart === 1) {
         currentStoryId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
         setStoryId(currentStoryId);
@@ -655,46 +757,81 @@ function Dashboard() {
 
           <motion.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
             <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-4">
-              <div className="flex items-center">
-                <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
-                  <Sparkles className="h-5 w-5 text-[#00D4FF]" />
+                <div className="flex items-center">
+                  <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
+                    <Sparkles className="h-5 w-5 text-[#00D4FF]" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-white tracking-tight">Generation Engine</h2>
+                  </div>
                 </div>
-                <h2 className="text-xl font-bold text-white tracking-tight">Generation Engine</h2>
+
+                {/* Input Mode Toggle (Desktop) */}
+                <div className="hidden sm:flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => router.push('/media')}
+                    className="flex items-center px-4 py-1.5 rounded-lg text-sm font-bold bg-white/5 text-white hover:bg-white/10 border border-white/10 transition-colors shadow-sm"
+                  >
+                    Media Library
+                  </button>
+                  <div className="flex bg-[#0B0F1A] p-1 rounded-xl border border-[#1A2235]">
+                    <button
+                      type="button"
+                      onClick={() => confirmStoryReset(() => setInputMode('prompt'))}
+                      className={cn(
+                        "flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                        inputMode === 'prompt' ? "bg-[#1A2235] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+                      )}
+                    >
+                      <PenLine className="h-4 w-4 mr-2" /> Prompt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => confirmStoryReset(() => setInputMode('topic'))}
+                      className={cn(
+                        "flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                        inputMode === 'topic' ? "bg-[#1A2235] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+                      )}
+                    >
+                      <List className="h-4 w-4 mr-2" /> Topic
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Input Mode Toggle */}
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center justify-between sm:hidden space-x-2 mb-4">
                 <button
                   type="button"
                   onClick={() => router.push('/media')}
-                  className="flex items-center px-4 py-1.5 rounded-lg text-sm font-bold bg-white/5 text-white hover:bg-white/10 border border-white/10 transition-colors mr-2 shadow-sm"
+                  className="flex items-center px-3.5 sm:px-4 py-2 rounded-lg text-[13px] sm:text-sm font-bold bg-white/5 text-white hover:bg-white/10 border border-white/10 transition-colors shadow-sm"
                 >
                   Media Library
                 </button>
                 <div className="flex bg-[#0B0F1A] p-1 rounded-xl border border-[#1A2235]">
                   <button
-                  type="button"
-                  onClick={() => setInputMode('prompt')}
-                  className={cn(
-                    "flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
-                    inputMode === 'prompt' ? "bg-[#1A2235] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
-                  )}
-                >
-                  <PenLine className="h-4 w-4 mr-2" /> Prompt
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInputMode('topic')}
-                  className={cn(
-                    "flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
-                    inputMode === 'topic' ? "bg-[#1A2235] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
-                  )}
-                >
-                  <List className="h-4 w-4 mr-2" /> Topic
-                </button>
+                    type="button"
+                    onClick={() => confirmStoryReset(() => setInputMode('prompt'))}
+                    className={cn(
+                      "flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                      inputMode === 'prompt' ? "bg-[#1A2235] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+                    )}
+                  >
+                    <PenLine className="h-4 w-4 mr-2" /> Prompt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => confirmStoryReset(() => setInputMode('topic'))}
+                    className={cn(
+                      "flex items-center px-4 py-1.5 rounded-lg text-sm font-medium transition-all",
+                      inputMode === 'topic' ? "bg-[#1A2235] text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+                    )}
+                  >
+                    <List className="h-4 w-4 mr-2" /> Topic
+                  </button>
                 </div>
               </div>
-            </div>
 
             <form onSubmit={handleGenerateAndRun} className="space-y-6 relative z-10">
 
@@ -705,13 +842,21 @@ function Dashboard() {
                     key="prompt-mode"
                     initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
                   >
-                    <label className="block text-sm font-medium text-slate-300 mb-2">Prompt Idea</label>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-sm font-medium text-slate-300">Prompt Idea</label>
+                      <span className={`text-xs font-semibold ${remainingColor}`}>
+                        Uploads left today: {remainingUploads}
+                      </span>
+                    </div>
                     <textarea
                       rows={3}
                       className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-4 text-slate-200 placeholder-slate-600 focus:outline-none border-glow-primary transition-colors resize-none shadow-inner"
                       placeholder="Describe your video idea here in detail..."
                       value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          confirmStoryReset(() => setPrompt(value));
+                        }}
                     />
                   </motion.div>
                 ) : (
@@ -727,7 +872,10 @@ function Dashboard() {
                         aria-label="Content Category"
                         className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-3.5 text-slate-200 focus:outline-none border-glow-primary transition-colors"
                         value={selectedTopic}
-                        onChange={(e) => setSelectedTopic(e.target.value)}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            confirmStoryReset(() => setSelectedTopic(value));
+                          }}
                       >
                         {TOPIC_CATEGORIES.map(topic => (
                           <option key={topic} value={topic} className="bg-[#111827]">{topic}</option>
@@ -743,7 +891,10 @@ function Dashboard() {
                           className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-3.5 text-slate-200 placeholder-slate-600 focus:outline-none border-glow-primary transition-colors shadow-inner"
                           placeholder="E.g. AI advancements in 2024"
                           value={customTopic}
-                          onChange={(e) => setCustomTopic(e.target.value)}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              confirmStoryReset(() => setCustomTopic(value));
+                            }}
                         />
                       </motion.div>
                     )}
@@ -751,68 +902,27 @@ function Dashboard() {
                 )}
               </AnimatePresence>
 
-              {/* Story Mode Options */}
-              <div className="p-5 bg-gradient-to-r from-[#7C5CFF]/10 to-[#00D4FF]/10 rounded-xl border border-[#7C5CFF]/30">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center">
-                    <BookOpen className="h-5 w-5 text-[#00D4FF] mr-2" />
-                    <h3 className="text-sm font-semibold text-white">Story Mode</h3>
-                  </div>
-                  <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
-                    <input id="story-mode-toggle" aria-label="Toggle Story Mode" type="checkbox" className="sr-only peer" checked={effectiveStoryMode} onChange={handleStoryModeToggle} disabled={isFreeUser} />
-                    <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
-                  </label>
-                </div>
-                {isFreeUser && (
-                  <p className="text-xs text-slate-500 mb-2">
-                    {canUseStoryMode ? 'Story Mode is available on your plan.' : 'Story Mode is not included in your plan.'}
-                  </p>
-                )}
-
-                <AnimatePresence>
-                  {effectiveStoryMode && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
-                        <button type="button" onClick={() => { setCurrentPart(1); setStoryId(''); setStoryContext(''); }} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
-                          Reset Story
-                        </button>
-                      </div>
-                      <label className="flex items-center space-x-3 cursor-pointer group">
-                        <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#0B0F1A] border-[#1A2235] group-hover:border-[#7C5CFF]", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
-                          {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
-                        </div>
-                        <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-600" : "text-slate-300 group-hover:text-white")}>
-                          Add Recap of Previous Parts (Disabled on Part 1)
-                        </span>
-                        <input id="recap-enabled-toggle" aria-label="Enable Story Recap" type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} disabled={currentPart === 1} />
-                      </label>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
               {/* General Settings */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235] col-span-2 sm:col-span-1">
-                  <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
-                    <Clock className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Duration
-                  </label>
-                  <input id="video-duration" aria-label="Video Duration" type="range" min="10" max="60" className="w-full accent-[#00D4FF]" value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
-                  <div className="text-right text-sm text-[#00D4FF] font-medium mt-1">{duration}s</div>
+              <div className="grid grid-cols-2 sm:grid-cols-10 gap-4">
+                  <div className="bg-[#0B0F1A] p-3 rounded-xl border border-[#1A2235] col-span-2 sm:col-span-3">
+                    <label className="flex items-center text-xs font-medium text-slate-400  uppercase tracking-wider">
+                      <Clock className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Duration
+                    </label>
+                    <div className="text-right text-sm text-[#00D4FF] font-medium mb-1 -mt-1">{duration}s</div>
+                    <input id="video-duration" aria-label="Video Duration" type="range" min="10" max="60" className="w-full accent-[#00D4FF]" value={duration} onChange={(e) => setDuration(Number(e.target.value))} />
                 </div>
 
-                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235]">
-                  <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
-                    <FileVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Format
-                  </label>
-                  <select id="content-type" aria-label="Content Type"
-                    className="w-full bg-transparent text-slate-300 text-sm focus:outline-none cursor-pointer"
-                    value={contentType}
-                    onChange={(e) => {
-                      if (!canUseFormatSelection) {
-                        showUpgradeModal('Format changes');
-                        return;
+                  <div className="bg-[#0B0F1A] p-3 rounded-xl border border-[#1A2235] flex flex-col justify-between min-h-[80px] col-span-1 sm:col-span-2">
+                    <label className="flex items-center text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">
+                      <FileVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Format
+                    </label>
+                    <select id="content-type" aria-label="Content Type"
+                      className="w-4/5 mx-auto mt-1 bg-transparent text-slate-300 text-sm text-center focus:outline-none cursor-pointer border-b border-[#1A2235] pb-1"
+                      value={contentType}
+                      onChange={(e) => {
+                        if (!canUseFormatSelection) {
+                          showUpgradeModal('Format changes');
+                          return;
                       }
                       setContentType(e.target.value as any);
                     }}
@@ -823,123 +933,87 @@ function Dashboard() {
                   </select>
                 </div>
 
-                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235]">
-                  <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
-                    <ListVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Count
-                  </label>
-                  <input
-                    id="video-count"
-                    aria-label="Number of videos to generate"
-                    type="number" required min="1"
-                    className="w-full bg-transparent text-slate-300 text-sm focus:outline-none border-b border-[#1A2235] pb-1 focus:border-[#00D4FF] transition-colors"
-                    value={videoCount}
-                    onChange={(e) => setVideoCount(Number(e.target.value))}
-                  />
-                </div>
+                  <div className="bg-[#0B0F1A] p-3 rounded-xl border border-[#1A2235] flex flex-col justify-between min-h-[80px] col-span-1 sm:col-span-2">
+                    <label className="flex items-center text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">
+                      <ListVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Count
+                    </label>
+                    <input
+                      id="video-count"
+                      aria-label="Number of videos to generate"
+                      type="number" required min="1"
+                      className="w-2/5 mx-auto mt-1 bg-transparent text-slate-300 text-sm text-center focus:outline-none border-b border-[#1A2235] pb-1 focus:border-[#00D4FF] transition-colors"
+                      value={videoCount}
+                      onChange={(e) => setVideoCount(Number(e.target.value))}
+                    />
+                  </div>
+
+                  <div className="bg-[#0B0F1A] p-3 rounded-xl border border-[#1A2235] col-span-2 sm:col-span-3">
+                    <label className="flex items-center text-xs font-medium text-slate-400 mb-3 uppercase tracking-wider">
+                      <Youtube className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Channel
+                    </label>
+                    <select
+                      id="channel-select-inline"
+                      aria-label="Select YouTube Channel"
+                      className="w-full bg-transparent text-slate-300 text-sm focus:outline-none cursor-pointer"
+                      value={selectedChannelId}
+                      onChange={(e) => {
+                        const nextChannelId = e.target.value;
+                        const applyChannel = () => {
+                          const currentId = selectedChannelId;
+                          const nextCache = { ...channelInputCache };
+                          if (currentId) {
+                            nextCache[currentId] = { inputMode, prompt, selectedTopic, customTopic };
+                          }
+                          setChannelInputCache(nextCache);
+                          setSelectedChannelId(nextChannelId);
+                          const cached = nextCache[nextChannelId];
+                          if (cached) {
+                            if (cached.inputMode) setInputMode(cached.inputMode);
+                            if (cached.prompt !== undefined) setPrompt(cached.prompt);
+                            if (cached.selectedTopic) setSelectedTopic(cached.selectedTopic);
+                            if (cached.customTopic !== undefined) setCustomTopic(cached.customTopic);
+                          }
+                          userService.updateSettings({ lastChannelInputs: nextCache }).catch(() => {});
+                        };
+                        confirmStoryReset(applyChannel);
+                      }}
+                    >
+                      {!user?.isYoutubeConnected && (
+                        <option value="" className="bg-[#111827]">Connect YouTube</option>
+                      )}
+                      {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length === 0 && (
+                        <option value="" className="bg-[#111827]">No channels found</option>
+                      )}
+                        {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length > 0 && (
+                          user.youtubeChannels.map((channel: any) => (
+                            <option key={channel.channelId} value={channel.channelId} className="bg-[#111827]">
+                              {channel.channelName}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      {!user?.isYoutubeConnected && (
+                        <p className="text-[10px] text-slate-500 mt-1"></p>
+                      )}
+                      {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length === 0 && (
+                        <p className="text-[10px] text-slate-500 mt-1">No channels linked yet.</p>
+                      )}
+                    <div className="mt-2 sm:hidden">
+                      {!user?.isYoutubeConnected ? (
+                        <button onClick={handleConnectYouTube} className="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-semibold py-2 rounded-lg border border-white/10 transition-colors">
+                          Connect YouTube
+                        </button>
+                      ) : (
+                        <button onClick={handleConnectYouTube} className="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-semibold py-2 rounded-lg border border-white/10 transition-colors">
+                          Add Channel
+                        </button>
+                      )}
+                    </div>
+                  </div>
               </div>
 
-              {/* Custom Media Toggle */}
-              {mediaList.length > 0 && (
-                 <div className="p-4 bg-gradient-to-r from-[#FF4FD8]/10 to-[#7C5CFF]/10 rounded-xl border border-[#FF4FD8]/30">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center">
-                         <FileVideo className="h-5 w-5 text-[#FF4FD8] mr-3" />
-                         <div>
-                           <p className="text-sm font-bold text-white">Use Custom Media</p>
-                           <p className="text-xs text-slate-400">Inject your uploaded assets into the video generation.</p>
-                         </div>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input id="use-custom-media-toggle" aria-label="Toggle Custom Media"
-                          type="checkbox"
-                          className="sr-only peer"
-                          checked={useCustomMedia}
-                          onChange={(e) => {
-                            if (!canUseCustomMedia) { showUpgradeModal('Custom media'); return; }
-                            setUseCustomMedia(e.target.checked);
-                          }}
-                        />
-                        <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FF4FD8]"></div>
-                      </label>
-                    </div>
-
-                    <AnimatePresence>
-                      {useCustomMedia && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                          <div className="mt-4 pt-4 border-t border-[#FF4FD8]/20 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                             <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
-                                <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Content Assests</span>
-                                <p className="text-sm text-white font-medium">{mediaList.filter(m => m.type === 'video').length} Videos, {mediaList.filter(m => m.type === 'image').length} Images active.</p>
-                             </div>
-                             <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
-                                <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Custom Thumbnail</span>
-                                <select
-                                  id="thumbnail-select"
-                                  aria-label="Select Thumbnail"
-                                  value={selectedThumbnailId}
-                                  onChange={(e) => setSelectedThumbnailId(e.target.value)}
-                                  className="w-full bg-transparent text-sm text-white focus:outline-none cursor-pointer"
-                                >
-                                  <option value="" className="bg-[#111827]">Let AI Generate Thumbnail</option>
-                                  {mediaList.filter(m => m.type === 'thumbnail').map(thumb => (
-                                     <option key={thumb._id} value={thumb._id} className="bg-[#111827]">{thumb.originalName}</option>
-                                  ))}
-                                </select>
-                             </div>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                 </div>
-              )}
-
-              {/* Call to Actions & Voices */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-
-                {canUseTemplateCustomization && (
-                  <div className="col-span-1 sm:col-span-2 bg-[#0B0F1A] p-4 rounded-xl border border-[#00D4FF]/30 space-y-4">
-                     <div className="flex items-center mb-2">
-                       <Sparkles className="h-4 w-4 text-[#00D4FF] mr-2" />
-                       <h3 className="text-sm font-semibold text-white">Premium Template Config</h3>
-                     </div>
-                     <div className="grid grid-cols-2 gap-4">
-                       <div>
-                         <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
-                         <select
-                           id="template-font"
-                           aria-label="Template Font"
-                           value={templateFont}
-                           onChange={async (e) => {
-                             const value = e.target.value;
-                             setTemplateFont(value);
-                             try { await userService.updateSettings({ templateFont: value }); } catch {}
-                           }}
-                           className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
-                         >
-                           <option value="Arial">Arial</option>
-                           <option value="Anton">Anton</option>
-                           <option value="Montserrat">Montserrat</option>
-                           <option value="Bebas Neue">Bebas Neue</option>
-                         </select>
-                       </div>
-                       <div>
-                         <label className="text-xs text-slate-400 mb-1 block">Subtitle Color</label>
-                         <input
-                           id="template-color"
-                           aria-label="Template Color"
-                           type="color"
-                           value={templateColor}
-                           onChange={async (e) => {
-                             const value = e.target.value;
-                             setTemplateColor(value);
-                             try { await userService.updateSettings({ templateColor: value }); } catch {}
-                           }}
-                           className="w-full h-9 bg-[#111827] border border-[#1A2235] rounded-lg p-1 cursor-pointer"
-                         />
-                       </div>
-                     </div>
-                  </div>
-                )}
+                {/* Call to Actions & Voices */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 
                 <div className="p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235] hover:border-[#7C5CFF]/50 transition-colors">
                   <label className="flex items-center cursor-pointer group">
@@ -1075,11 +1149,11 @@ function Dashboard() {
                   </div>
                 </div>
 
-                {/* Voice Selection */}
-                <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235] flex flex-col">
-                  <div className="flex items-center justify-between mb-3">
-                    <label className="flex items-center text-xs font-medium text-slate-400 uppercase tracking-wider">
-                      <Mic className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Voice Selection
+                  {/* Voice Selection */}
+                  <div className="bg-[#0B0F1A] p-4 rounded-xl border border-[#1A2235] flex flex-col">
+                    <div className="flex items-center justify-between mb-3">
+                      <label className="flex items-center text-xs font-medium text-slate-400 uppercase tracking-wider">
+                        <Mic className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Voice Selection
                     </label>
                     <label className="flex items-center space-x-2 cursor-pointer group">
                       <div className={cn("w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors", randomVoice ? "bg-[#00D4FF] border-[#00D4FF]" : "bg-[#111827] border-[#1A2235]")}>
@@ -1104,20 +1178,199 @@ function Dashboard() {
                     </label>
                   </div>
 
-                  <div className="space-y-2 max-h-[120px] overflow-y-auto pr-2">
-                    {AVAILABLE_VOICES.map(voice => (
-                      <div key={voice.id} onClick={() => handleVoiceToggle(voice.id)} className={cn("flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors border", selectedVoices.includes(voice.id) && !randomVoice ? "bg-[#1A2235] border-[#7C5CFF]/50 shadow-[0_0_10px_rgba(124,92,255,0.2)]" : "bg-[#111827] border-transparent hover:bg-[#1A2235]/60")}>
-                        <span className={cn("text-sm", selectedVoices.includes(voice.id) && !randomVoice ? "text-white" : "text-slate-400")}>{voice.name}</span>
-                        <button aria-label={`Play preview for voice ${voice.name}`} type="button" onClick={(e) => playVoicePreview(e, voice.name)} className="p-1.5 rounded bg-[#1A2235] hover:bg-[#7C5CFF] text-slate-400 hover:text-white transition-colors">
-                          <Volume2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
+                    <div className={cn("space-y-2 overflow-y-auto pr-2 transition-all", (scheduleEnabled || autoUploadEnabled) ? "max-h-[260px]" : "max-h-[120px]")}>
+                      {AVAILABLE_VOICES.map(voice => (
+                        <div key={voice.id} onClick={() => handleVoiceToggle(voice.id)} className={cn("flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors border", selectedVoices.includes(voice.id) && !randomVoice ? "bg-[#1A2235] border-[#7C5CFF]/50 shadow-[0_0_10px_rgba(124,92,255,0.2)]" : "bg-[#111827] border-transparent hover:bg-[#1A2235]/60")}>
+                          <span className={cn("text-sm", selectedVoices.includes(voice.id) && !randomVoice ? "text-white" : "text-slate-400")}>{voice.name}</span>
+                          <button aria-label={`Play preview for voice ${voice.name}`} type="button" onClick={(e) => playVoicePreview(e, voice.name)} className="p-1.5 rounded bg-[#1A2235] hover:bg-[#7C5CFF] text-slate-400 hover:text-white transition-colors">
+                            <Volume2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              </div>
 
-              <motion.button
+                  {/* Story Mode + Subtitle Styling */}
+                  <div className="col-span-1 sm:col-span-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="p-2 bg-gradient-to-r from-[#7C5CFF]/10 to-[#00D4FF]/10 rounded-xl border border-[#7C5CFF]/30">
+                      <div className="flex items-center justify-between m-4">
+                        <div className="flex items-center">
+                          <BookOpen className="h-5 w-5 text-[#00D4FF] mr-2" />
+                          <h3 className="text-sm font-semibold text-white">Story Mode</h3>
+                        </div>
+                        <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                          <input id="story-mode-toggle" aria-label="Toggle Story Mode" type="checkbox" className="sr-only peer" checked={effectiveStoryMode} onChange={handleStoryModeToggle} disabled={isFreeUser} />
+                          <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
+                        </label>
+                      </div>
+                      {isFreeUser && (
+                        <p className="text-xs text-slate-500 mb-2">
+                          {canUseStoryMode ? 'Story Mode is available on your plan.' : 'Story Mode is not included in your plan.'}
+                        </p>
+                      )}
+
+                      <AnimatePresence>
+                        {effectiveStoryMode && (
+                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
+                              <button type="button" onClick={() => { setCurrentPart(1); setStoryId(''); setStoryContext(''); }} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
+                                Reset Story
+                              </button>
+                            </div>
+                            <label className="flex items-center space-x-3 cursor-pointer group">
+                              <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#0B0F1A] border-[#1A2235] group-hover:border-[#7C5CFF]")}>
+                                {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                              </div>
+                              <span className={cn("text-sm transition-colors", recapEnabled ? "text-white" : "text-slate-300 group-hover:text-white")}>
+                                Add Recap of Previous Parts (Starts from Part 2)
+                              </span>
+                              <input id="recap-enabled-toggle" aria-label="Enable Story Recap" type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} />
+                            </label>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                      <div className="p-4 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 rounded-xl border border-[#00D4FF]/30">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center">
+                              <Sparkles className="h-5 w-5 text-[#00D4FF] mr-3" />
+                              <div>
+                                <p className="text-sm font-bold text-white">Subtitle Styling</p>
+                                <p className="text-xs text-slate-400">Customize font and subtitle color.</p>
+                              </div>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                              <input
+                                id="template-config-toggle"
+                                aria-label="Toggle Subtitle Styling"
+                                type="checkbox"
+                                className="sr-only peer"
+                                checked={templateConfigOpen}
+                                onChange={(e) => {
+                                  if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                  setTemplateConfigOpen(e.target.checked);
+                                }}
+                              />
+                              <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                            </label>
+                          </div>
+
+                        <AnimatePresence>
+                          {templateConfigOpen && (
+                            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                              <div className="mt-4 pt-4 border-t border-[#00D4FF]/20 grid grid-cols-2 gap-4">
+                                <div>
+                                  <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
+                                  <select
+                                    id="template-font"
+                                    aria-label="Template Font"
+                                    value={templateFont}
+                                    onChange={async (e) => {
+                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                      const value = e.target.value;
+                                      setTemplateFont(value);
+                                      try { await userService.updateSettings({ templateFont: value }); } catch {}
+                                    }}
+                                    className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                                  >
+                                    <option value="Arial">Arial</option>
+                                    <option value="Anton">Anton</option>
+                                    <option value="Montserrat">Montserrat</option>
+                                    <option value="Bebas Neue">Bebas Neue</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-xs text-slate-400 mb-1 block">Subtitle Color</label>
+                                  <input
+                                    id="template-color"
+                                    aria-label="Template Color"
+                                    type="color"
+                                    value={templateColor}
+                                    onChange={async (e) => {
+                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                      const value = e.target.value;
+                                      setTemplateColor(value);
+                                      try { await userService.updateSettings({ templateColor: value }); } catch {}
+                                    }}
+                                    className="w-full h-9 bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-1 cursor-pointer"
+                                  />
+                                </div>
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                  </div>
+
+                </div>
+
+                {/* Custom Media Toggle */}
+                <div className="p-4 bg-gradient-to-r from-[#FF4FD8]/10 to-[#7C5CFF]/10 rounded-xl border border-[#FF4FD8]/30">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        <FileVideo className="h-5 w-5 text-[#FF4FD8] mr-3" />
+                        <div>
+                          <p className="text-sm font-bold text-white">Use Custom Media</p>
+                          <p className="text-xs text-slate-400">Inject your uploaded assets into the video generation.</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <Link
+                          href="/media"
+                          className="text-xs bg-white/5 hover:bg-white/10 text-white font-semibold px-3 py-1.5 rounded-lg border border-white/10 transition-colors"
+                        >
+                          Edit Media
+                        </Link>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            id="use-custom-media-toggle"
+                            aria-label="Toggle Custom Media"
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={useCustomMedia}
+                            onChange={(e) => {
+                              if (!canUseCustomMedia) { showUpgradeModal('Custom media'); return; }
+                              setUseCustomMedia(e.target.checked);
+                            }}
+                          />
+                          <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FF4FD8]"></div>
+                        </label>
+                      </div>
+                    </div>
+
+                    <AnimatePresence>
+                      {useCustomMedia && (
+                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="mt-4 pt-4 border-t border-[#FF4FD8]/20 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
+                              <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Sequence Builder</span>
+                              <p className="text-sm text-white font-medium">{sequenceVideoCount} Videos, {sequenceImageCount} Images in sequence.</p>
+                              <p className="text-xs text-slate-400 mt-1">Total duration: <span className="text-white font-semibold">{sequenceTotalDuration}s</span></p>
+                            </div>
+                            <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
+                              <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Custom Thumbnail</span>
+                              <select
+                                id="thumbnail-select"
+                                aria-label="Select Thumbnail"
+                                value={selectedThumbnailId}
+                                onChange={(e) => setSelectedThumbnailId(e.target.value)}
+                                className="w-full bg-transparent text-sm text-white focus:outline-none cursor-pointer"
+                              >
+                                <option value="" className="bg-[#111827]">Let AI Generate Thumbnail</option>
+                                {mediaList.filter(m => m.type === 'thumbnail').map(thumb => (
+                                  <option key={thumb._id} value={thumb._id} className="bg-[#111827]">{thumb.originalName}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </motion.div>
+                        )}
+                      </AnimatePresence>
+                  </div>
+
+                <motion.button
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.99 }}
                 type="submit"

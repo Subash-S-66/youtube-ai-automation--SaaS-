@@ -15,6 +15,19 @@ const updateSettingsSchema = z.object({
     pushNotificationsEnabled: z.boolean().optional(),
     templateFont: z.string().optional(),
     templateColor: z.string().optional(),
+    lastInputMode: z.enum(['topic', 'prompt']).optional(),
+    lastPrompt: z.string().optional(),
+    lastSelectedTopic: z.string().optional(),
+    lastCustomTopic: z.string().optional(),
+    lastChannelInputs: z.record(
+      z.string(),
+      z.object({
+        inputMode: z.enum(['topic', 'prompt']).optional(),
+        prompt: z.string().optional(),
+        selectedTopic: z.string().optional(),
+        customTopic: z.string().optional(),
+      })
+    ).optional(),
   }),
 });
 
@@ -31,7 +44,7 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
     throw new AppError(errorMessages, 400);
   }
 
-  const { emailNotificationsEnabled, telegramNotificationsEnabled, pushNotificationsEnabled, templateFont, templateColor } = validation.data.body;
+  const { emailNotificationsEnabled, telegramNotificationsEnabled, pushNotificationsEnabled, templateFont, templateColor, lastInputMode, lastPrompt, lastSelectedTopic, lastCustomTopic, lastChannelInputs } = validation.data.body;
 
   const updateFields: any = {};
   if (emailNotificationsEnabled !== undefined) updateFields.emailNotificationsEnabled = emailNotificationsEnabled;
@@ -39,6 +52,11 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
   if (pushNotificationsEnabled !== undefined) updateFields.pushNotificationsEnabled = pushNotificationsEnabled;
   if (templateFont !== undefined) updateFields.templateFont = templateFont;
   if (templateColor !== undefined) updateFields.templateColor = templateColor;
+  if (lastInputMode !== undefined) updateFields.lastInputMode = lastInputMode;
+  if (lastPrompt !== undefined) updateFields.lastPrompt = lastPrompt;
+  if (lastSelectedTopic !== undefined) updateFields.lastSelectedTopic = lastSelectedTopic;
+  if (lastCustomTopic !== undefined) updateFields.lastCustomTopic = lastCustomTopic;
+  if (lastChannelInputs !== undefined) updateFields.lastChannelInputs = lastChannelInputs;
 
   const updatedUser = await User.findByIdAndUpdate(
     userId,

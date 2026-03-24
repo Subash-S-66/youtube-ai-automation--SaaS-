@@ -42,6 +42,16 @@ export interface IUser extends Document {
   isYoutubeConnected: boolean;
   templateFont?: string;
   templateColor?: string;
+  lastInputMode?: 'topic' | 'prompt';
+  lastPrompt?: string;
+  lastSelectedTopic?: string;
+  lastCustomTopic?: string;
+  lastChannelInputs?: Record<string, {
+    inputMode?: 'topic' | 'prompt';
+    prompt?: string;
+    selectedTopic?: string;
+    customTopic?: string;
+  }>;
   telegramChatId?: string;
   fcmToken?: string | undefined;
   emailNotificationsEnabled: boolean;
@@ -180,6 +190,23 @@ const UserSchema = new Schema<IUser>(
     templateColor: {
       type: String,
       default: '#FFFFFF',
+    },
+    lastInputMode: {
+      type: String,
+      enum: ['topic', 'prompt'],
+    },
+    lastPrompt: {
+      type: String,
+    },
+    lastSelectedTopic: {
+      type: String,
+    },
+    lastCustomTopic: {
+      type: String,
+    },
+    lastChannelInputs: {
+      type: Schema.Types.Mixed,
+      default: {},
     },
     telegramChatId: {
       type: String,
