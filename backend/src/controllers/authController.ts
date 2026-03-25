@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import User from '../models/User';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
-import { RegisterInput, LoginInput, AdminLoginInput, ForgotPasswordInput, ResetPasswordInput, ResendVerificationInput } from '../utils/validators/authValidators';
+import { RegisterInput, LoginInput, AdminLoginInput, ForgotPasswordInput, ResetPasswordInput, ResendVerificationInput, SendOtpInput, VerifyOtpInput } from '../utils/validators/authValidators';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
@@ -71,8 +71,8 @@ export const register = asyncHandler(
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const hashedVerificationToken = crypto.createHash('sha256').update(verificationToken).digest('hex');
 
-    // Set expiry 1 hour
-    const verificationExpires = new Date(Date.now() + 60 * 60 * 1000);
+    // Set expiry 15 minutes
+    const verificationExpires = new Date(Date.now() + 15 * 60 * 1000);
 
     // Create user
     const createPayload: any = {
@@ -182,7 +182,12 @@ export const login = asyncHandler(
     }
 
     if (!user.isEmailVerified) {
-      throw new AppError('Please verify your email', 403);
+      res.status(403).json({
+        success: false,
+        message: 'Please verify your email',
+        unverified: true
+      });
+      return;
     }
 
     const token = generateToken(user.id);
@@ -308,8 +313,8 @@ export const resendVerificationEmail = asyncHandler(
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const hashedVerificationToken = crypto.createHash('sha256').update(verificationToken).digest('hex');
 
-    // Set expiry 1 hour
-    const verificationExpires = new Date(Date.now() + 60 * 60 * 1000);
+    // Set expiry 15 minutes
+    const verificationExpires = new Date(Date.now() + 15 * 60 * 1000);
 
     user.emailVerificationToken = hashedVerificationToken;
     user.emailVerificationExpires = verificationExpires;
@@ -325,6 +330,105 @@ export const resendVerificationEmail = asyncHandler(
     res.json({
       success: true,
       message: 'If the email exists, a verification link has been sent.',
+    });
+  }
+);
+
+// @desc    Send OTP
+// @route   POST /api/auth/send-otp
+// @access  Public
+export const sendOtp = asyncHandler(
+  async (req: Request<unknown, unknown, SendOtpInput>, res: Response) => {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user || user.isEmailVerified) {
+      res.json({
+        success: true,
+        message: 'If the email exists and is unverified, an OTP has been sent.',
+      });
+      return;
+    }
+
+    // Generate 6 digit OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedOtp = crypto.createHash('sha256').update(otp).digest('hex');
+
+    user.otpToken = hashedOtp;
+    user.otpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins expiry
+
+    await user.save();
+
+    // Send email
+    const emailMessage = `Your verification code is: ${otp}\n\nThis code will expire in 5 minutes.`;
+    sendEmail(user.email, 'Your Verification Code', emailMessage).catch(console.error);
+
+    res.json({
+      success: true,
+      message: 'If the email exists and is unverified, an OTP has been sent.',
+    });
+  }
+);
+
+// @desc    Verify OTP
+// @route   POST /api/auth/verify-otp
+// @access  Public
+export const verifyOtp = asyncHandler(
+  async (req: Request<unknown, unknown, VerifyOtpInput>, res: Response) => {
+    const { email, otp } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      throw new AppError('Invalid OTP or expired', 400);
+    }
+
+    // Check if locked
+    if (user.otpLockUntil && user.otpLockUntil.getTime() > Date.now()) {
+      throw new AppError('Too many attempts. Please try again later.', 429);
+    }
+
+    const hashedOtp = crypto.createHash('sha256').update(otp).digest('hex');
+
+    if (
+      !user.otpToken ||
+      user.otpToken !== hashedOtp ||
+      !user.otpExpires ||
+      user.otpExpires.getTime() < Date.now()
+    ) {
+      user.otpAttempts = (user.otpAttempts || 0) + 1;
+      if (user.otpAttempts >= 5) {
+        user.otpLockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 mins lock
+      }
+      await user.save();
+      throw new AppError('Invalid OTP or expired', 400);
+    }
+
+    // Success
+    user.isEmailVerified = true;
+    user.emailVerificationToken = undefined;
+    user.emailVerificationExpires = undefined;
+    user.otpToken = undefined;
+    user.otpExpires = undefined;
+    user.otpAttempts = 0;
+    user.otpLockUntil = undefined;
+
+    await user.save();
+
+    const jwtToken = generateToken(user.id);
+    setTokenCookie(res, jwtToken);
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully',
+      user: {
+        _id: user.id,
+        email: user.email,
+        role: user.role,
+        plan: user.plan,
+      },
+      token: jwtToken,
     });
   }
 );

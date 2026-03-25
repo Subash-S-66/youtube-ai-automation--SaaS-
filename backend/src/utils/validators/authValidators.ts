@@ -12,7 +12,11 @@ export const registerSchema = z.object({
       .string({
         message: 'Password is required',
       })
-      .min(6, 'Password must be at least 6 characters long'),
+      .min(8, 'Password must be at least 8 characters long')
+      .regex(
+        /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d@$!%*?&]/,
+        'Password must contain at least one letter and one number'
+      ),
   }),
 });
 
@@ -53,6 +57,31 @@ export const forgotPasswordSchema = z.object({
   }),
 });
 
+export const sendOtpSchema = z.object({
+  body: z.object({
+    email: z
+      .string({
+        message: 'Email is required',
+      })
+      .email('Invalid email format'),
+  }),
+});
+
+export const verifyOtpSchema = z.object({
+  body: z.object({
+    email: z
+      .string({
+        message: 'Email is required',
+      })
+      .email('Invalid email format'),
+    otp: z
+      .string({
+        message: 'OTP is required',
+      })
+      .length(6, 'OTP must be exactly 6 digits'),
+  }),
+});
+
 export const resetPasswordSchema = z.object({
   body: z.object({
     token: z
@@ -84,3 +113,5 @@ export type AdminLoginInput = z.infer<typeof adminLoginSchema>['body'];
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>['body'];
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>['body'];
 export type ResendVerificationInput = z.infer<typeof resendVerificationSchema>['body'];
+export type SendOtpInput = z.infer<typeof sendOtpSchema>['body'];
+export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>['body'];
