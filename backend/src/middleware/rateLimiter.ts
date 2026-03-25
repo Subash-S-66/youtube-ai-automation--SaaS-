@@ -74,3 +74,25 @@ export const pipelineRateLimiter = withStore({
   standardHeaders: true,
   legacyHeaders: false,
 }, 'rl_pipeline_queue:');
+
+export const resendVerificationLimiter = withStore({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  limit: 1, // Max 1 request per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many requests, please try again after 1 minute.',
+  },
+}, 'rl_resend_verification:');
+
+export const sendOtpLimiter = withStore({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  limit: 1, // Max 1 request per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many requests, please try again after 1 minute.',
+  },
+}, 'rl_send_otp:');

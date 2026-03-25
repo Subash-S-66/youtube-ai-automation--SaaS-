@@ -62,6 +62,10 @@ export interface IUser extends Document {
   emailVerificationExpires?: Date | undefined;
   passwordResetToken?: string | undefined;
   passwordResetExpires?: Date | undefined;
+  otpToken?: string | undefined;
+  otpExpires?: Date | undefined;
+  otpAttempts?: number | undefined;
+  otpLockUntil?: Date | undefined;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -240,6 +244,19 @@ const UserSchema = new Schema<IUser>(
       type: String,
     },
     passwordResetExpires: {
+      type: Date,
+    },
+    otpToken: {
+      type: String,
+    },
+    otpExpires: {
+      type: Date,
+    },
+    otpAttempts: {
+      type: Number,
+      default: 0,
+    },
+    otpLockUntil: {
       type: Date,
     },
   },
