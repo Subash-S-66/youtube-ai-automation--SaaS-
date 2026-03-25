@@ -6,7 +6,7 @@ import { RegisterInput, LoginInput, AdminLoginInput, ForgotPasswordInput, ResetP
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
-import { sendEmail } from '../services/emailService';
+import { sendEmail, sendEmailStrict } from '../services/emailService';
 import { getUploadLimits } from '../services/uploadLimitService';
 import { google } from 'googleapis';
 
@@ -85,12 +85,6 @@ export const register = asyncHandler(
     };
     if (referredBy) createPayload.referredBy = referredBy;
 
-    const user = await User.create(createPayload);
-
-    if (!user) {
-      throw new AppError('Invalid user data', 400);
-    }
-
     // Send email
     const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
     const emailMessage = `Click to verify your email: \n\n ${verificationUrl}`;
@@ -107,8 +101,18 @@ export const register = asyncHandler(
       </div>
     `;
 
-    // We send email without blocking the response
-    sendEmail(user.email, 'Verify your email', emailMessage, emailHtml).catch(console.error);
+    const user = await User.create(createPayload);
+
+    if (!user) {
+      throw new AppError('Invalid user data', 400);
+    }
+
+    try {
+      await sendEmailStrict(user.email, 'Verify your email', emailMessage, emailHtml);
+    } catch (error) {
+      await user.deleteOne();
+      throw new AppError('Please enter a valid email address', 400);
+    }
 
     // Don't generate JWT or set cookie yet, as they must verify email first
     res.status(201).json({

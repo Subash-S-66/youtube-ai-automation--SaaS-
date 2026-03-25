@@ -26,6 +26,7 @@ function RegisterContent() {
   const [otpError, setOtpError] = useState('');
   const [otpSuccess, setOtpSuccess] = useState('');
   const [isOtpLoading, setIsOtpLoading] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState('');
   const router = useRouter();
 
   const searchParams = useSearchParams();
@@ -36,9 +37,10 @@ function RegisterContent() {
   const getAttemptsKey = (value: string) => `resendAttempts:${getEmailKey(value)}`;
 
   useEffect(() => {
-    if (!email) return;
-    const cooldownKey = getCooldownKey(email);
-    const attemptsKey = getAttemptsKey(email);
+    const targetEmail = verificationEmail || email;
+    if (!targetEmail) return;
+    const cooldownKey = getCooldownKey(targetEmail);
+    const attemptsKey = getAttemptsKey(targetEmail);
     const storedEndAt = Number(localStorage.getItem(cooldownKey) || 0);
     const storedAttempts = Number(localStorage.getItem(attemptsKey) || 0);
 
@@ -54,7 +56,7 @@ function RegisterContent() {
         localStorage.removeItem(cooldownKey);
       }
     }
-  }, [email]);
+  }, [email, verificationEmail]);
 
   useEffect(() => {
     if (!resendEndAt) {
@@ -67,8 +69,9 @@ function RegisterContent() {
       setResendCountdown(remaining);
       if (remaining <= 0) {
         setResendEndAt(0);
-        if (email) {
-          localStorage.removeItem(getCooldownKey(email));
+        const targetEmail = verificationEmail || email;
+        if (targetEmail) {
+          localStorage.removeItem(getCooldownKey(targetEmail));
         }
       }
     };
@@ -76,30 +79,46 @@ function RegisterContent() {
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [resendEndAt, email]);
+  }, [resendEndAt, email, verificationEmail]);
 
   useEffect(() => {
     if (!success) {
       setInitialResendDelayStarted(false);
       return;
     }
-    if (success && !initialResendDelayStarted && email) {
+    const targetEmail = verificationEmail || email;
+    if (success && !initialResendDelayStarted && targetEmail) {
       const endAt = Date.now() + 60 * 1000;
       setResendEndAt(endAt);
-      localStorage.setItem(getCooldownKey(email), String(endAt));
+      localStorage.setItem(getCooldownKey(targetEmail), String(endAt));
       setInitialResendDelayStarted(true);
     }
-  }, [success, initialResendDelayStarted, email]);
+  }, [success, initialResendDelayStarted, email, verificationEmail]);
+
+  useEffect(() => {
+    if (!verificationEmail) return;
+    const normalized = email.trim().toLowerCase();
+    if (normalized && normalized !== verificationEmail) {
+      setSuccess('');
+      setResendMessage('');
+      setShowOtp(false);
+      setOtp('');
+      setOtpError('');
+      setOtpSuccess('');
+      setVerificationEmail('');
+    }
+  }, [email, verificationEmail]);
 
   const startResendCooldown = () => {
+    const targetEmail = verificationEmail || email;
     const nextCooldown = resendAttempts === 0 ? 60 : 120;
     const endAt = Date.now() + nextCooldown * 1000;
     setResendEndAt(endAt);
-    if (email) {
-      localStorage.setItem(getCooldownKey(email), String(endAt));
+    if (targetEmail) {
+      localStorage.setItem(getCooldownKey(targetEmail), String(endAt));
       const nextAttempts = resendAttempts + 1;
       setResendAttempts(nextAttempts);
-      localStorage.setItem(getAttemptsKey(email), String(nextAttempts));
+      localStorage.setItem(getAttemptsKey(targetEmail), String(nextAttempts));
     } else {
       setResendAttempts(resendAttempts + 1);
     }
@@ -135,6 +154,7 @@ function RegisterContent() {
       const data = await authService.register({ email, password, referralCode: refCode });
 
       if (data.success) {
+        setVerificationEmail(email.trim());
         setSuccess(data.message || 'Registration successful. Please check your email to verify your account.');
       }
     } catch (err: any) {
@@ -147,7 +167,7 @@ function RegisterContent() {
   const handleResendEmail = async () => {
     if (resendCountdown > 0) return;
     try {
-      await authService.resendVerification(email);
+      await authService.resendVerification(verificationEmail || email);
       setResendMessage('Verification email sent.');
       startResendCooldown();
       setTimeout(() => setResendMessage(''), 5000);
@@ -159,7 +179,7 @@ function RegisterContent() {
   const handleRequestOtp = async () => {
     if (resendCountdown > 0) return;
     try {
-      await authService.sendOtp(email);
+      await authService.sendOtp(verificationEmail || email);
       setResendMessage('Verification code sent.');
       startResendCooldown();
       setShowOtp(true);
@@ -179,7 +199,7 @@ function RegisterContent() {
     setOtpError('');
     setOtpSuccess('');
     try {
-      const data = await authService.verifyOtp(email, otp);
+      const data = await authService.verifyOtp(verificationEmail || email, otp);
       if (data.success && data.token) {
         setOtpSuccess('Email verified successfully. Redirecting...');
         localStorage.setItem('token', data.token);
@@ -341,7 +361,7 @@ function RegisterContent() {
               <m.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="p-5 bg-slate-800/50 border border-slate-700/50 rounded-xl space-y-4">
                 <div className="text-center">
                   <h3 className="text-lg font-bold text-white mb-1">Enter verification code</h3>
-                  <p className="text-sm text-slate-400">We sent a 6-digit code to {email}</p>
+                  <p className="text-sm text-slate-400">We sent a 6-digit code to {verificationEmail || email}</p>
                 </div>
 
                 <div className="flex justify-center py-2">

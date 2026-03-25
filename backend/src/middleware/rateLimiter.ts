@@ -43,6 +43,18 @@ export const authLimiter = withStore({
   },
 }, 'rl_auth:');
 
+// Limit login attempts per IP
+export const loginLimiter = withStore({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 20, // Max 20 attempts per 15 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many login attempts. Please try again after 15 minutes.',
+  },
+}, 'rl_login:');
+
 // Strict rate limiter for expensive pipeline runs (per IP)
 export const pipelineLimiter = withStore({
   windowMs: 60 * 1000, // 1 minute
@@ -96,3 +108,15 @@ export const sendOtpLimiter = withStore({
     message: 'Too many requests, please try again after 1 minute.',
   },
 }, 'rl_send_otp:');
+
+// Limit account creation attempts per IP
+export const registerLimiter = withStore({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 3, // Max 3 account creations per hour
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many account creation attempts. Please try again later.',
+  },
+}, 'rl_register:');

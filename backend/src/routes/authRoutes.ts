@@ -4,12 +4,12 @@ import { register, login, adminLogin, getMe, verifyEmail, forgotPassword, resetP
 import { protect } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validateResource';
 import { registerSchema, loginSchema, adminLoginSchema, forgotPasswordSchema, resetPasswordSchema, resendVerificationSchema, sendOtpSchema, verifyOtpSchema } from '../utils/validators/authValidators';
-import { authLimiter, resendVerificationLimiter, sendOtpLimiter } from '../middleware/rateLimiter';
+import { authLimiter, resendVerificationLimiter, sendOtpLimiter, registerLimiter, loginLimiter } from '../middleware/rateLimiter';
 
 const router = express.Router();
 
-router.post('/register', validate(registerSchema), register);
-router.post('/login', validate(loginSchema), login);
+router.post('/register', registerLimiter, validate(registerSchema), register);
+router.post('/login', loginLimiter, validate(loginSchema), login);
 router.post('/admin-login', validate(adminLoginSchema), adminLogin);
 router.get('/google', googleLogin);
 router.get('/google/callback', googleCallback);

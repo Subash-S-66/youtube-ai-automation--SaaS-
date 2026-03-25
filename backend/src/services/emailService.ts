@@ -43,3 +43,38 @@ export const sendEmail = async (
     console.error(`[EmailService] Failed to send email:`, error.message);
   }
 };
+
+export const sendEmailStrict = async (
+  to: string,
+  subject: string,
+  message: string,
+  htmlMessage?: string
+): Promise<void> => {
+  const { EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASS } = process.env;
+
+  if (!EMAIL_HOST || !EMAIL_USER || !EMAIL_PASS) {
+    throw new Error('Email service not configured');
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: EMAIL_HOST,
+    port: Number(EMAIL_PORT) || 587,
+    secure: Number(EMAIL_PORT) === 465,
+    auth: {
+      user: EMAIL_USER,
+      pass: EMAIL_PASS,
+    },
+  });
+
+  const info = await transporter.sendMail({
+    from: `"VideoAutomation" <no-reply@${EMAIL_HOST}>`,
+    to,
+    subject,
+    text: message,
+    ...(htmlMessage ? { html: htmlMessage } : {}),
+  });
+
+  if (Array.isArray(info.rejected) && info.rejected.length > 0) {
+    throw new Error('Email rejected by server');
+  }
+};

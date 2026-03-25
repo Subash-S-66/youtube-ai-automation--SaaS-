@@ -21,7 +21,6 @@ export default function Login() {
   const [unverified, setUnverified] = useState(false);
   const [resendCountdown, setResendCountdown] = useState(0);
   const [resendAttempts, setResendAttempts] = useState(0);
-  const [initialResendDelayStarted, setInitialResendDelayStarted] = useState(false);
   const [resendEndAt, setResendEndAt] = useState(0);
   const [resendMessage, setResendMessage] = useState('');
   const [showOtp, setShowOtp] = useState(false);
@@ -29,6 +28,7 @@ export default function Login() {
   const [otpError, setOtpError] = useState('');
   const [otpSuccess, setOtpSuccess] = useState('');
   const [isOtpLoading, setIsOtpLoading] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState('');
 
   const router = useRouter();
 
@@ -37,9 +37,9 @@ export default function Login() {
   const getAttemptsKey = (value: string) => `resendAttempts:${getEmailKey(value)}`;
 
   useEffect(() => {
-    if (!email) return;
-    const cooldownKey = getCooldownKey(email);
-    const attemptsKey = getAttemptsKey(email);
+    if (!verificationEmail) return;
+    const cooldownKey = getCooldownKey(verificationEmail);
+    const attemptsKey = getAttemptsKey(verificationEmail);
     const storedEndAt = Number(localStorage.getItem(cooldownKey) || 0);
     const storedAttempts = Number(localStorage.getItem(attemptsKey) || 0);
 
@@ -47,15 +47,13 @@ export default function Login() {
 
     if (storedEndAt && storedEndAt > Date.now()) {
       setResendEndAt(storedEndAt);
-      setInitialResendDelayStarted(true);
     } else {
       setResendEndAt(0);
-      setInitialResendDelayStarted(false);
       if (storedEndAt) {
         localStorage.removeItem(cooldownKey);
       }
     }
-  }, [email]);
+  }, [verificationEmail]);
 
   useEffect(() => {
     if (!resendEndAt) {
@@ -68,8 +66,8 @@ export default function Login() {
       setResendCountdown(remaining);
       if (remaining <= 0) {
         setResendEndAt(0);
-        if (email) {
-          localStorage.removeItem(getCooldownKey(email));
+        if (verificationEmail) {
+          localStorage.removeItem(getCooldownKey(verificationEmail));
         }
       }
     };
@@ -77,20 +75,22 @@ export default function Login() {
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [resendEndAt, email]);
+  }, [resendEndAt, verificationEmail]);
 
-  useEffect(() => {
-    if (!unverified) {
-      setInitialResendDelayStarted(false);
-      return;
+  const startResendCooldown = () => {
+    const targetEmail = verificationEmail || email;
+    const nextCooldown = resendAttempts === 0 ? 60 : 120;
+    const endAt = Date.now() + nextCooldown * 1000;
+    setResendEndAt(endAt);
+    if (targetEmail) {
+      localStorage.setItem(getCooldownKey(targetEmail), String(endAt));
+      const nextAttempts = resendAttempts + 1;
+      setResendAttempts(nextAttempts);
+      localStorage.setItem(getAttemptsKey(targetEmail), String(nextAttempts));
+    } else {
+      setResendAttempts(resendAttempts + 1);
     }
-    if (unverified && !initialResendDelayStarted && email) {
-      const endAt = Date.now() + 60 * 1000;
-      setResendEndAt(endAt);
-      localStorage.setItem(getCooldownKey(email), String(endAt));
-      setInitialResendDelayStarted(true);
-    }
-  }, [unverified, initialResendDelayStarted, email]);
+  };
 
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -99,6 +99,7 @@ export default function Login() {
     setError('');
     setUnverified(false);
     setShowOtp(false);
+    setVerificationEmail('');
 
     try {
       const data = await authService.login({ email, password });
@@ -113,6 +114,7 @@ export default function Login() {
       }
     } catch (err: any) {
       if (err.response?.data?.unverified) {
+        setVerificationEmail(email.trim());
         setUnverified(true);
         setError(''); // Clear standard error to show verification UI
       } else {
@@ -126,7 +128,7 @@ export default function Login() {
     if (resendCountdown > 0) return;
 
     try {
-      await authService.resendVerification(email);
+      await authService.resendVerification(verificationEmail || email);
       setResendMessage('Verification email sent!');
       startResendCooldown();
       setTimeout(() => setResendMessage(''), 5000); // clear message after 5s
@@ -139,7 +141,7 @@ export default function Login() {
     if (resendCountdown > 0) return;
 
     try {
-      await authService.sendOtp(email);
+      await authService.sendOtp(verificationEmail || email);
       setResendMessage('OTP sent to your email!');
       startResendCooldown();
       setShowOtp(true);
@@ -161,11 +163,11 @@ export default function Login() {
     setOtpSuccess('');
 
     try {
-      const data = await authService.verifyOtp(email, otp);
+      const data = await authService.verifyOtp(verificationEmail || email, otp);
       if (data.success && data.token) {
         setOtpSuccess('Email verified successfully!');
         localStorage.setItem('token', data.token);
-        const emailKey = email.trim().toLowerCase();
+        const emailKey = (verificationEmail || email).trim().toLowerCase();
         if (emailKey) {
           localStorage.removeItem(`resendCooldown:${emailKey}`);
           localStorage.removeItem(`resendAttempts:${emailKey}`);
@@ -301,7 +303,7 @@ export default function Login() {
               <m.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="p-5 bg-slate-800/50 border border-slate-700/50 rounded-xl space-y-4">
                 <div className="text-center">
                   <h3 className="text-lg font-bold text-white mb-1">Enter Verification Code</h3>
-                  <p className="text-sm text-slate-400">We sent a 6-digit code to {email}</p>
+                  <p className="text-sm text-slate-400">We sent a 6-digit code to {verificationEmail || email}</p>
                 </div>
 
                 <div className="flex justify-center py-2">
@@ -394,19 +396,3 @@ export default function Login() {
     </div>
   );
 }
-
-
-
-  const startResendCooldown = () => {
-    const nextCooldown = resendAttempts === 0 ? 60 : 120;
-    const endAt = Date.now() + nextCooldown * 1000;
-    setResendEndAt(endAt);
-    if (email) {
-      localStorage.setItem(getCooldownKey(email), String(endAt));
-      const nextAttempts = resendAttempts + 1;
-      setResendAttempts(nextAttempts);
-      localStorage.setItem(getAttemptsKey(email), String(nextAttempts));
-    } else {
-      setResendAttempts(resendAttempts + 1);
-    }
-  };
