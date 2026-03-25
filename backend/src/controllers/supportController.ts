@@ -1,132 +1,215 @@
 import { Request, Response } from 'express';
 import SupportTicket from '../models/SupportTicket';
+import SupportMessage from '../models/SupportMessage';
 import User from '../models/User';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
-import { CreateSupportTicketInput, ReplySupportTicketInput } from '../utils/validators/supportValidators';
 import { sendEmail } from '../services/emailService';
+import { getSocketIo } from '../socket';
 
-// @desc    Create a new support ticket
-// @route   POST /api/support
+// Helper to determine if an old ticket is still valid for read-only view (24h window)
+const isTicketIn24hWindow = (ticket: any): boolean => {
+  if (ticket.status === 'open') return true;
+  if (!ticket.expireAt) return false;
+  return new Date() < new Date(ticket.expireAt);
+};
+
+// @desc    Get user's current or recent ticket with messages
+// @route   GET /api/support/ticket
 // @access  Private
-export const createTicket = asyncHandler(
-  async (req: Request<unknown, unknown, CreateSupportTicketInput>, res: Response) => {
-    const { subject, message } = req.body;
+export const getUserTicket = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) throw new AppError('Not authorized', 401);
 
-    if (!req.user || !req.user.id) {
-      throw new AppError('Not authorized', 401);
-    }
+  // Find an open ticket first
+  let ticket = await SupportTicket.findOne({ userId, status: 'open' });
 
-    const userId = req.user.id;
-    const user = await User.findById(userId);
-
-    if (!user) {
-      throw new AppError('User not found', 404);
-    }
-
-    const ticket = await SupportTicket.create({
+  // If no open ticket, look for a recently closed one (within 24h)
+  if (!ticket) {
+    const now = new Date();
+    ticket = await SupportTicket.findOne({
       userId,
-      subject,
-      message,
-      status: 'open',
-    });
-
-    // Send confirmation email to user
-    const userEmailSubject = 'Support Request Received: ' + subject;
-    const userEmailBody = `Hello,\n\nWe have received your support request: "${subject}". Our team will get back to you shortly.\n\nYour message:\n${message}\n\nBest,\nClipForge Team`;
-    sendEmail(user.email, userEmailSubject, userEmailBody).catch(console.error);
-
-    // Send notification email to admin
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (adminEmail) {
-      const adminEmailSubject = 'New Support Ticket: ' + subject;
-      const adminEmailBody = `A new support ticket has been submitted by ${user.email}.\n\nSubject: ${subject}\n\nMessage:\n${message}`;
-      sendEmail(adminEmail, adminEmailSubject, adminEmailBody).catch(console.error);
-    } else {
-        console.warn('ADMIN_EMAIL environment variable is not set. Admin support notifications will not be sent.');
-    }
-
-    res.status(201).json({
-      success: true,
-      message: 'Your request has been submitted',
-      data: ticket,
-    });
+      status: 'closed',
+      expireAt: { $gt: now }
+    }).sort({ closedAt: -1 }); // Get most recently closed
   }
-);
 
-// @desc    Get all support tickets (admin)
-// @route   GET /api/support/admin
-// @access  Private/Admin
-export const getTickets = asyncHandler(async (req: Request, res: Response) => {
-  const tickets = await SupportTicket.find()
-    .sort({ createdAt: -1 })
-    .populate('userId', 'email');
+  if (!ticket) {
+    return res.status(200).json({ success: true, data: null });
+  }
+
+  const messages = await SupportMessage.find({ ticketId: ticket._id }).sort({ createdAt: 1 });
 
   res.status(200).json({
     success: true,
-    data: tickets,
+    data: {
+      ticket,
+      messages
+    }
   });
 });
 
-// @desc    Reply to a support ticket (admin)
-// @route   POST /api/support/admin/:id/reply
-// @access  Private/Admin
-export const replyTicket = asyncHandler(
-  async (req: Request<{ id: string }, unknown, ReplySupportTicketInput>, res: Response) => {
-    const { id } = req.params;
-    const { message, closeTicket } = req.body;
+// @desc    Send a message (auto-creates ticket if needed)
+// @route   POST /api/support/message
+// @access  Private
+export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  const { message, ticketId } = req.body;
+  const isAdmin = req.user?.role === 'admin';
 
-    const ticket = await SupportTicket.findById(id);
+  if (!userId) throw new AppError('Not authorized', 401);
+  if (!message || message.trim() === '') {
+    throw new AppError('Message is required', 400);
+  }
+
+  let ticket;
+
+  if (isAdmin) {
+    if (!ticketId) throw new AppError('ticketId required for admin reply', 400);
+    ticket = await SupportTicket.findById(ticketId);
+    if (!ticket) throw new AppError('Ticket not found', 404);
+  } else {
+    ticket = await SupportTicket.findOne({ userId, status: 'open' });
+
+    // If no open ticket exists for user, create one
     if (!ticket) {
-      throw new AppError('Ticket not found', 404);
+      ticket = await SupportTicket.create({
+        userId,
+        status: 'open'
+      });
+
+      // Send email notification to admin about new ticket creation
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail) {
+         sendEmail(adminEmail, "New Support Chat Started", `A user has started a new support chat.\n\nFirst message: ${message.trim()}`).catch(console.error);
+      }
     }
-
-    const user = await User.findById(ticket.userId);
-    if (!user) {
-      throw new AppError('User not found', 404);
-    }
-
-    const replyEntry = {
-      message,
-      repliedBy: req.user?.email || 'admin',
-      createdAt: new Date(),
-    };
-
-    ticket.replies.push(replyEntry as any);
-    if (closeTicket) {
-      ticket.status = 'closed';
-      ticket.closedAt = new Date();
-    }
-    await ticket.save();
-
-    const subject = `Re: ${ticket.subject}`;
-    const body = `Hello,\n\n${message}\n\nBest,\nClipForge Support`;
-    sendEmail(user.email, subject, body).catch(console.error);
-
-    res.status(200).json({
-      success: true,
-      message: closeTicket ? 'Reply sent and ticket closed.' : 'Reply sent.',
-      data: ticket,
-    });
   }
-);
 
-// @desc    Close a support ticket (admin)
-// @route   POST /api/support/admin/:id/close
-// @access  Private/Admin
-export const closeTicket = asyncHandler(async (req: Request<{ id: string }>, res: Response) => {
-  const { id } = req.params;
-  const ticket = await SupportTicket.findByIdAndUpdate(
-    id,
-    { status: 'closed', closedAt: new Date() },
-    { returnDocument: 'after' }
-  );
-  if (!ticket) {
-    throw new AppError('Ticket not found', 404);
+  if (ticket.status === 'closed') {
+    throw new AppError('Cannot reply to a closed ticket', 400);
   }
+
+  const newMsg = await SupportMessage.create({
+    ticketId: ticket._id,
+    sender: isAdmin ? 'admin' : 'user',
+    message: message.trim(),
+  });
+
+  // Emit to socket
+  try {
+    const io = getSocketIo();
+    if (io) {
+      io.to(ticket._id.toString()).emit('receive_message', newMsg);
+      io.to('admin_support').emit('admin_ticket_update', { ticketId: ticket._id, message: newMsg });
+    }
+  } catch (err) {
+    console.warn('Socket emission failed', err);
+  }
+
+  // Automatically send email notification to the user if an admin replied
+  if (isAdmin) {
+     const userToNotify = await User.findById(ticket.userId);
+     if (userToNotify && userToNotify.email) {
+        sendEmail(userToNotify.email, "New reply from Support", `You have a new reply on your support ticket.\n\nAdmin says: ${message.trim()}`).catch(console.error);
+     }
+  }
+
+  res.status(201).json({
+    success: true,
+    data: newMsg,
+    ticketId: ticket._id
+  });
+});
+
+// @desc    Close a support ticket (user or admin)
+// @route   PATCH /api/support/ticket/:id/close
+// @access  Private
+export const closeTicket = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  const isAdmin = req.user?.role === 'admin';
+  const ticketId = req.params.id;
+
+  if (!userId) throw new AppError('Not authorized', 401);
+
+  const ticket = await SupportTicket.findById(ticketId);
+  if (!ticket) throw new AppError('Ticket not found', 404);
+
+  // Validate ownership
+  if (!isAdmin && ticket.userId.toString() !== userId) {
+    throw new AppError('Not authorized to close this ticket', 403);
+  }
+
+  if (ticket.status === 'closed') {
+    return res.status(200).json({ success: true, message: 'Already closed' });
+  }
+
+  const now = new Date();
+  const expireAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours from now
+
+  ticket.status = 'closed';
+  ticket.closedAt = now;
+  ticket.expireAt = expireAt;
+  await ticket.save();
+
+  try {
+    const io = getSocketIo();
+    if (io) {
+      io.to(ticket._id.toString()).emit('ticket_closed', { ticketId: ticket._id, closedBy: isAdmin ? 'admin' : 'user', expireAt });
+      io.to('admin_support').emit('admin_ticket_closed', { ticketId: ticket._id });
+    }
+  } catch (err) {
+    console.warn('Socket emission failed', err);
+  }
+
   res.status(200).json({
     success: true,
-    message: 'Ticket closed.',
-    data: ticket,
+    message: 'Ticket closed successfully',
+    data: ticket
+  });
+});
+
+// @desc    Get all support tickets (admin)
+// @route   GET /api/support/admin/tickets
+// @access  Private/Admin
+export const getAdminTickets = asyncHandler(async (req: Request, res: Response) => {
+  const tickets = await SupportTicket.find()
+    .sort({ updatedAt: -1 })
+    .populate('userId', 'email plan');
+
+  // We need to fetch the latest message for preview in the admin list
+  const ticketsWithPreview = await Promise.all(tickets.map(async (t) => {
+    const latestMsg = await SupportMessage.findOne({ ticketId: t._id }).sort({ createdAt: -1 });
+    return {
+      ...t.toObject(),
+      latestMessage: latestMsg ? latestMsg.message : 'No messages yet',
+      latestMessageSender: latestMsg ? latestMsg.sender : null
+    };
+  }));
+
+  res.status(200).json({
+    success: true,
+    data: ticketsWithPreview,
+  });
+});
+
+// @desc    Get messages for a specific ticket (admin)
+// @route   GET /api/support/admin/tickets/:id/messages
+// @access  Private/Admin
+export const getAdminTicketMessages = asyncHandler(async (req: Request, res: Response) => {
+  const id = req.params.id;
+  if (!id) throw new AppError('Ticket ID is required', 400);
+
+  const messages = await SupportMessage.find({ ticketId: id as any }).sort({ createdAt: 1 });
+  const ticket = await SupportTicket.findById(id).populate('userId', 'email');
+
+  if (!ticket) throw new AppError('Ticket not found', 404);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      ticket,
+      messages
+    }
   });
 });

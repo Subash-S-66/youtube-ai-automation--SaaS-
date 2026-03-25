@@ -33,6 +33,18 @@ export const initSocket = (server: HttpServer) => {
       console.log(`Socket ${socket.id} joined room ${userId}`);
     });
 
+    // Chat functionality
+    socket.on('join_ticket', (ticketId: string) => {
+      socket.join(ticketId);
+      console.log(`Socket ${socket.id} joined ticket room ${ticketId}`);
+    });
+
+    // Admin functionality
+    socket.on('join_admin_support', () => {
+      socket.join('admin_support');
+      console.log(`Admin Socket ${socket.id} joined admin_support room`);
+    });
+
     socket.on('disconnect', () => {
       console.log(`Socket client disconnected: ${socket.id}`);
     });
@@ -61,3 +73,5 @@ export const emitTicketCreated = (userId: string, data: any) => {
   // Can broadcast to admins or the user themselves
   if (io) io.emit('ticket_created', data);
 };
+
+export const getSocketIo = () => io;

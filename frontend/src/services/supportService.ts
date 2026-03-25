@@ -1,28 +1,30 @@
 import api from '../lib/api';
 
-export interface CreateSupportTicketInput {
-  subject: string;
-  message: string;
-}
-
 export const supportService = {
-  async createTicket(data: CreateSupportTicketInput) {
-    const response = await api.post('/support', data);
+  // User endpoints
+  async getUserTicket() {
+    const response = await api.get('/support/ticket');
     return response.data;
   },
 
-  async getAdminTickets() {
-    const response = await api.get('/support/admin');
-    return response.data;
-  },
-
-  async replyToTicket(id: string, message: string, closeTicket: boolean = false) {
-    const response = await api.post(`/support/admin/${id}/reply`, { message, closeTicket });
+  async sendMessage(message: string, ticketId?: string) {
+    const response = await api.post('/support/message', { message, ticketId });
     return response.data;
   },
 
   async closeTicket(id: string) {
-    const response = await api.post(`/support/admin/${id}/close`);
+    const response = await api.patch(`/support/ticket/${id}/close`);
+    return response.data;
+  },
+
+  // Admin endpoints
+  async getAdminTickets() {
+    const response = await api.get('/support/admin/tickets');
+    return response.data;
+  },
+
+  async getAdminTicketMessages(id: string) {
+    const response = await api.get(`/support/admin/tickets/${id}/messages`);
     return response.data;
   },
 };
