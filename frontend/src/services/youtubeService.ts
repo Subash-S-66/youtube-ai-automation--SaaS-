@@ -1,9 +1,10 @@
 import api from '../lib/api';
 
 export const youtubeService = {
-  getAuthUrl() {
-    // We direct the user browser straight to the API route to trigger OAuth consent flow
-    return `${api.defaults.baseURL}/youtube/auth`;
+  async getAuthUrl() {
+    // Request an auth URL from the API so we can include the Bearer token.
+    const response = await api.get('/youtube/auth-url');
+    return response.data?.url as string;
   },
 
   async disconnect() {

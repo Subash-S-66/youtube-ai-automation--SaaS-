@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { sendEmail, sendEmailStrict } from '../services/emailService';
 import { getUploadLimits } from '../services/uploadLimitService';
 import { google } from 'googleapis';
+import validator from 'validator';
 
 // Generate JWT
 const generateToken = (id: string): string => {
@@ -33,10 +34,11 @@ const setTokenCookie = (res: Response, token: string, isOAuth: boolean = false) 
 };
 
 const getGoogleOAuth2Client = () => {
+  const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID || process.env.YOUTUBE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET || process.env.YOUTUBE_CLIENT_SECRET,
-    `${process.env.BACKEND_URL}/api/auth/google/callback`
+    `${backendUrl}/api/auth/google/callback`
   );
 };
 
@@ -47,11 +49,18 @@ export const register = asyncHandler(
   async (req: Request<unknown, unknown, RegisterInput>, res: Response) => {
     const { email, password, referralCode } = req.body;
 
+    if (!validator.isEmail(email)) {
+      throw new AppError('Enter a valid email address', 400);
+    }
+
     // Check if user exists
     const userExists = await User.findOne({ email });
 
     if (userExists) {
-      throw new AppError('User already exists', 400);
+      if (!userExists.isEmailVerified) {
+        throw new AppError('Please verify your email first', 400);
+      }
+      throw new AppError('Email already registered', 400);
     }
 
     // Generate own referral code
@@ -63,27 +72,12 @@ export const register = asyncHandler(
       if (referrer) referredBy = referrer._id.toString();
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
     // Create verification token
     const verificationToken = crypto.randomBytes(32).toString('hex');
     const hashedVerificationToken = crypto.createHash('sha256').update(verificationToken).digest('hex');
 
     // Set expiry 15 minutes
     const verificationExpires = new Date(Date.now() + 15 * 60 * 1000);
-
-    // Create user
-    const createPayload: any = {
-      email,
-      password: hashedPassword,
-      role: 'user', // Enforce strict default role to prevent privilege escalation via body injections
-      emailVerificationToken: hashedVerificationToken,
-      emailVerificationExpires: verificationExpires,
-      referralCode: myReferralCode,
-    };
-    if (referredBy) createPayload.referredBy = referredBy;
 
     // Send email
     const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
@@ -101,17 +95,32 @@ export const register = asyncHandler(
       </div>
     `;
 
+    try {
+      await sendEmailStrict(email, 'Verify your email', emailMessage, emailHtml);
+    } catch (error) {
+      throw new AppError('This email does not exist or cannot receive emails', 400);
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Create user
+    const createPayload: any = {
+      email,
+      password: hashedPassword,
+      role: 'user', // Enforce strict default role to prevent privilege escalation via body injections
+      isEmailVerified: false,
+      emailVerificationToken: hashedVerificationToken,
+      emailVerificationExpires: verificationExpires,
+      referralCode: myReferralCode,
+    };
+    if (referredBy) createPayload.referredBy = referredBy;
+
     const user = await User.create(createPayload);
 
     if (!user) {
       throw new AppError('Invalid user data', 400);
-    }
-
-    try {
-      await sendEmailStrict(user.email, 'Verify your email', emailMessage, emailHtml);
-    } catch (error) {
-      await user.deleteOne();
-      throw new AppError('Please enter a valid email address', 400);
     }
 
     // Don't generate JWT or set cookie yet, as they must verify email first
@@ -160,6 +169,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
           lastChannelInputs: user.lastChannelInputs,
           referralCode: user.referralCode,
           cancelAtPeriodEnd: user.cancelAtPeriodEnd,
+          youtubeChannels: user.youtubeChannels,
         },
         plan: limitCheck.plan,
         displayPlan: limitCheck.displayPlan,
@@ -540,12 +550,14 @@ export const resetPassword = asyncHandler(
 // @access  Public
 export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
   const oauth2Client = getGoogleOAuth2Client();
+  const stateParam = typeof req.query.state === 'string' ? req.query.state : undefined;
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: [
       'https://www.googleapis.com/auth/userinfo.profile',
       'https://www.googleapis.com/auth/userinfo.email',
     ],
+    ...(stateParam ? { state: stateParam } : {}),
     prompt: 'consent',
   });
   res.redirect(authUrl);

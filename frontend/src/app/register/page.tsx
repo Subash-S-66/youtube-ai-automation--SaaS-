@@ -6,6 +6,7 @@ import { m } from 'framer-motion';
 import { Sparkles, ArrowRight, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { OtpInput } from '../../components/OtpInput';
+import { getApiOrigin } from '../../lib/apiBase';
 
 function RegisterContent() {
   const [email, setEmail] = useState('');
@@ -162,6 +163,12 @@ function RegisterContent() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleGoogleLogin = () => {
+    if (typeof window === 'undefined') return;
+    const state = refCode ? `?state=ref:${encodeURIComponent(refCode)}` : '';
+    window.location.href = `${getApiOrigin()}/api/auth/google${state}`;
   };
 
   const handleResendEmail = async () => {
@@ -418,6 +425,33 @@ function RegisterContent() {
               </m.button>
             </div>
           </form>
+
+          <div className="mt-8 space-y-6">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-700"></div>
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="bg-[#111827] px-2 text-slate-400">or continue with</span>
+              </div>
+            </div>
+
+            <m.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              type="button"
+              onClick={handleGoogleLogin}
+              className="w-full flex justify-center items-center gap-2 py-3 px-4 border border-slate-700/60 rounded-full text-sm font-semibold text-white bg-[#0B0F1A] hover:bg-[#0F172A] transition-all"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
+                <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.8-5.5 3.8-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.8 1.5l2.6-2.5C17.1 3.5 14.8 2.5 12 2.5 6.8 2.5 2.5 6.8 2.5 12S6.8 21.5 12 21.5c6.9 0 8.6-4.8 8.6-7.3 0-.5-.1-.9-.1-1.3H12z"/>
+                <path fill="#34A853" d="M3.6 7.2l3.2 2.4C7.7 7.6 9.7 6.2 12 6.2c1.9 0 3.1.8 3.8 1.5l2.6-2.5C17.1 3.5 14.8 2.5 12 2.5c-3.6 0-6.8 2-8.4 4.7z"/>
+                <path fill="#4A90E2" d="M12 21.5c2.7 0 5-0.9 6.6-2.5l-3.1-2.4c-.9.6-2.1 1-3.5 1-2.7 0-5-1.8-5.8-4.2l-3.3 2.5C4.5 19 8 21.5 12 21.5z"/>
+                <path fill="#FBBC05" d="M6.2 13.4c-.2-.6-.3-1.1-.3-1.8s.1-1.2.3-1.8L3 7.2c-.7 1.4-1.1 3-1.1 4.4 0 1.4.4 3 1.1 4.4l3.2-2.6z"/>
+              </svg>
+              Continue with Google
+            </m.button>
+          </div>
 
           <div className="mt-8 text-center text-sm text-slate-400">
              Already have an account?{' '}

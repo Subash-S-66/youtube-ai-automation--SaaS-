@@ -44,6 +44,27 @@ export const connectYouTube = asyncHandler(async (req: Request, res: Response) =
   res.redirect(authUrl);
 });
 
+// @desc    Get YouTube OAuth URL (JSON)
+// @route   GET /api/youtube/auth-url
+// @access  Private
+export const getYouTubeAuthUrl = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.user || !req.user.id) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const stateToken = generateStateToken(req.user.id);
+
+  res.cookie('oauth_state', stateToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 5 * 60 * 1000,
+  });
+
+  const authUrl = getGoogleAuthUrl('youtube-auth');
+  res.json({ success: true, url: authUrl });
+});
+
 // @desc    YouTube OAuth callback
 // @route   GET /api/youtube/callback
 // @access  Private (protected by state token via middleware)

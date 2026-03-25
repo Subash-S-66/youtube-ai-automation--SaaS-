@@ -3,6 +3,7 @@ import { getApiBase } from './apiBase';
 
 const api = axios.create({
   baseURL: getApiBase(),
+  withCredentials: true,
 });
 
 api.interceptors.request.use(

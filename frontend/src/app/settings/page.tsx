@@ -63,7 +63,8 @@ export default function SettingsPage() {
   }, []);
 
   const handleConnectYouTube = () => {
-    window.location.href = youtubeService.getAuthUrl();
+    const url = await youtubeService.getAuthUrl();
+    window.location.href = url;
   };
 
   const handleDisconnectYouTube = async () => {

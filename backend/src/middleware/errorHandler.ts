@@ -42,8 +42,20 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
   if (err.name === 'ZodError') {
     const zodErrors = Array.isArray(err.errors) ? err.errors : Array.isArray(err.issues) ? err.issues : [];
     if (zodErrors.length > 0) {
-      const errors = zodErrors.map((e: any) => `${(e.path || []).join('.')}: ${e.message}`);
-      message = `Validation Error. ${errors.join('. ')}`;
+      if (zodErrors.length === 1) {
+        const single = zodErrors[0];
+        const singleMessage = typeof single.message === 'string' ? single.message : '';
+        if (singleMessage === 'Enter a valid email address') {
+          message = singleMessage;
+          statusCode = 400;
+        } else {
+          const errors = zodErrors.map((e: any) => `${(e.path || []).join('.')}: ${e.message}`);
+          message = `Validation Error. ${errors.join('. ')}`;
+        }
+      } else {
+        const errors = zodErrors.map((e: any) => `${(e.path || []).join('.')}: ${e.message}`);
+        message = `Validation Error. ${errors.join('. ')}`;
+      }
     } else {
       message = 'Validation Error.';
     }

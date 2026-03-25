@@ -111,7 +111,7 @@ function Dashboard() {
           const params = Object.fromEntries(searchParams.entries());
           await paymentService.confirmPayment(params as Record<string, string>);
           const userData = await authService.getMe();
-          setUser(userData.data);
+          setUser({ ...userData.data, ...userData.data.user });
           setMessage({ text: 'Subscription upgraded successfully! Your limits have been updated.', type: 'success' });
         } catch (err) {
           setMessage({ text: 'Payment received, but verification is pending. Please refresh in a minute or contact support.', type: 'warning' });
@@ -134,7 +134,7 @@ function Dashboard() {
 
         if (userResult.status === 'fulfilled') {
           const userData = userResult.value;
-          setUser(userData.data);
+          setUser({ ...userData.data, ...userData.data.user });
 
           if (userData.data?.user?.templateFont) {
             setTemplateFont(userData.data.user.templateFont);
@@ -326,7 +326,10 @@ function Dashboard() {
   }, [canUseStoryMode, canUseScheduling, storyMode, recapEnabled, autoUploadEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
 
   const handleConnectYouTube = useCallback(() => {
-    window.location.href = youtubeService.getAuthUrl();
+    (async () => {
+      const url = await youtubeService.getAuthUrl();
+      window.location.href = url;
+    })();
   }, []);
 
   const resetStoryProgress = () => {
