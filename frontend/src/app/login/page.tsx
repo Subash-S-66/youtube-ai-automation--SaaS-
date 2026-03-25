@@ -20,6 +20,9 @@ export default function Login() {
   // Verification states
   const [unverified, setUnverified] = useState(false);
   const [resendCountdown, setResendCountdown] = useState(0);
+  const [resendAttempts, setResendAttempts] = useState(0);
+  const [initialResendDelayStarted, setInitialResendDelayStarted] = useState(false);
+  const [resendEndAt, setResendEndAt] = useState(0);
   const [resendMessage, setResendMessage] = useState('');
   const [showOtp, setShowOtp] = useState(false);
   const [otp, setOtp] = useState('');
@@ -29,13 +32,66 @@ export default function Login() {
 
   const router = useRouter();
 
+  const getEmailKey = (value: string) => value.trim().toLowerCase();
+  const getCooldownKey = (value: string) => `resendCooldown:${getEmailKey(value)}`;
+  const getAttemptsKey = (value: string) => `resendAttempts:${getEmailKey(value)}`;
+
   useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (resendCountdown > 0) {
-      timer = setTimeout(() => setResendCountdown(resendCountdown - 1), 1000);
+    if (!email) return;
+    const cooldownKey = getCooldownKey(email);
+    const attemptsKey = getAttemptsKey(email);
+    const storedEndAt = Number(localStorage.getItem(cooldownKey) || 0);
+    const storedAttempts = Number(localStorage.getItem(attemptsKey) || 0);
+
+    setResendAttempts(Number.isFinite(storedAttempts) ? storedAttempts : 0);
+
+    if (storedEndAt && storedEndAt > Date.now()) {
+      setResendEndAt(storedEndAt);
+      setInitialResendDelayStarted(true);
+    } else {
+      setResendEndAt(0);
+      setInitialResendDelayStarted(false);
+      if (storedEndAt) {
+        localStorage.removeItem(cooldownKey);
+      }
     }
-    return () => clearTimeout(timer);
-  }, [resendCountdown]);
+  }, [email]);
+
+  useEffect(() => {
+    if (!resendEndAt) {
+      setResendCountdown(0);
+      return;
+    }
+
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((resendEndAt - Date.now()) / 1000));
+      setResendCountdown(remaining);
+      if (remaining <= 0) {
+        setResendEndAt(0);
+        if (email) {
+          localStorage.removeItem(getCooldownKey(email));
+        }
+      }
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [resendEndAt, email]);
+
+  useEffect(() => {
+    if (!unverified) {
+      setInitialResendDelayStarted(false);
+      return;
+    }
+    if (unverified && !initialResendDelayStarted && email) {
+      const endAt = Date.now() + 60 * 1000;
+      setResendEndAt(endAt);
+      localStorage.setItem(getCooldownKey(email), String(endAt));
+      setInitialResendDelayStarted(true);
+    }
+  }, [unverified, initialResendDelayStarted, email]);
+
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,6 +104,11 @@ export default function Login() {
       const data = await authService.login({ email, password });
       if (data.success && data.data.token) {
         localStorage.setItem('token', data.data.token);
+        const emailKey = email.trim().toLowerCase();
+        if (emailKey) {
+          localStorage.removeItem(`resendCooldown:${emailKey}`);
+          localStorage.removeItem(`resendAttempts:${emailKey}`);
+        }
         router.push('/dashboard');
       }
     } catch (err: any) {
@@ -67,7 +128,7 @@ export default function Login() {
     try {
       await authService.resendVerification(email);
       setResendMessage('Verification email sent!');
-      setResendCountdown(60); // 60s cooldown
+      startResendCooldown();
       setTimeout(() => setResendMessage(''), 5000); // clear message after 5s
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to resend verification email.');
@@ -75,16 +136,12 @@ export default function Login() {
   };
 
   const handleRequestOtp = async () => {
-    if (resendCountdown > 0) {
-       // Allow switching to OTP view even during cooldown, but try to send if we can
-       setShowOtp(true);
-       return;
-    }
+    if (resendCountdown > 0) return;
 
     try {
       await authService.sendOtp(email);
       setResendMessage('OTP sent to your email!');
-      setResendCountdown(60); // 60s cooldown
+      startResendCooldown();
       setShowOtp(true);
       setTimeout(() => setResendMessage(''), 5000);
     } catch (err: any) {
@@ -108,6 +165,11 @@ export default function Login() {
       if (data.success && data.token) {
         setOtpSuccess('Email verified successfully!');
         localStorage.setItem('token', data.token);
+        const emailKey = email.trim().toLowerCase();
+        if (emailKey) {
+          localStorage.removeItem(`resendCooldown:${emailKey}`);
+          localStorage.removeItem(`resendAttempts:${emailKey}`);
+        }
         setTimeout(() => {
           router.push('/dashboard');
         }, 1000);
@@ -188,7 +250,7 @@ export default function Login() {
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-300 focus:outline-none"
                 >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  {showPassword ? <Eye className="h-5 w-5" /> : <EyeOff className="h-5 w-5" />}
                 </button>
               </div>
             </div>
@@ -201,32 +263,36 @@ export default function Login() {
             {unverified && !showOtp && (
               <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-4 bg-orange-500/10 border border-orange-500/20 rounded-lg space-y-3">
                 <p className="text-sm text-orange-400 text-center font-medium">Email not verified</p>
-                <div className="flex flex-col gap-2">
-                  <button
-                    type="button"
-                    onClick={handleResendEmail}
-                    disabled={resendCountdown > 0}
-                    className="w-full py-2 px-4 border border-orange-500/30 rounded-lg text-sm font-medium text-orange-300 hover:bg-orange-500/10 transition-colors disabled:opacity-50"
-                  >
-                    {resendCountdown > 0 ? `Resend Email (${resendCountdown}s)` : 'Resend Verification Email'}
-                  </button>
-                  <div className="relative">
-                    <div className="absolute inset-0 flex items-center">
-                      <div className="w-full border-t border-slate-700"></div>
+                {resendCountdown > 0 ? (
+                  <p className="text-xs text-orange-300/70 text-center">
+                    You can request a new email or code in {resendCountdown}s.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={handleResendEmail}
+                      className="w-full py-2 px-4 border border-orange-500/30 rounded-lg text-sm font-medium text-orange-300 hover:bg-orange-500/10 transition-colors"
+                    >
+                      Resend Verification Email
+                    </button>
+                    <div className="relative">
+                      <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-slate-700"></div>
+                      </div>
+                      <div className="relative flex justify-center text-xs">
+                        <span className="bg-[#111827] px-2 text-slate-400">or</span>
+                      </div>
                     </div>
-                    <div className="relative flex justify-center text-xs">
-                      <span className="bg-[#111827] px-2 text-slate-400">or</span>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRequestOtp}
+                      className="w-full py-2 px-4 border border-[#00D4FF]/30 rounded-lg text-sm font-medium text-[#00D4FF] hover:bg-[#00D4FF]/10 transition-colors"
+                    >
+                      Use verification code
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleRequestOtp}
-                    disabled={resendCountdown > 0}
-                    className="w-full py-2 px-4 border border-[#00D4FF]/30 rounded-lg text-sm font-medium text-[#00D4FF] hover:bg-[#00D4FF]/10 transition-colors disabled:opacity-50"
-                  >
-                    Try OTP instead
-                  </button>
-                </div>
+                )}
                 {resendMessage && <p className="text-xs text-green-400 text-center">{resendMessage}</p>}
               </m.div>
             )}
@@ -279,14 +345,17 @@ export default function Login() {
                       Back to login
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={handleRequestOtp}
-                      disabled={resendCountdown > 0}
-                      className="text-[#00D4FF] hover:text-[#7C5CFF] transition-colors disabled:opacity-50 disabled:text-slate-500"
-                    >
-                      {resendCountdown > 0 ? `Resend code (${resendCountdown}s)` : 'Resend code'}
-                    </button>
+                    {resendCountdown > 0 ? (
+                      <span className="text-slate-500">Resend available in {resendCountdown}s</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleRequestOtp}
+                        className="text-[#00D4FF] hover:text-[#7C5CFF] transition-colors"
+                      >
+                        Resend code
+                      </button>
+                    )}
                   </div>
                 </div>
               </m.div>
@@ -328,3 +397,16 @@ export default function Login() {
 
 
 
+  const startResendCooldown = () => {
+    const nextCooldown = resendAttempts === 0 ? 60 : 120;
+    const endAt = Date.now() + nextCooldown * 1000;
+    setResendEndAt(endAt);
+    if (email) {
+      localStorage.setItem(getCooldownKey(email), String(endAt));
+      const nextAttempts = resendAttempts + 1;
+      setResendAttempts(nextAttempts);
+      localStorage.setItem(getAttemptsKey(email), String(nextAttempts));
+    } else {
+      setResendAttempts(resendAttempts + 1);
+    }
+  };

@@ -1,6 +1,12 @@
 import nodemailer from 'nodemailer';
 
-export const sendEmail = async (to: string, subject: string, message: string, retryCount = 1): Promise<void> => {
+export const sendEmail = async (
+  to: string,
+  subject: string,
+  message: string,
+  htmlMessage?: string,
+  retryCount = 1
+): Promise<void> => {
   try {
     const { EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASS } = process.env;
 
@@ -25,13 +31,14 @@ export const sendEmail = async (to: string, subject: string, message: string, re
       to,
       subject,
       text: message,
+      ...(htmlMessage ? { html: htmlMessage } : {}),
     });
 
     console.log(`[EmailService] Email sent successfully.`);
   } catch (error: any) {
     if (retryCount > 0) {
       console.warn(`[EmailService] Retrying email...`);
-      return sendEmail(to, subject, message, retryCount - 1);
+      return sendEmail(to, subject, message, htmlMessage, retryCount - 1);
     }
     console.error(`[EmailService] Failed to send email:`, error.message);
   }

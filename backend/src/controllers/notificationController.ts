@@ -40,10 +40,14 @@ export const getNotifications = asyncHandler(async (req: Request, res: Response)
     throw new AppError('Unauthorized', 401);
   }
 
+  const query: any = { targetPlans: user.plan };
+  if (user.createdAt) {
+    // Only show notifications created after the user joined
+    query.createdAt = { $gte: new Date(user.createdAt) };
+  }
+
   // Fetch notifications that target the user's plan, sorted by latest
-  const notifications = await Notification.find({
-    targetPlans: user.plan
-  }).sort({ createdAt: -1 });
+  const notifications = await Notification.find(query).sort({ createdAt: -1 });
 
   res.status(200).json({
     success: true,

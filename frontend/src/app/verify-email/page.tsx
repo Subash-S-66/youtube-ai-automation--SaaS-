@@ -35,6 +35,15 @@ function VerifyEmailContent() {
         setStatus('success');
         setMessage(data.message || 'Email verified successfully!');
 
+        if (data.token && typeof window !== 'undefined') {
+          localStorage.setItem('token', data.token);
+          const emailKey = (data.user?.email || '').trim().toLowerCase();
+          if (emailKey) {
+            localStorage.removeItem(`resendCooldown:${emailKey}`);
+            localStorage.removeItem(`resendAttempts:${emailKey}`);
+          }
+        }
+
         const redirectUrl = data.redirectUrl || '/dashboard';
 
         // Redirect to dashboard (or provided redirect) after a short delay

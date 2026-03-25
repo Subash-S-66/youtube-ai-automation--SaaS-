@@ -33,7 +33,6 @@ export interface IUser extends Document {
   referralCode: string;
   referredBy?: string;
   referralRewardGiven: boolean;
-  isBetaMode: boolean;
   uploadLimitPerDay: number;
   uploadsUsedToday: number;
   uploadsOnHold: number;
@@ -156,10 +155,6 @@ const UserSchema = new Schema<IUser>(
       type: String,
     },
     referralRewardGiven: {
-      type: Boolean,
-      default: false,
-    },
-    isBetaMode: {
       type: Boolean,
       default: false,
     },

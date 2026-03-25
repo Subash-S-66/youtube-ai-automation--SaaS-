@@ -94,9 +94,21 @@ export const register = asyncHandler(
     // Send email
     const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
     const emailMessage = `Click to verify your email: \n\n ${verificationUrl}`;
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <p>Click the button below to verify your email:</p>
+        <p>
+          <a href="${verificationUrl}" style="display:inline-block;padding:10px 16px;background:#7C5CFF;color:#fff;text-decoration:none;border-radius:6px;">
+            Verify Email
+          </a>
+        </p>
+        <p style="font-size:12px;color:#6B7280;">If the button doesn't work, copy and paste this link:</p>
+        <p style="font-size:12px;color:#6B7280;">${verificationUrl}</p>
+      </div>
+    `;
 
     // We send email without blocking the response
-    sendEmail(user.email, 'Verify your email', emailMessage).catch(console.error);
+    sendEmail(user.email, 'Verify your email', emailMessage, emailHtml).catch(console.error);
 
     // Don't generate JWT or set cookie yet, as they must verify email first
     res.status(201).json({
@@ -175,12 +187,6 @@ export const login = asyncHandler(
       throw new AppError('Invalid credentials', 401);
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    if (!isMatch) {
-      throw new AppError('Invalid credentials', 401);
-    }
-
     if (!user.isEmailVerified) {
       res.status(403).json({
         success: false,
@@ -188,6 +194,12 @@ export const login = asyncHandler(
         unverified: true
       });
       return;
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      throw new AppError('Invalid credentials', 401);
     }
 
     const token = generateToken(user.id);
@@ -287,6 +299,7 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
       role: user.role,
       plan: user.plan,
     },
+    token: jwtToken,
     redirectUrl,
   });
 });
@@ -324,8 +337,20 @@ export const resendVerificationEmail = asyncHandler(
     // Send email
     const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email?token=${verificationToken}`;
     const emailMessage = `Click to verify your email: \n\n ${verificationUrl}`;
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+        <p>Click the button below to verify your email:</p>
+        <p>
+          <a href="${verificationUrl}" style="display:inline-block;padding:10px 16px;background:#7C5CFF;color:#fff;text-decoration:none;border-radius:6px;">
+            Verify Email
+          </a>
+        </p>
+        <p style="font-size:12px;color:#6B7280;">If the button doesn't work, copy and paste this link:</p>
+        <p style="font-size:12px;color:#6B7280;">${verificationUrl}</p>
+      </div>
+    `;
 
-    sendEmail(user.email, 'Verify your email', emailMessage).catch(console.error);
+    sendEmail(user.email, 'Verify your email', emailMessage, emailHtml).catch(console.error);
 
     res.json({
       success: true,
