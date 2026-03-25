@@ -7,6 +7,9 @@ import { Sparkles, ArrowRight, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { OtpInput } from '../../components/OtpInput';
 
+
+
+
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -175,7 +178,7 @@ export default function Login() {
                   type={showPassword ? "text" : "password"}
                   required
                   className="block w-full pl-10 pr-10 bg-[#0B0F1A] border border-[#1A2235] rounded-xl py-3 text-slate-200 focus:outline-none border-glow-primary transition-colors sm:text-sm shadow-inner"
-                  placeholder="••••••••"
+                  placeholder="********"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
@@ -189,7 +192,6 @@ export default function Login() {
                 </button>
               </div>
             </div>
-
             {error && !unverified && (
               <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 text-center">
                 {error}
@@ -323,3 +325,6 @@ export default function Login() {
     </div>
   );
 }
+
+
+

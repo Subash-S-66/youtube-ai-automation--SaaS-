@@ -2,7 +2,10 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { m, AnimatePresence } from 'framer-motion';
+
+
 import { Sparkles, ArrowRight, Lock } from 'lucide-react';
 import { authService } from '../../services/authService';
 
@@ -59,19 +62,19 @@ function ResetPasswordForm() {
       </div>
 
       {error && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 text-center">
+        <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 text-center">
           {error}
-        </motion.div>
+        </m.div>
       )}
 
       {success && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-sm text-green-400 text-center">
+        <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg text-sm text-green-400 text-center">
           {success} Redirecting to login...
-        </motion.div>
+        </m.div>
       )}
 
       <div>
-        <motion.button
+        <m.button
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           type="submit"
@@ -86,7 +89,7 @@ function ResetPasswordForm() {
               <ArrowRight className="ml-2 h-4 w-4" />
             </>
           )}
-        </motion.button>
+        </m.button>
       </div>
     </form>
   );
@@ -110,7 +113,7 @@ export default function ResetPassword() {
         </h2>
       </div>
 
-      <motion.div
+      <m.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
@@ -131,7 +134,7 @@ export default function ResetPassword() {
              </a>
           </div>
         </div>
-      </motion.div>
+      </m.div>
     </div>
   );
 }

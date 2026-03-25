@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { m, AnimatePresence } from 'framer-motion';
+
+
+
+
 import React from 'react';
 import { History, ChevronDown, ChevronUp, Terminal, RefreshCw } from 'lucide-react';
 import { authService } from '../../services/authService';
@@ -22,9 +27,11 @@ export default function HistoryPage() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        const userData = await authService.getMe();
+        const [userData, jobsData] = await Promise.all([
+          authService.getMe(),
+          pipelineService.getJobs(page, 10)
+        ]);
         setUser(userData.data);
-        const jobsData = await pipelineService.getJobs(page, 10);
         setJobs(jobsData.data);
         setTotalPages(jobsData.pagination?.pages || 1);
       } catch (err) {
@@ -104,7 +111,7 @@ export default function HistoryPage() {
               <tbody className="bg-[#111827] divide-y divide-[#1A2235]">
                 {jobs.map((job) => (
                   <React.Fragment key={job._id}>
-                    <motion.tr
+                    <m.tr
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       className={cn("transition-colors", expandedJobId === job._id ? "bg-[#1A2235]/20" : "hover:bg-[#1A2235]/40")}
@@ -130,12 +137,12 @@ export default function HistoryPage() {
                           )}
                         </button>
                       </td>
-                    </motion.tr>
+                    </m.tr>
 
                     {/* Expandable Logs Section */}
                     <AnimatePresence>
                       {expandedJobId === job._id && (
-                        <motion.tr
+                        <m.tr
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
                           exit={{ opacity: 0, height: 0 }}
@@ -151,7 +158,7 @@ export default function HistoryPage() {
                               </pre>
                             </div>
                           </td>
-                        </motion.tr>
+                        </m.tr>
                       )}
                     </AnimatePresence>
                   </React.Fragment>

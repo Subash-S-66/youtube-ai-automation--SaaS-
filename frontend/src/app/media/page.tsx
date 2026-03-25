@@ -1,6 +1,5 @@
 'use client';
 import NextImage from 'next/image';
-
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { m } from 'framer-motion';
 import { Upload, Trash2, Video, Image as ImageIcon, Film, RefreshCw, AlertCircle, Eye } from 'lucide-react';
@@ -640,6 +639,7 @@ export default function MediaLibraryPage() {
                            className="absolute inset-0 w-full h-full object-cover opacity-80 pointer-events-none"
                            draggable={false}
                            loading="lazy"
+                           decoding="async"
                            onError={(e) => {
                              (e.target as HTMLImageElement).style.display = 'none';
                            }}
@@ -912,6 +912,7 @@ export default function MediaLibraryPage() {
                         className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                         draggable={false}
                         loading="lazy"
+                        decoding="async"
                         onError={(e) => {
                           // Fallback if static serving fails locally
                           (e.target as HTMLImageElement).style.display = 'none';
@@ -1016,6 +1017,7 @@ export default function MediaLibraryPage() {
                   alt={item.originalName}
                   className="h-24 w-16 object-cover rounded-lg border border-[#1A2235] shadow-2xl"
                   loading="lazy"
+                  decoding="async"
                 />
               ) : (
                 <div className="h-24 w-16 bg-[#111827] rounded-lg border border-[#1A2235] shadow-2xl flex items-center justify-center text-[10px] text-slate-200">
@@ -1063,6 +1065,7 @@ export default function MediaLibraryPage() {
                           alt={item.originalName}
                           className="w-full h-full object-cover"
                           loading="lazy"
+                          decoding="async"
                         />
                       );
                     })()
@@ -1089,6 +1092,7 @@ export default function MediaLibraryPage() {
                             alt={mediaItem.originalName}
                             className="w-full h-full object-cover"
                             loading="lazy"
+                            decoding="async"
                           />
                         );
                       }

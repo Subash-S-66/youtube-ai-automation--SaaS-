@@ -1,6 +1,5 @@
 'use client';
 import dynamic from "next/dynamic";
-
 import { useEffect, useState, Suspense, useRef, useCallback } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
@@ -326,10 +325,9 @@ function Dashboard() {
     }
   }, [canUseStoryMode, canUseScheduling, storyMode, recapEnabled, autoUploadEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
 
-  const handleConnectYouTube = () => window.location.href = youtubeService.getAuthUrl();
-  const handleUpgrade = async () => {
-    router.push('/pricing');
-  };
+  const handleConnectYouTube = useCallback(() => {
+    window.location.href = youtubeService.getAuthUrl();
+  }, []);
 
   const resetStoryProgress = () => {
     setCurrentPart(1);
@@ -346,7 +344,7 @@ function Dashboard() {
     setModalConfig({
       isOpen: true,
       title: 'Reset Story Progress?',
-      description: 'Changing the prompt or topic will reset your story progress and you won’t be able to continue the current story.',
+      description: 'Changing the prompt or topic will reset your story progress and you won\'t be able to continue the current story.',
       type: 'warning',
       confirmText: 'Reset & Continue',
       cancelText: 'Cancel',
@@ -359,7 +357,11 @@ function Dashboard() {
     });
   };
 
-  const showUpgradeModal = (featureLabel?: string) => {
+  const handleUpgrade = useCallback(async () => {
+    router.push('/pricing');
+  }, [router]);
+
+  const showUpgradeModal = useCallback((featureLabel?: string) => {
     setModalConfig({
       isOpen: true,
       title: 'Upgrade Required',
@@ -375,9 +377,9 @@ function Dashboard() {
       },
       onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
     });
-  };
+  }, [router]);
 
-  const handleVoiceToggle = (vid: string) => {
+  const handleVoiceToggle = useCallback((vid: string) => {
     if (!canUseVoiceSelection) {
       showUpgradeModal('Voice selection');
       return;
@@ -386,7 +388,7 @@ function Dashboard() {
     setSelectedVoices(prev =>
       prev.includes(vid) ? prev.filter(id => id !== vid) : [...prev, vid]
     );
-  };
+  }, [canUseVoiceSelection, randomVoice, showUpgradeModal]);
 
   const playVoicePreview = (e: React.MouseEvent, voiceName: string) => {
     e.stopPropagation();
@@ -918,7 +920,7 @@ function Dashboard() {
                 )}
               </AnimatePresence>
 
-              {/* General Settings */}
+{/* General Settings */}
               <div className="grid grid-cols-2 sm:grid-cols-10 gap-4">
                   <div className="bg-[#0B0F1A] p-3 rounded-xl border border-[#1A2235] col-span-2 sm:col-span-3">
                     <label className="flex items-center text-xs font-medium text-slate-400  uppercase tracking-wider">
@@ -1028,8 +1030,10 @@ function Dashboard() {
                   </div>
               </div>
 
+
                 {/* Call to Actions & Voices */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
 
                 <div className="p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235] hover:border-[#7C5CFF]/50 transition-colors">
                   <label className="flex items-center cursor-pointer group">
@@ -1230,18 +1234,18 @@ function Dashboard() {
                           <m.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
                             <div className="flex items-center justify-between">
                               <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
-                              <button type="button" onClick={() => { setCurrentPart(1); setStoryId(''); setStoryContext(''); }} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
+                              <button type="button" onClick={resetStoryProgress} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
                                 Reset Story
                               </button>
                             </div>
                             <label className="flex items-center space-x-3 cursor-pointer group">
-                              <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#0B0F1A] border-[#1A2235] group-hover:border-[#7C5CFF]")}>
+                              <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#0B0F1A] border-[#1A2235] group-hover:border-[#7C5CFF]", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
                                 {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                               </div>
-                              <span className={cn("text-sm transition-colors", recapEnabled ? "text-white" : "text-slate-300 group-hover:text-white")}>
-                                Add Recap of Previous Parts (Starts from Part 2)
+                              <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-600" : recapEnabled ? "text-white" : "text-slate-300 group-hover:text-white")}>
+                                Add Recap of Previous Parts (Disabled on Part 1)
                               </span>
-                              <input id="recap-enabled-toggle" aria-label="Enable Story Recap" type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} />
+                              <input id="recap-enabled-toggle" aria-label="Enable Story Recap" type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} disabled={currentPart === 1} />
                             </label>
                           </m.div>
                         )}
@@ -1387,12 +1391,12 @@ function Dashboard() {
                   </div>
 
                 <m.button
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.99 }}
-                type="submit"
-                disabled={generating || !user?.isYoutubeConnected}
-                className="w-full py-4 px-4 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-lg tracking-wide border border-white/20"
-              >
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.99 }}
+                  type="submit"
+                  disabled={generating || !user?.isYoutubeConnected}
+                  className="w-full py-4 px-4 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-lg tracking-wide border border-white/20"
+                >
                 {generating ? (
                   <RefreshCw className="h-6 w-6 animate-spin mr-3" />
                 ) : (
@@ -1491,3 +1495,7 @@ export default function DashboardPage() {
     </Suspense>
   );
 }
+
+
+
+

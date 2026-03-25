@@ -1,7 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import dynamic from 'next/dynamic';
+import { m, AnimatePresence } from 'framer-motion';
+
+
+
 import { Settings, Youtube, Mail, BellRing, Trash2, ShieldAlert, CheckCircle2, RefreshCw, User, Info, Save, Copy } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
@@ -127,7 +131,7 @@ export default function SettingsPage() {
 
       <AnimatePresence>
         {message && (
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95 }}
@@ -139,7 +143,7 @@ export default function SettingsPage() {
           >
             {message.type === 'success' ? <CheckCircle2 className="h-5 w-5 flex-shrink-0 mt-0.5" /> : <ShieldAlert className="h-5 w-5 flex-shrink-0 mt-0.5" />}
             <span className="text-sm font-medium">{message.text}</span>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
 
