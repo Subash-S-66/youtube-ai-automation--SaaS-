@@ -95,6 +95,7 @@ import { webhookHandler } from './controllers/paymentController';
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+
 // Cookie parser
 app.use(cookieParser());
 
