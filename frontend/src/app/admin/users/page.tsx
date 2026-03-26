@@ -15,6 +15,7 @@ interface UserSummary {
   subscriptionExpiresAt?: string;
 }
 
+
 interface UserDetails {
   user: any;
   jobs: any[];
