@@ -121,6 +121,16 @@ jobs:
             exit 1
           fi
 
+      - name: Debug Paths
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/pipeline/src
+          RUN_MODE: prepared
+        run: |
+          echo "PYTHONPATH=$PYTHONPATH"
+          echo "RUN_MODE=$RUN_MODE"
+          ls -R pipeline/src
+
       - name: Run Pipeline Runner
         env:
           PYTHONPATH: ${{ github.workspace }}/pipeline/src
