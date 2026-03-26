@@ -4,7 +4,7 @@ export interface GithubWorkflowInputs {
   jobId: string;
   userId: string;
   runMode?: string;
-  pipelinePayload?: string;
+  pipelinePayload: string;
   youtubeTokenEncrypted: string;
 }
 
@@ -28,6 +28,21 @@ export const triggerGithubWorkflow = async (
     throw new Error('Missing GitHub Actions configuration. Set GITHUB_REPO_OWNER, GITHUB_REPO_NAME, GITHUB_WORKFLOW_ID, and GITHUB_TOKEN.');
   }
 
+  if (!inputs.pipelinePayload || !inputs.pipelinePayload.trim()) {
+    throw new Error('Missing required pipelinePayload for workflow dispatch.');
+  }
+
+  let parsedPayload: unknown;
+  try {
+    parsedPayload = JSON.parse(inputs.pipelinePayload);
+  } catch (error) {
+    throw new Error('pipelinePayload must be valid JSON.');
+  }
+  const script = (parsedPayload as any)?.script;
+  if (!Array.isArray(script) || script.length === 0) {
+    throw new Error('pipelinePayload.script must be a non-empty array.');
+  }
+
   const dispatchId = buildDispatchId();
   const payload = {
     ref,
@@ -36,7 +51,7 @@ export const triggerGithubWorkflow = async (
       job_id: inputs.jobId,
       user_id: inputs.userId,
       run_mode: inputs.runMode || 'prepared',
-      pipeline_payload: inputs.pipelinePayload || '{}',
+      pipeline_payload: inputs.pipelinePayload,
       youtube_token_encrypted: inputs.youtubeTokenEncrypted,
     },
   };

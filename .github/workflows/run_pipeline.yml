@@ -1,9 +1,6 @@
 name: Run Pipeline (GitHub Workspace)
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       dispatch_id:
@@ -20,7 +17,7 @@ on:
         required: false
       pipeline_payload:
         description: "Prepared pipeline payload JSON"
-        required: false
+        required: true
       youtube_token_encrypted:
         description: "Encrypted YouTube token"
         required: true
@@ -83,15 +80,20 @@ jobs:
         id: settings
         shell: bash
         env:
-          INPUT_PIPELINE_PAYLOAD: ${{ inputs.pipeline_payload || '{}' }}
+          INPUT_PIPELINE_PAYLOAD: ${{ inputs.pipeline_payload }}
         run: |
           python - <<'PY'
           import json, os
-          raw = os.getenv("INPUT_PIPELINE_PAYLOAD", "{}")
+          raw = os.getenv("INPUT_PIPELINE_PAYLOAD", "").strip()
+          if not raw:
+              raise SystemExit("Missing required workflow input: pipeline_payload")
           try:
               payload = json.loads(raw)
-          except Exception:
-              payload = {}
+          except Exception as exc:
+              raise SystemExit(f"Invalid pipeline_payload JSON: {exc}")
+          script = payload.get("script") if isinstance(payload, dict) else None
+          if not isinstance(script, list) or len(script) == 0:
+              raise SystemExit("pipeline_payload.script must be a non-empty array")
           config = payload.get("videoConfig", {}) if isinstance(payload, dict) else {}
           count = config.get("videoCount") or 1
           try:
@@ -122,7 +124,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/pipeline/src
           RUN_MODE: prepared
           RUN_COUNT: ${{ steps.settings.outputs.video_count }}
-          PIPELINE_PAYLOAD: ${{ inputs.pipeline_payload || '{}' }}
+          PIPELINE_PAYLOAD: ${{ inputs.pipeline_payload }}
           USER_ID: ${{ inputs.user_id || github.actor }}
           JOB_ID: ${{ inputs.job_id || github.run_id }}
           YOUTUBE_TOKEN_ENCRYPTED: ${{ inputs.youtube_token_encrypted || '' }}

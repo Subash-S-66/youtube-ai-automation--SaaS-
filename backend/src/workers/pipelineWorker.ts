@@ -216,17 +216,35 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         err.stage = 'RENDER';
         throw err;
       }
+      const firstPreparedItem = (preparedContent[0] && typeof preparedContent[0] === 'object')
+        ? (preparedContent[0] as Record<string, any>)
+        : {};
+      const generatedScript = Array.isArray(dbJobForExecution.generatedScript?.[0])
+        ? (dbJobForExecution.generatedScript?.[0] || [])
+        : (dbJobForExecution.generatedScript || []);
+      const payloadScript = Array.isArray(generatedScript) && generatedScript.length > 0
+        ? generatedScript
+        : (Array.isArray(firstPreparedItem.script) ? firstPreparedItem.script : []);
+      const payloadCaptions = Array.isArray(dbJobForExecution.captions?.[0])
+        ? (dbJobForExecution.captions?.[0] || [])
+        : (Array.isArray(dbJobForExecution.captions) ? dbJobForExecution.captions : []);
+      const fallbackCaptions = Array.isArray(firstPreparedItem.captions) ? firstPreparedItem.captions : [];
+      if (!Array.isArray(payloadScript) || payloadScript.length === 0) {
+        const err: any = new Error('Prepared script is missing or empty. Cannot dispatch pipeline execution.');
+        err.stage = 'CONTENT_GENERATION';
+        throw err;
+      }
       const generatedPrompt = dbJobForExecution.generatedPrompt || '';
       const pipelinePayload = {
-        script: Array.isArray(dbJobForExecution.generatedScript?.[0])
-          ? (dbJobForExecution.generatedScript?.[0] || [])
-          : (dbJobForExecution.generatedScript || []),
-        captions: dbJobForExecution.captions || [],
+        script: payloadScript,
+        captions: payloadCaptions.length > 0 ? payloadCaptions : fallbackCaptions,
         videoConfig: dbJobForExecution.pipelineConfig || settings,
         youtube: {
-          title: dbJobForExecution.title || '',
-          description: dbJobForExecution.description || '',
-          hashtags: dbJobForExecution.hashtags || [],
+          title: dbJobForExecution.title || String(firstPreparedItem.title || ''),
+          description: dbJobForExecution.description || String(firstPreparedItem.description || ''),
+          hashtags: Array.isArray(dbJobForExecution.hashtags) && dbJobForExecution.hashtags.length > 0
+            ? dbJobForExecution.hashtags
+            : (Array.isArray(firstPreparedItem.hashtags) ? firstPreparedItem.hashtags : []),
           accountId: dbJobForExecution.youtubeAccountId || settings.channelId,
         },
       };

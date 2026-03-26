@@ -3,6 +3,16 @@ import requests
 import logging
 
 LOGGER = logging.getLogger("webhook_service")
+_JOB_STATUS_PATH = "/api/webhook/job-status"
+
+
+def _normalize_webhook_candidates(webhook_url: str) -> list[str]:
+    base = (webhook_url or "").strip().rstrip("/")
+    if not base:
+        return []
+    if base.endswith(_JOB_STATUS_PATH):
+        return [base]
+    return [base, f"{base}{_JOB_STATUS_PATH}"]
 
 def send_job_status(
     job_id: str,
@@ -19,26 +29,39 @@ def send_job_status(
     if not webhook_url or not job_id:
         return
 
-    try:
-        payload = {
-            "jobId": job_id,
-            "status": status,
-            "logs": logs,
-            "videoUrl": video_url,
-            "youtubeVideoId": youtube_video_id,
-            "errorMessage": error_message,
-            "errorStage": error_stage,
-        }
-        headers = {"Content-Type": "application/json"}
-        if webhook_secret:
-            headers["x-webhook-secret"] = webhook_secret
+    payload = {
+        "jobId": job_id,
+        "status": status,
+        "logs": logs,
+        "videoUrl": video_url,
+        "youtubeVideoId": youtube_video_id,
+        "errorMessage": error_message,
+        "errorStage": error_stage,
+    }
+    headers = {"Content-Type": "application/json"}
+    if webhook_secret:
+        headers["x-webhook-secret"] = webhook_secret
 
-        response = requests.post(
-            webhook_url,
-            json=payload,
-            headers=headers,
-            timeout=10
-        )
-        response.raise_for_status()
-    except Exception as e:
-        LOGGER.warning(f"Failed to send webhook update for job {job_id}: {e}")
+    last_error: Exception | None = None
+    for candidate_url in _normalize_webhook_candidates(webhook_url):
+        try:
+            response = requests.post(
+                candidate_url,
+                json=payload,
+                headers=headers,
+                timeout=10
+            )
+            response.raise_for_status()
+            return
+        except requests.HTTPError as e:
+            last_error = e
+            status_code = getattr(e.response, "status_code", None)
+            if status_code == 404:
+                continue
+            break
+        except Exception as e:
+            last_error = e
+            break
+
+    if last_error:
+        LOGGER.warning(f"Failed to send webhook update for job {job_id}: {last_error}")
