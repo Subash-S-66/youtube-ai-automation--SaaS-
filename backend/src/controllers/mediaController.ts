@@ -5,7 +5,6 @@ import Media from '../models/Media';
 import MediaSequence from '../models/MediaSequence';
 import fs from 'fs';
 import path from 'path';
-import { fileTypeFromFile } from 'file-type';
 
 // @desc    Upload new media
 // @route   POST /api/media/upload
@@ -14,6 +13,11 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+
+async function detectFileType(filePath: string) {
+  const mod = await import('file-type');
+  return mod.fileTypeFromFile(filePath);
+}
 
 async function probeVideoDuration(filePath: string): Promise<number> {
   try {
@@ -38,7 +42,7 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
 
   // Validate file type properly
   try {
-    const fileType = await fileTypeFromFile(req.file.path);
+    const fileType = await detectFileType(req.file.path);
     if (!fileType || (!fileType.mime.startsWith('video/') && !fileType.mime.startsWith('image/'))) {
       fs.unlinkSync(req.file.path);
       throw new AppError('Invalid file type detected. Only videos and images are allowed.', 400);

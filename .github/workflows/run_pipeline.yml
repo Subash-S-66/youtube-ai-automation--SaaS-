@@ -76,6 +76,17 @@ jobs:
               fp.write(f"video_count={count}\n")
           PY
 
+      - name: Validate Gemini Credentials
+        shell: bash
+        run: |
+          set -a
+          source config/.env || true
+          set +a
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "GEMINI_API_KEY is missing. Set repository secret GEMINI_API_KEY or include GEMINI_API_KEY in ENV_FILE_BASE64."
+            exit 1
+          fi
+
       - name: Run Pipeline Runner
         env:
           PYTHONPATH: ${{ github.workspace }}/src
