@@ -91,6 +91,7 @@ jobs:
       - name: Run Pipeline Runner
         env:
           PYTHONPATH: ${{ github.workspace }}/src
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
           TOPIC: ${{ inputs.prompt || github.event.head_commit.message || 'Auto pipeline run' }}
           RUN_COUNT: ${{ steps.settings.outputs.video_count }}
