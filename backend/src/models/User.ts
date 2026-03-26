@@ -24,6 +24,7 @@ export interface IUser extends Document {
   password?: string;
   provider: 'local' | 'google';
   googleId?: string;
+  profileImage?: string;
   role: string;
   plan: PlanType;
   subscriptionExpiresAt?: Date;
@@ -120,6 +121,9 @@ const UserSchema = new Schema<IUser>(
       default: 'local',
     },
     googleId: {
+      type: String,
+    },
+    profileImage: {
       type: String,
     },
     role: {

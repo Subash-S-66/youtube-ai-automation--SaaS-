@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { m, AnimatePresence } from 'framer-motion';
@@ -16,11 +16,14 @@ function VerifyEmailContent() {
   const [isResending, setIsResending] = useState(false);
   const [resendStatus, setResendStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [resendMessage, setResendMessage] = useState('');
+  const [redirectCountdown, setRedirectCountdown] = useState<number | null>(null);
 
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
   const redirect = searchParams.get('redirect');
   const router = useRouter();
+  const redirectTimerRef = useRef<number | null>(null);
+  const countdownTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -48,9 +51,16 @@ function VerifyEmailContent() {
 
         // Redirect to dashboard (or provided redirect) after a short delay
         // Relies on HTTP-only cookie set by backend for authentication
-        setTimeout(() => {
+        setRedirectCountdown(3);
+        countdownTimerRef.current = window.setInterval(() => {
+          setRedirectCountdown((prev) => (prev && prev > 1 ? prev - 1 : 1));
+        }, 1000) as unknown as number;
+        redirectTimerRef.current = window.setTimeout(() => {
+          if (countdownTimerRef.current) {
+            window.clearInterval(countdownTimerRef.current);
+          }
           router.push(redirectUrl);
-        }, 2000);
+        }, 3000) as unknown as number;
       } catch (err: any) {
         setStatus('error');
         setMessage(err.response?.data?.message || 'Verification failed. The link may have expired.');
@@ -58,6 +68,15 @@ function VerifyEmailContent() {
     };
 
     verifyToken();
+
+    return () => {
+      if (redirectTimerRef.current) {
+        window.clearTimeout(redirectTimerRef.current);
+      }
+      if (countdownTimerRef.current) {
+        window.clearInterval(countdownTimerRef.current);
+      }
+    };
   }, [token, redirect, router]);
 
   const handleResend = async (e: React.FormEvent) => {
@@ -101,7 +120,9 @@ function VerifyEmailContent() {
       <h3 className="text-xl font-bold text-white text-center">{message}</h3>
 
       {status === 'success' && (
-        <p className="text-sm text-slate-400">Redirecting...</p>
+        <p className="text-sm text-slate-400">
+          Redirecting in {redirectCountdown ?? 3}...
+        </p>
       )}
 
       {status === 'error' && (

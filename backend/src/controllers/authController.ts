@@ -154,6 +154,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
           _id: user.id,
           email: user.email,
           role: user.role,
+          provider: user.provider,
+          profileImage: user.profileImage,
           isYoutubeConnected: user.isYoutubeConnected,
           emailNotificationsEnabled: user.emailNotificationsEnabled,
           telegramNotificationsEnabled: user.telegramNotificationsEnabled,
@@ -603,6 +605,11 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
          user.isEmailVerified = true;
          await user.save();
       }
+    } else {
+      if (data.picture && user.profileImage !== data.picture) {
+        user.profileImage = data.picture;
+        await user.save();
+      }
     }
   } else {
     // Create Google User
@@ -626,6 +633,9 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
     if (referredBy) createPayload.referredBy = referredBy;
     if (data.id) {
       createPayload.googleId = data.id;
+    }
+    if (data.picture) {
+      createPayload.profileImage = data.picture;
     }
     user = await User.create(createPayload);
   }

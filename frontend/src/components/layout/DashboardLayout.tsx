@@ -20,6 +20,7 @@ interface LayoutProps {
 export default function DashboardLayout({ children, user }: LayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isBackendOffline, setIsBackendOffline] = useState(false);
+  const [avatarError, setAvatarError] = useState(false);
   const pathname = usePathname();
   const displayUser = user?.user
     ? {
@@ -68,6 +69,10 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
       if (retryTimer) window.clearInterval(retryTimer);
     };
   }, [isBackendOffline]);
+
+  useEffect(() => {
+    setAvatarError(false);
+  }, [displayUser?.profileImage]);
 
   const navLinks = [
     { name: 'Dashboard', icon: LayoutDashboard, href: '/dashboard' },
@@ -249,9 +254,19 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
               {/* Install PWA Prompt */}
 
               <InstallPwaButton />
-              <div className="h-8 w-8 rounded-full bg-[#7C5CFF]/20 flex items-center justify-center border border-[#7C5CFF]/30 shadow-glow-primary">
-                 <span className="text-[#00D4FF] text-xs font-bold">{displayUser?.email?.charAt(0).toUpperCase() || 'U'}</span>
-              </div>
+              {displayUser?.profileImage && !avatarError ? (
+                <img
+                  src={displayUser.profileImage}
+                  alt="Profile"
+                  className="h-8 w-8 rounded-full object-cover border border-[#7C5CFF]/30 shadow-glow-primary"
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarError(true)}
+                />
+              ) : (
+                <div className="h-8 w-8 rounded-full bg-[#7C5CFF]/20 flex items-center justify-center border border-[#7C5CFF]/30 shadow-glow-primary">
+                  <span className="text-[#00D4FF] text-xs font-bold">{displayUser?.email?.charAt(0).toUpperCase() || 'U'}</span>
+                </div>
+              )}
            </div>
         </header>
         {isBackendOffline && (
