@@ -62,9 +62,13 @@ export default function SettingsPage() {
     fetchData();
   }, []);
 
-  const handleConnectYouTube = () => {
-    const url = await youtubeService.getAuthUrl();
-    window.location.href = url;
+  const handleConnectYouTube = async () => {
+    try {
+      const url = await youtubeService.getAuthUrl();
+      if (url) window.location.href = url;
+    } catch (e) {
+      console.warn('Failed to connect YouTube', e);
+    }
   };
 
   const handleDisconnectYouTube = async () => {

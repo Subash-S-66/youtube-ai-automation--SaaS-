@@ -209,7 +209,7 @@ function RegisterContent() {
       const data = await authService.verifyOtp(verificationEmail || email, otp);
       if (data.success && data.token) {
         setOtpSuccess('Email verified successfully. Redirecting...');
-        localStorage.setItem('token', data.token);
+
         setTimeout(() => {
           router.push('/dashboard');
         }, 1000);

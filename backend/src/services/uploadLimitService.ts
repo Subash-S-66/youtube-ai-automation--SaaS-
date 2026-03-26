@@ -63,25 +63,43 @@ export const checkAndDowngradeExpiredPlan = async (user: any): Promise<any> => {
 };
 
 export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckResult> => {
-  const user = await User.findById(userId);
-  if (!user) {
-    throw new Error('User not found');
-  }
   // Always use the most recent config in case multiple records exist.
   const systemConfig = await SystemConfig.findOne().sort({ updatedAt: -1 });
-
-  const updatedUser = await checkAndDowngradeExpiredPlan(user);
 
   const now = new Date();
   const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-  // The actual DB reset now happens in the daily cron job `dailyResetCron.ts`
-  // which acts as the single source of truth. We use the saved values exclusively
-  // to avoid in-memory state desync or race conditions.
-  let uploadsUsedToday = updatedUser.uploadsUsedToday;
-  let uploadsOnHold = updatedUser.uploadsOnHold || 0;
+  // Atomic Lazy Reset
+  const updatedUser = await User.findOneAndUpdate(
+    {
+      _id: userId,
+      $or: [
+        { lastUploadReset: { $lt: startOfUTCDay } },
+        { lastUploadReset: { $exists: false } }
+      ]
+    },
+    {
+      $set: {
+        uploadsUsedToday: 0,
+        uploadsOnHold: 0,
+        lastUploadReset: startOfUTCDay
+      }
+    },
+    { new: true } // Returns the document AFTER update
+  );
 
-  const actualPlanName = updatedUser.plan as string;
+  // If no reset was needed, fetch the user normally
+  const user = updatedUser || await User.findById(userId);
+  if (!user) {
+    throw new Error('User not found');
+  }
+
+  const finalUser = await checkAndDowngradeExpiredPlan(user);
+
+  let uploadsUsedToday = finalUser.uploadsUsedToday || 0;
+  let uploadsOnHold = finalUser.uploadsOnHold || 0;
+
+  const actualPlanName = finalUser.plan as string;
   const betaForFreeUsers = !!systemConfig?.betaMode && actualPlanName === 'free';
   const effectivePlanName = betaForFreeUsers ? 'basic' : actualPlanName;
 
@@ -103,10 +121,96 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
   };
 };
 
-export const incrementUploadCount = async (userId: string, count: number = 1): Promise<void> => {
-  // Reset logic is now handled by daily cron. Just increment.
-  await User.updateOne(
-    { _id: userId },
-    { $inc: { uploadsUsedToday: count } }
+export const reserveCredits = async (userId: string, count: number = 1): Promise<boolean> => {
+  const now = new Date();
+  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+  // 1. Force a lazy reset check first so that we don't accidentally check limits against yesterday's values
+  await User.findOneAndUpdate(
+    {
+      _id: userId,
+      $or: [
+        { lastUploadReset: { $lt: startOfUTCDay } },
+        { lastUploadReset: { $exists: false } }
+      ]
+    },
+    {
+      $set: {
+        uploadsUsedToday: 0,
+        uploadsOnHold: 0,
+        lastUploadReset: startOfUTCDay
+      }
+    }
   );
+
+  // Determine user's effective limit to reserve
+  const limits = await getUploadLimits(userId);
+  const maxLimit = limits.dailyLimit;
+
+  // 2. Atomic reservation: Only increment if (uploadsUsedToday + uploadsOnHold + count) <= dailyLimit
+  const result = await User.findOneAndUpdate(
+    {
+      _id: userId,
+      $expr: {
+        $lte: [{ $add: ["$uploadsUsedToday", "$uploadsOnHold", count] }, maxLimit]
+      }
+    },
+    {
+      $inc: { uploadsOnHold: count }
+    },
+    { new: true }
+  );
+
+  return !!result;
+};
+
+export const consumeReservedCredits = async (userId: string, count: number = 1): Promise<void> => {
+  await User.updateOne(
+    { _id: userId, uploadsOnHold: { $gte: count } },
+    {
+      $inc: {
+        uploadsUsedToday: count,
+        uploadsOnHold: -count
+      }
+    }
+  );
+};
+
+export const releaseReservedCredits = async (userId: string, count: number = 1): Promise<void> => {
+  await User.updateOne(
+    { _id: userId, uploadsOnHold: { $gte: count } },
+    {
+      $inc: {
+        uploadsOnHold: -count
+      }
+    }
+  );
+};
+
+export const incrementUploadCount = async (userId: string, count: number = 1): Promise<void> => {
+  const now = new Date();
+  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+  // Atomically lazy-reset AND increment if out of date, or just increment if up to date
+  const result = await User.findOneAndUpdate(
+    {
+      _id: userId,
+      lastUploadReset: { $lt: startOfUTCDay }
+    },
+    {
+      $set: {
+        uploadsUsedToday: count,
+        uploadsOnHold: 0,
+        lastUploadReset: startOfUTCDay
+      }
+    }
+  );
+
+  if (!result) {
+    // Already up to date, just increment
+    await User.updateOne(
+      { _id: userId },
+      { $inc: { uploadsUsedToday: count } }
+    );
+  }
 };

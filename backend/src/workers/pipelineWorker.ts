@@ -9,6 +9,7 @@ import User from '../models/User';
 import Prompt from '../models/Prompt';
 import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
+import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -22,7 +23,7 @@ if (process.env.SENTRY_DSN) {
   });
 }
 import { PipelineJobPayload } from '../queues/pipelineQueue';
-import { incrementUploadCount } from '../services/uploadLimitService';
+import { consumeReservedCredits, releaseReservedCredits } from '../services/uploadLimitService';
 import { notifyUser } from '../services/notificationService';
 
 // Load env vars
@@ -98,7 +99,8 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
     let isSkipped = false;
 
-    await appendLogSafe(jobId, 'Starting pipeline execution...\n', 'running');
+    await JobModel.findByIdAndUpdate(jobId, { status: 'processing', startedAt: new Date() });
+    await appendLogSafe(jobId, 'Job is processing...\n');
 
     try {
       // 1. Check Rolling Limit
@@ -193,12 +195,21 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       console.log(`Triggering Azure Container App Job: ${AZURE_JOB_NAME}`);
 
+      await JobModel.findByIdAndUpdate(jobId, { status: 'running' });
+      await appendLogSafe(jobId, 'Job is running in pipeline...\n');
+
+      // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.
+      // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
+      // We will encrypt the token using the same ENCRYPTION_KEY used for DB storage.
+      const encryptedYoutubeToken = encrypt(youtubeToken);
+
       // Setup payload configuring environment variables for the container run
       const envVars = [
         { name: "USER_ID", value: userId },
         { name: "PROMPT", value: geminiPrompt },
         { name: "SETTINGS", value: JSON.stringify(settings) },
-        { name: "YOUTUBE_TOKEN", value: youtubeToken },
+        { name: "YOUTUBE_TOKEN_ENCRYPTED", value: encryptedYoutubeToken },
+        { name: "ENCRYPTION_KEY", value: process.env.ENCRYPTION_KEY || "" },
         { name: "JOB_ID", value: jobId },
         { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
         { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
@@ -320,10 +331,23 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
              finalStatusMarker = 'FAILED';
          }
 
-         // Handle Consumption Rules
+         // The webhook handles consumption now, but as a fallback, we check here too.
+         // Let's rely entirely on the Webhook to mark holdReleased/holdConsumed for SUCCESS/FAILED.
+         // However, if the job timed out and webhook never fired, we handle it here.
+
+         const currentJobState = await JobModel.findById(jobId);
+         if (!currentJobState || currentJobState.holdConsumed || currentJobState.holdReleased) {
+            console.log(`Job ${jobId} already processed holds. Skipping double release/consume.`);
+            return; // Already handled by Webhook or previous timeout
+         }
+
          if (finalStatusMarker === 'SUCCESS') {
-            await JobModel.findByIdAndUpdate(jobId, { status: 'success' });
-            await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
+            await JobModel.findByIdAndUpdate(jobId, {
+                status: 'completed',
+                completedAt: new Date(),
+                holdConsumed: true
+            });
+            await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
 
             // Handle Story Mode increment
             if (settings.storyMode && settings.storyId) {
@@ -348,21 +372,41 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
             if (user) {
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
-                  } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
-            await JobModel.findByIdAndUpdate(jobId, { status: 'failed' });
-
+         } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
             const dbJobCheck = await JobModel.findById(jobId);
             const acceptedWarning = dbJobCheck?.acceptedYouTubeLimitWarning || false;
 
             if (acceptedWarning) {
-              await incrementUploadCount(userId, settings.videoCount || 1).catch(console.error);
+              // Treated as consumed because user explicitly accepted the risk
+              await JobModel.findByIdAndUpdate(jobId, {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  holdConsumed: true,
+                  error: 'YouTube Quota Exceeded (Warning Accepted)'
+              });
+              await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            } else {
+              await JobModel.findByIdAndUpdate(jobId, {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  holdReleased: true,
+                  error: 'YouTube Quota Exceeded'
+              });
+              await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
             }
 
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
             }
          } else {
-            await JobModel.findByIdAndUpdate(jobId, { status: 'failed' });
+            await JobModel.findByIdAndUpdate(jobId, {
+                status: 'failed',
+                completedAt: new Date(),
+                holdReleased: true,
+                error: 'Generation or upload failed'
+            });
+            await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+
             // FAILED (normal) - do not increment usage
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video generation or upload failed. Please try again.').catch(console.error);
@@ -380,37 +424,32 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         Sentry.captureException(error, { extra: { jobId, userId } });
       }
 
-      // Attempt to record failure in DB if not already captured
       const errorMsg = `\nWorker Error: ${error.message}`;
-      await appendLogSafe(jobId, errorMsg, 'failed');
+      await appendLogSafe(jobId, errorMsg);
+
+      const dbJob = await JobModel.findById(jobId);
+      if (dbJob && !dbJob.holdConsumed && !dbJob.holdReleased) {
+         // Gracefully handle failure and credit release
+         await JobModel.findByIdAndUpdate(jobId, {
+             status: 'failed',
+             completedAt: new Date(),
+             holdReleased: true,
+             error: error.message
+         });
+         await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+      }
 
       throw error;
     } finally {
-      // Release holds only if the job is successful, skipped, or has exhausted all retries
-      const attemptsMade = job.attemptsMade || 0;
-      const maxAttempts = job.opts.attempts || 1;
-      const isFinalAttempt = attemptsMade >= maxAttempts - 1;
-
+      // Decrease the channel specific hold unconditionally if the job finished/failed/was skipped
+      // The `releaseReservedCredits` covers global. Channel holds are just local guards.
       const dbJob = await JobModel.findById(jobId);
-      // 'failed' is also a completed state in this context (e.g. graceful failure without throwing error back to BullMQ)
-      const isCompletedState = dbJob?.status === 'success' || dbJob?.status === 'skipped_due_to_limit' || dbJob?.status === 'failed';
-
-if (isCompletedState || isFinalAttempt) {
+      if (dbJob && dbJob.status !== 'running' && dbJob.status !== 'processing' && dbJob.status !== 'queued') {
         const decrementCount = settings.videoCount || 1;
-
-        // Safely decrement the global user uploadsOnHold (never below 0)
-        await User.updateOne(
-          { _id: userId, uploadsOnHold: { $gte: decrementCount } },
-          { $inc: { uploadsOnHold: -decrementCount } }
-        ).catch((err) => console.error(`Failed to decrement global holds for user ${userId}:`, err));
-
-        // Safely decrement the channel specific videosOnHold
         await User.updateOne(
           { _id: userId, 'youtubeChannels.channelId': settings.channelId, 'youtubeChannels.videosOnHold': { $gte: decrementCount } },
           { $inc: { 'youtubeChannels.$.videosOnHold': -decrementCount } }
         ).catch((err) => console.error(`Failed to decrement channel holds for user ${userId}:`, err));
-      } else {
-        console.log(`Job ${jobId} failed but will retry (attempt ${attemptsMade + 1}/${maxAttempts}). Holds maintained.`);
       }
     }
   },

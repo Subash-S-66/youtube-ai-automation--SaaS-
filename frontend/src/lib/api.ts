@@ -9,9 +9,9 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('token');
-      if (token && config.headers) {
-        config.headers.Authorization = `Bearer ${token}`;
+      const csrfToken = sessionStorage.getItem('csrf_token');
+      if (csrfToken && config.headers && config.method !== 'get' && config.method !== 'head' && config.method !== 'options') {
+        config.headers['x-csrf-token'] = csrfToken;
       }
     }
     return config;
@@ -20,6 +20,22 @@ api.interceptors.request.use(
     return Promise.reject(error);
   }
 );
+
+export const fetchCsrfToken = async () => {
+  try {
+    const { data } = await api.get('/csrf-token');
+    if (data.csrfToken) {
+      sessionStorage.setItem('csrf_token', data.csrfToken);
+    }
+  } catch (error) {
+    console.warn('Failed to fetch CSRF token');
+  }
+};
+
+// Fetch once on app load
+if (typeof window !== 'undefined') {
+  fetchCsrfToken();
+}
 
 api.interceptors.response.use(
   (response) => {
@@ -41,7 +57,6 @@ api.interceptors.response.use(
         const isAdminArea = path.startsWith('/admin');
         // Prevent redirect loop if already on login page
         if (!path.includes('/login')) {
-          localStorage.removeItem('token');
           window.location.href = isAdminArea ? '/admin-login' : '/login';
         }
       }

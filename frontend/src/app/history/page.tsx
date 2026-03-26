@@ -49,13 +49,16 @@ export default function HistoryPage() {
 
   const getStatusBadge = (status: string) => {
     const colors: any = {
-      pending: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
+      queued: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
+      pending: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20', // legacy support
+      processing: 'bg-[#00D4FF]/10 text-[#00D4FF] border-[#00D4FF]/20',
       running: 'bg-[#00D4FF]/10 text-[#00D4FF] border-[#00D4FF]/20',
-      success: 'bg-[#7C5CFF]/10 text-[#7C5CFF] border-[#7C5CFF]/20',
+      completed: 'bg-[#7C5CFF]/10 text-[#7C5CFF] border-[#7C5CFF]/20',
+      success: 'bg-[#7C5CFF]/10 text-[#7C5CFF] border-[#7C5CFF]/20', // legacy support
       failed: 'bg-[#FF4FD8]/10 text-[#FF4FD8] border-[#FF4FD8]/20',
     };
     return (
-      <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${colors[status] || colors.pending}`}>
+      <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${colors[status] || colors.queued}`}>
         {status}
       </span>
     );

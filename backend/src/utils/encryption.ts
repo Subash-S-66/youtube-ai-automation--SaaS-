@@ -1,14 +1,28 @@
 import crypto from 'crypto';
 
 const algorithm = 'aes-256-cbc';
-// Ensure the key is exactly 32 bytes (256 bits) long.
-if (!process.env.ENCRYPTION_KEY) {
-  throw new Error('ENCRYPTION_KEY must be set in production');
+
+const isProduction = process.env.NODE_ENV === 'production';
+let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '';
+
+// Safe fallback for development
+if (!ENCRYPTION_KEY) {
+  if (isProduction) {
+    throw new Error('ENCRYPTION_KEY must be set in production');
+  } else {
+    console.warn('⚠️ No ENCRYPTION_KEY provided. Using a fallback key for development ONLY.');
+    ENCRYPTION_KEY = 'a-fallback-dev-key-must-be-32-by';
+  }
 }
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+// Ensure the key is exactly 32 bytes (256 bits) long.
 if (ENCRYPTION_KEY.length !== 32) {
-  throw new Error('ENCRYPTION_KEY must be exactly 32 bytes/characters long for aes-256-cbc');
+  if (isProduction) {
+    throw new Error('ENCRYPTION_KEY must be exactly 32 bytes/characters long for aes-256-cbc');
+  } else {
+    console.warn('⚠️ ENCRYPTION_KEY must be exactly 32 bytes. Padding/truncating for dev mode.');
+    ENCRYPTION_KEY = ENCRYPTION_KEY.padEnd(32, '0').substring(0, 32);
+  }
 }
 
 const IV_LENGTH = 16;

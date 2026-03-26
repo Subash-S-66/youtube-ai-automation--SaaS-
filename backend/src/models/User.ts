@@ -264,6 +264,11 @@ const UserSchema = new Schema<IUser>(
   }
 );
 
+UserSchema.index({ email: 1 });
+UserSchema.index({ emailVerificationToken: 1 });
+UserSchema.index({ passwordResetToken: 1 });
+UserSchema.index({ otpToken: 1 });
+
 const User = mongoose.model<IUser>('User', UserSchema);
 
 export default User;

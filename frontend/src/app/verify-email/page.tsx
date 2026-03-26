@@ -39,7 +39,7 @@ function VerifyEmailContent() {
         setMessage(data.message || 'Email verified successfully!');
 
         if (data.token && typeof window !== 'undefined') {
-          localStorage.setItem('token', data.token);
+
           const emailKey = (data.user?.email || '').trim().toLowerCase();
           if (emailKey) {
             localStorage.removeItem(`resendCooldown:${emailKey}`);

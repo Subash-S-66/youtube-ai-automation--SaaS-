@@ -27,9 +27,10 @@ const generateToken = (id: string): string => {
 const setTokenCookie = (res: Response, token: string, isOAuth: boolean = false) => {
   res.cookie('jwt', token, {
     httpOnly: true,
-    secure: isOAuth ? true : process.env.NODE_ENV === 'production',
-    sameSite: isOAuth ? 'none' : 'strict',
+    secure: true,
+    sameSite: 'none',
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    domain: process.env.COOKIE_DOMAIN || undefined,
   });
 };
 
@@ -238,6 +239,28 @@ export const login = asyncHandler(
 // @desc    Authenticate an admin user
 // @route   POST /api/auth/admin-login
 // @access  Public
+// @desc    Logout user
+// @route   POST /api/auth/logout
+// @access  Public
+export const logout = asyncHandler(async (req: Request, res: Response) => {
+  res.cookie('jwt', '', {
+    httpOnly: true,
+    expires: new Date(0),
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none',
+  });
+
+  res.cookie('oauth_state', '', {
+    httpOnly: true,
+    expires: new Date(0),
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'none',
+  });
+
+  res.status(200).json({ success: true, message: 'Logged out successfully' });
+});
+
+// @desc    Authenticate an admin user
 export const adminLogin = asyncHandler(
   async (req: Request<unknown, unknown, AdminLoginInput>, res: Response) => {
     const { username, password } = req.body;

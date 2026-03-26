@@ -3,8 +3,14 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IJob extends Document {
   userId: mongoose.Types.ObjectId;
   promptId: mongoose.Types.ObjectId;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'paused_due_to_limit' | 'skipped_due_to_limit';
+  status: 'queued' | 'processing' | 'running' | 'completed' | 'failed' | 'paused_due_to_limit' | 'skipped_due_to_limit';
   logs: string;
+  error?: string;
+  result?: any;
+  startedAt?: Date;
+  completedAt?: Date;
+  holdConsumed: boolean;
+  holdReleased: boolean;
   acceptedYouTubeLimitWarning: boolean;
   videoCount: number;
   channelId: string;
@@ -21,6 +27,7 @@ const JobSchema = new Schema<IJob>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+      index: true,
     },
     promptId: {
       type: Schema.Types.ObjectId,
@@ -29,12 +36,32 @@ const JobSchema = new Schema<IJob>(
     },
     status: {
       type: String,
-      enum: ['pending', 'running', 'success', 'failed', 'paused_due_to_limit', 'skipped_due_to_limit'],
-      default: 'pending',
+      enum: ['queued', 'processing', 'running', 'completed', 'failed', 'paused_due_to_limit', 'skipped_due_to_limit'],
+      default: 'queued',
     },
     logs: {
       type: String,
       default: '',
+    },
+    error: {
+      type: String,
+    },
+    result: {
+      type: Schema.Types.Mixed,
+    },
+    startedAt: {
+      type: Date,
+    },
+    completedAt: {
+      type: Date,
+    },
+    holdConsumed: {
+      type: Boolean,
+      default: false,
+    },
+    holdReleased: {
+      type: Boolean,
+      default: false,
     },
     acceptedYouTubeLimitWarning: {
       type: Boolean,
@@ -59,6 +86,7 @@ const JobSchema = new Schema<IJob>(
 
 // Optimize lookups for pending/running jobs per user
 JobSchema.index({ userId: 1, status: 1 });
+JobSchema.index({ userId: 1, _id: -1 }); // Index for cursor pagination
 
 const Job = mongoose.model<IJob>('Job', JobSchema);
 

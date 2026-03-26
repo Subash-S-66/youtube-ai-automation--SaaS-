@@ -276,22 +276,30 @@ export const deleteUserByAdmin = asyncHandler(async (req: Request, res: Response
 });
 
 export const getAllUsers = asyncHandler(async (req: Request, res: Response) => {
-  const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 10;
   const search = req.query.search as string;
+  const cursor = req.query.cursor as string;
 
   const query: any = {};
-  if (search) {
-    query.email = { $regex: search, $options: 'i' };
+  if (search && typeof search === 'string') {
+    // Escape regex to prevent ReDoS
+    const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.email = { $regex: escapedSearch, $options: 'i' };
+  }
+  if (cursor) {
+    query._id = { $lt: cursor };
   }
 
-  const skip = (page - 1) * limit;
-
   const users = await User.find(query)
-    .select('email plan uploadsUsedToday uploadsOnHold subscriptionExpiresAt')
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit);
+    .select('email plan uploadsUsedToday uploadsOnHold subscriptionExpiresAt createdAt')
+    .sort({ _id: -1 })
+    .limit(limit + 1);
+
+  let nextCursor = null;
+  if (users.length > limit) {
+    const nextUser = users.pop();
+    nextCursor = nextUser?._id;
+  }
 
   const total = await User.countDocuments(query);
 
@@ -300,8 +308,8 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response) => {
     data: users,
     pagination: {
       total,
-      page,
-      pages: Math.ceil(total / limit),
+      limit,
+      nextCursor,
     },
   });
 });

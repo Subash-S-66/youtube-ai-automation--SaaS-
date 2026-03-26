@@ -4,7 +4,7 @@ import StoryProgress from '../models/StoryProgress';
 import Job from '../models/Job';
 import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
-import { getUploadLimits } from './uploadLimitService';
+import { getUploadLimits, reserveCredits } from './uploadLimitService';
 import { getValidYouTubeToken } from './youtubeTokenService';
 
 export interface EnqueuePipelineParams {
@@ -150,11 +150,16 @@ export const enqueuePipelineJob = async ({
     }
   }
 
+  const reserved = await reserveCredits(userId, settings.videoCount);
+  if (!reserved) {
+     throw new AppError('Daily upload limit reached or insufficient credits', 403);
+  }
+
+  // Still increment channel-specific hold
   const updatedUser = await User.findOneAndUpdate(
     { _id: userId, 'youtubeChannels.channelId': settings.channelId },
     {
       $inc: {
-        uploadsOnHold: settings.videoCount,
         'youtubeChannels.$.videosOnHold': settings.videoCount,
       },
     },
@@ -166,7 +171,7 @@ export const enqueuePipelineJob = async ({
   const job = await Job.create({
     userId,
     promptId,
-    status: 'pending',
+    status: 'queued',
     logs: 'Job added to queue...\n',
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
     videoCount: settings.videoCount,
