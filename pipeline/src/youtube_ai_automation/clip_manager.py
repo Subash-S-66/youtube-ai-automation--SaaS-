@@ -11,6 +11,7 @@ import random
 from typing import Any
 
 
+
 def _normalize_url(url: str) -> str:
     return str(url).split("?", 1)[0].strip().lower()
 
