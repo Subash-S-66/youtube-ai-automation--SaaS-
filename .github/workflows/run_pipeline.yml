@@ -78,14 +78,15 @@ jobs:
 
       - name: Run Pipeline Runner
         env:
-          RUN_MODE: "manual"
-          TOPIC: ${{ inputs.prompt }}
+          PYTHONPATH: ${{ github.workspace }}/src
+          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
+          TOPIC: ${{ inputs.prompt || github.event.head_commit.message || 'Auto pipeline run' }}
           RUN_COUNT: ${{ steps.settings.outputs.video_count }}
-          SETTINGS: ${{ inputs.settings }}
-          PROMPT: ${{ inputs.prompt }}
-          USER_ID: ${{ inputs.user_id }}
-          JOB_ID: ${{ inputs.job_id }}
-          YOUTUBE_TOKEN_ENCRYPTED: ${{ inputs.youtube_token_encrypted }}
+          SETTINGS: ${{ inputs.settings || '{}' }}
+          PROMPT: ${{ inputs.prompt || github.event.head_commit.message || 'Auto pipeline run' }}
+          USER_ID: ${{ inputs.user_id || github.actor }}
+          JOB_ID: ${{ inputs.job_id || github.run_id }}
+          YOUTUBE_TOKEN_ENCRYPTED: ${{ inputs.youtube_token_encrypted || '' }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
