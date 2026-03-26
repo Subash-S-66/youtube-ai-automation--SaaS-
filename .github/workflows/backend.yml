@@ -32,11 +32,8 @@ jobs:
         working-directory: ./backend
         run: npm run build
 
-      # Add hosting deployment step here (e.g. Render/Railway/Azure)
-      # For Railway (using Railway CLI):
-      # - name: Deploy to Railway
-      #   run: |
-      #     npm i -g @railway/cli
-      #     railway up --detach
-      #   env:
-      #     RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      - name: Deploy to Render
+        run: |
+          curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}

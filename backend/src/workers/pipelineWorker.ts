@@ -8,9 +8,11 @@ import JobModel from '../models/Job';
 import User from '../models/User';
 import Prompt from '../models/Prompt';
 import StoryProgress from '../models/StoryProgress';
+import SystemConfig from '../models/SystemConfig';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
+import { triggerGithubWorkflow } from './githubWorkflowTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 
@@ -89,6 +91,19 @@ const appendLogSafe = async (jobId: string, newText: string, status?: string): P
       flushLogs(jobId);
     }, 3000);
   }
+};
+
+const resolvePipelineRunner = async (): Promise<'github' | 'azure'> => {
+  try {
+    const config = await SystemConfig.findOne().sort({ updatedAt: -1 });
+    if (config?.pipelineRunner === 'azure' || config?.pipelineRunner === 'github') {
+      return config.pipelineRunner;
+    }
+  } catch (error) {
+    console.warn('Failed to load SystemConfig for pipeline runner. Falling back to env.', error);
+  }
+  const fallback = (process.env.PIPELINE_RUNNER || 'azure').toLowerCase();
+  return fallback === 'github' ? 'github' : 'azure';
 };
 
 const pipelineWorker = new Worker<PipelineJobPayload>(
@@ -184,16 +199,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         throw new Error('Failed to obtain a valid YouTube token');
       }
 
-      // 4. Trigger Azure Container App Job instead of local spawn
-      const AZURE_JOB_NAME = process.env.AZURE_JOB_NAME;
-      const AZURE_RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP;
-      const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
-
-      if (!AZURE_JOB_NAME || !AZURE_RESOURCE_GROUP || !AZURE_SUBSCRIPTION_ID) {
-         throw new Error("Azure Container App Job configuration is missing.");
-      }
-
-      console.log(`Triggering Azure Container App Job: ${AZURE_JOB_NAME}`);
+      // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
+      const pipelineRunner = await resolvePipelineRunner();
 
       await JobModel.findByIdAndUpdate(jobId, { status: 'running' });
       await appendLogSafe(jobId, 'Job is running in pipeline...\n');
@@ -215,6 +222,30 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
         { name: "MONGO_URI", value: process.env.MONGO_URI || "" }
       ];
+
+      if (pipelineRunner === 'github') {
+         await appendLogSafe(jobId, `\nDispatching GitHub Actions workflow for job ${jobId}...\n`);
+         await triggerGithubWorkflow({
+           jobId,
+           userId,
+           prompt: geminiPrompt,
+           settings: JSON.stringify(settings),
+           youtubeTokenEncrypted: encryptedYoutubeToken,
+         });
+         await appendLogSafe(jobId, `\nGitHub Actions workflow dispatched. Awaiting webhook updates.\n`);
+         return;
+      }
+
+      // Azure runner
+      const AZURE_JOB_NAME = process.env.AZURE_JOB_NAME;
+      const AZURE_RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP;
+      const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
+
+      if (!AZURE_JOB_NAME || !AZURE_RESOURCE_GROUP || !AZURE_SUBSCRIPTION_ID) {
+         throw new Error("Azure Container App Job configuration is missing.");
+      }
+
+      console.log(`Triggering Azure Container App Job: ${AZURE_JOB_NAME}`);
 
       const { success: triggerSuccess, accessToken } = await triggerAzureJob(AZURE_JOB_NAME, envVars);
 

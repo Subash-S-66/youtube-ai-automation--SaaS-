@@ -107,8 +107,8 @@ $clientSecretJson = Get-Content $clientSecretPath -Raw
 $tokenJson = Get-Content $tokenPath -Raw
 $clientSecretJsonB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($clientSecretJson))
 $tokenJsonB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($tokenJson))
-$jobCpu = "2"
-$jobMemory = "4Gi"
+$jobCpu = if ([string]::IsNullOrWhiteSpace($env:AZURE_JOB_CPU)) { "1" } else { $env:AZURE_JOB_CPU }
+$jobMemory = if ([string]::IsNullOrWhiteSpace($env:AZURE_JOB_MEMORY)) { "2Gi" } else { $env:AZURE_JOB_MEMORY }
 
 $loginServer = "$RegistryName.azurecr.io"
 $fullImage = "$loginServer/$ImageName"

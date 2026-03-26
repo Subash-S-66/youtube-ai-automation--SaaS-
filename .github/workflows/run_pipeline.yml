@@ -1,0 +1,93 @@
+name: Run Pipeline (GitHub Workspace)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dispatch_id:
+        description: "Dispatch correlation id"
+        required: true
+      job_id:
+        description: "Backend job id"
+        required: true
+      user_id:
+        description: "User id"
+        required: true
+      prompt:
+        description: "Prompt text"
+        required: true
+      settings:
+        description: "Pipeline settings JSON"
+        required: true
+      youtube_token_encrypted:
+        description: "Encrypted YouTube token"
+        required: true
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prepare Config Files
+        shell: bash
+        run: |
+          mkdir -p config data/output
+          echo "${{ secrets.ENV_FILE_BASE64 }}" | base64 -d > config/.env
+          echo "${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}" | base64 -d > config/client_secret.json
+          echo "${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}" | base64 -d > data/output/token.json
+
+      - name: Parse Settings
+        id: settings
+        shell: bash
+        env:
+          INPUT_SETTINGS: ${{ inputs.settings }}
+        run: |
+          python - <<'PY'
+          import json, os
+          raw = os.getenv("INPUT_SETTINGS", "{}")
+          try:
+              settings = json.loads(raw)
+          except Exception:
+              settings = {}
+          count = settings.get("videoCount") or 1
+          try:
+              count = int(count)
+          except Exception:
+              count = 1
+          if count < 1:
+              count = 1
+          print(f"video_count={count}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fp:
+              fp.write(f"video_count={count}\n")
+          PY
+
+      - name: Run Pipeline Runner
+        env:
+          RUN_MODE: "manual"
+          TOPIC: ${{ inputs.prompt }}
+          RUN_COUNT: ${{ steps.settings.outputs.video_count }}
+          SETTINGS: ${{ inputs.settings }}
+          PROMPT: ${{ inputs.prompt }}
+          USER_ID: ${{ inputs.user_id }}
+          JOB_ID: ${{ inputs.job_id }}
+          YOUTUBE_TOKEN_ENCRYPTED: ${{ inputs.youtube_token_encrypted }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          JULES_API_URL: ${{ secrets.JULES_API_URL }}
+          JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+        run: |
+          python -m youtube_ai_automation.azure_job_runner

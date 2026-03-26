@@ -127,7 +127,7 @@ const bannerSchema = z.object({
 export const getSystemConfig = asyncHandler(async (req: Request, res: Response) => {
   let config = await SystemConfig.findOne().sort({ updatedAt: -1 });
   if (!config) {
-    config = await SystemConfig.create({ betaMode: false });
+    config = await SystemConfig.create({ betaMode: false, pipelineRunner: 'github' });
   } else {
     // Ensure only one config doc exists.
     await SystemConfig.deleteMany({ _id: { $ne: config._id } });
@@ -142,6 +142,7 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
 const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
+    pipelineRunner: z.enum(['github', 'azure']).optional(),
     planValueMap: z
       .object({
         free: z.number(),
@@ -162,6 +163,9 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
 
   const { betaMode, planValueMap } = validation.data.body;
   const updatePayload: any = { betaMode };
+  if (validation.data.body.pipelineRunner) {
+    updatePayload.pipelineRunner = validation.data.body.pipelineRunner;
+  }
   if (planValueMap) {
     updatePayload.planValueMap = planValueMap;
   }

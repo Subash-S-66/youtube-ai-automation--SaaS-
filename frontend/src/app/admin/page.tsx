@@ -62,9 +62,11 @@ export default function AdminDashboard() {
   const bannerStartRef = useRef<HTMLInputElement | null>(null);
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
   const [betaMode, setBetaMode] = useState(false);
+  const [pipelineRunner, setPipelineRunner] = useState<'github' | 'azure'>('github');
   const [updatingConfig, setUpdatingConfig] = useState(false);
   const [planValueMap, setPlanValueMap] = useState({ free: 0, basic: 1, pro: 2, premium: 4 });
   const [savingProration, setSavingProration] = useState(false);
+  const [savingPipelineRunner, setSavingPipelineRunner] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlans, setSavingPlans] = useState(false);
 
@@ -192,7 +194,7 @@ export default function AdminDashboard() {
   const executeUpdateConfig = async (newBetaMode: boolean) => {
     setUpdatingConfig(true);
     try {
-      await adminService.updateSystemConfig({ betaMode: newBetaMode, planValueMap });
+      await adminService.updateSystemConfig({ betaMode: newBetaMode, planValueMap, pipelineRunner });
       setBetaMode(newBetaMode);
       setModalConfig({
          isOpen: true,
@@ -220,7 +222,7 @@ export default function AdminDashboard() {
   const handleSaveProration = async () => {
     setSavingProration(true);
     try {
-      await adminService.updateSystemConfig({ betaMode, planValueMap });
+      await adminService.updateSystemConfig({ betaMode, planValueMap, pipelineRunner });
       setModalConfig({
         isOpen: true,
         title: 'Proration Updated',
@@ -240,6 +242,32 @@ export default function AdminDashboard() {
       });
     } finally {
       setSavingProration(false);
+    }
+  };
+
+  const handleSavePipelineRunner = async () => {
+    setSavingPipelineRunner(true);
+    try {
+      await adminService.updateSystemConfig({ betaMode, planValueMap, pipelineRunner });
+      setModalConfig({
+        isOpen: true,
+        title: 'Pipeline Runner Updated',
+        description: `Pipeline runner switched to ${pipelineRunner === 'github' ? 'GitHub Workspace' : 'Azure Container Apps'}.`,
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update pipeline runner.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingPipelineRunner(false);
     }
   };
 
@@ -428,6 +456,9 @@ const handleDeleteUser = () => {
 
           if (configRes.status === 'fulfilled' && configRes.value?.success && configRes.value.data) {
             setBetaMode(configRes.value.data.betaMode);
+            if (configRes.value.data.pipelineRunner) {
+              setPipelineRunner(configRes.value.data.pipelineRunner);
+            }
             if (configRes.value.data.planValueMap) {
               setPlanValueMap({
                 free: Number(configRes.value.data.planValueMap.free ?? 0),
@@ -653,6 +684,35 @@ const handleDeleteUser = () => {
                   >
                     {savingProration ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Proration Settings'}
                   </button>
+                </div>
+                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                  <p className="text-sm font-semibold text-white mb-2">Pipeline Runner</p>
+                  <p className="text-xs text-slate-400 mb-3">Choose where pipeline jobs execute. GitHub Workspace runs in GitHub Actions. Azure runs in Container Apps Jobs.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Runner</label>
+                      <select
+                        id="pipeline-runner-select"
+                        aria-label="Pipeline Runner"
+                        value={pipelineRunner}
+                        onChange={(e) => setPipelineRunner(e.target.value as 'github' | 'azure')}
+                        className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                      >
+                        <option value="github">GitHub Workspace</option>
+                        <option value="azure">Azure Container Apps</option>
+                      </select>
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={handleSavePipelineRunner}
+                        disabled={savingPipelineRunner}
+                        className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {savingPipelineRunner ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Pipeline Runner'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
