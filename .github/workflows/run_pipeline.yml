@@ -120,7 +120,7 @@ jobs:
       - name: Run Pipeline Runner
         env:
           PYTHONPATH: ${{ github.workspace }}/pipeline/src
-          RUN_MODE: ${{ inputs.run_mode || 'prepared' }}
+          RUN_MODE: prepared
           RUN_COUNT: ${{ steps.settings.outputs.video_count }}
           PIPELINE_PAYLOAD: ${{ inputs.pipeline_payload || '{}' }}
           USER_ID: ${{ inputs.user_id || github.actor }}

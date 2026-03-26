@@ -34,6 +34,19 @@ jobs:
 
       - name: Deploy to Render
         run: |
-          curl -fsSL -X POST "$RENDER_DEPLOY_HOOK"
+          if [ -z "${RENDER_DEPLOY_HOOK}" ]; then
+            echo "Missing required secret: RENDER_DEPLOY_HOOK"
+            exit 1
+          fi
+
+          case "${RENDER_DEPLOY_HOOK}" in
+            http://*|https://*) ;;
+            *)
+              echo "RENDER_DEPLOY_HOOK must be a valid http(s) URL"
+              exit 1
+              ;;
+          esac
+
+          curl -fsSL -X POST "${RENDER_DEPLOY_HOOK}"
         env:
           RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}

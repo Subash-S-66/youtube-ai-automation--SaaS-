@@ -1618,9 +1618,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     _setup_logging()
-    run_mode = os.getenv("RUN_MODE", "").strip().lower()
+    run_mode_raw = os.getenv("RUN_MODE", "")
+    cleaned = run_mode_raw.strip().strip('"').strip("'").lower()
+    token = cleaned.replace(",", " ").split()[0] if cleaned else ""
+    run_mode = {"execution": "prepared"}.get(token, token)
     if run_mode != "prepared":
-        raise SystemExit("Pipeline supports only prepared mode")
+        raise SystemExit(
+            f"Pipeline supports only prepared mode "
+            f"(RUN_MODE raw={run_mode_raw!r}, normalized={run_mode!r})"
+        )
     raise SystemExit("Use azure_job_runner for prepared execution.")
 
 

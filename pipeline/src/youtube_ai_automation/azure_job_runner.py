@@ -259,9 +259,13 @@ def main() -> None:
     _setup_logging()
     reset_upload_report(UPLOAD_REPORT_FILE)
 
+    run_mode_raw = os.getenv("RUN_MODE", "")
     run_mode = _resolve_mode()
     if run_mode != "prepared":
-        raise SystemExit("Pipeline supports only prepared mode")
+        raise SystemExit(
+            f"Pipeline supports only prepared mode "
+            f"(RUN_MODE raw={run_mode_raw!r}, normalized={run_mode!r})"
+        )
     count = _env_int("RUN_COUNT", 1)
     upload = _env_flag("UPLOAD", True) or _env_flag("RUN_UPLOAD", True)
     topic = os.getenv("TOPIC", "").strip()
