@@ -45,11 +45,39 @@ jobs:
 
       - name: Prepare Config Files
         shell: bash
+        env:
+          ENV_FILE_BASE64: ${{ secrets.ENV_FILE_BASE64 }}
+          YOUTUBE_CLIENT_SECRET_JSON_BASE64: ${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}
+          YOUTUBE_TOKEN_JSON_BASE64: ${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}
         run: |
           mkdir -p pipeline/config pipeline/data/output
-          echo "${{ secrets.ENV_FILE_BASE64 }}" | base64 -d > pipeline/config/.env
-          echo "${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}" | base64 -d > pipeline/config/client_secret.json
-          echo "${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}" | base64 -d > pipeline/data/output/token.json
+          python - <<'PY'
+          import base64
+          import os
+          import pathlib
+          import sys
+
+          targets = [
+              ("ENV_FILE_BASE64", "pipeline/config/.env"),
+              ("YOUTUBE_CLIENT_SECRET_JSON_BASE64", "pipeline/config/client_secret.json"),
+              ("YOUTUBE_TOKEN_JSON_BASE64", "pipeline/data/output/token.json"),
+          ]
+
+          for env_name, out_path in targets:
+              raw = (os.getenv(env_name) or "").strip()
+              if not raw:
+                  print(f"Missing required secret: {env_name}", file=sys.stderr)
+                  sys.exit(1)
+              try:
+                  decoded = base64.b64decode(raw, validate=True)
+              except Exception:
+                  print(f"Invalid base64 in secret: {env_name}", file=sys.stderr)
+                  sys.exit(1)
+
+              path = pathlib.Path(out_path)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(decoded)
+          PY
 
       - name: Parse Settings
         id: settings
