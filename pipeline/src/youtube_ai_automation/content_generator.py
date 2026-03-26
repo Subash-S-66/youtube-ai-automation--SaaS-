@@ -345,7 +345,6 @@ def _call_gemini_single_key(prompt: str, api_key: str, model: str) -> str:
                     raise hexc # Bubble up to switch key
                 elif status_code == 503:
                     error_str = "Service unavailable"
-                    raise hexc # Bubble up to switch key
                 else:
                     error_str = f"HTTP {status_code}: {response_text or str(hexc)[:80]}"
                 errors.append(f"{model_name}: {error_str}")

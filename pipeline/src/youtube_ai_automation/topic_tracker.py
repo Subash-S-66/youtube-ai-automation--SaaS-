@@ -25,7 +25,7 @@ class TopicTracker:
                 LOGGER.error(f"Failed to connect to MongoDB for TopicTracker: {e}")
 
     def get_all_topics(self) -> list[dict]:
-        if not self.collection:
+        if self.collection is None:
             return []
 
         try:
@@ -36,7 +36,7 @@ class TopicTracker:
             return []
 
     def mark_topic_used(self, topic: str):
-        if not self.collection:
+        if self.collection is None:
             return
 
         try:

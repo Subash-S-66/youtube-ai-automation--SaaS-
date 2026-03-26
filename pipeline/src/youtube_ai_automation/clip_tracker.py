@@ -21,7 +21,7 @@ class ClipTracker:
                 print(f"Failed to connect to MongoDB for ClipTracker: {e}")
 
     def get_used_clips(self):
-        if not self.collection:
+        if self.collection is None:
             return set()
 
         try:
@@ -31,7 +31,7 @@ class ClipTracker:
             return set()
 
     def mark_clip_used(self, clip_id: str):
-        if not self.collection:
+        if self.collection is None:
             return
 
         try:
