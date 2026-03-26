@@ -47,6 +47,10 @@ export const generateGeminiPrompt = async (user_prompt: string): Promise<string>
     }
   }
 
+  return generateGeminiPromptDirect(user_prompt);
+};
+
+export const generateGeminiPromptDirect = async (user_prompt: string): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
@@ -60,7 +64,6 @@ export const generateGeminiPrompt = async (user_prompt: string): Promise<string>
     const model = genAI.getGenerativeModel({
       model: 'gemini-3.1-flash-lite',
       systemInstruction: SYSTEM_PROMPT,
-
     });
 
     // Add a random temperature to ensure variation
@@ -77,10 +80,7 @@ export const generateGeminiPrompt = async (user_prompt: string): Promise<string>
       return user_prompt;
     }
 
-    // Clean and trim the output
-    const cleanedOutput = responseText.trim();
-
-    return cleanedOutput;
+    return responseText.trim();
   } catch (error) {
     console.error('Gemini API Error:', error);
     console.warn('Failed to generate video prompt, falling back to raw user prompt.');

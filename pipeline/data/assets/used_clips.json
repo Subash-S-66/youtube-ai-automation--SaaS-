@@ -1,228 +1,389 @@
 {
   "used_clips": [
     {
-      "url": "https://videos.pexels.com/video-files/2829285/2829285-hd_1080_1920_24fps.mp4",
+      "url": "https://videos.pexels.com/video-files/14530276/14530276-hd_1080_1920_25fps.mp4",
       "source": "pexels",
-      "query": "your operating system becoming technology cinematic close-up",
-      "local_path": "assets\\clips\\scene1_clip1.mp4",
-      "used_at": "2026-03-14T06:12:51.419178+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/34536751/14633481_2160_3840_50fps.mp4",
-      "source": "pexels",
-      "query": "your operating system becoming technology cinematic close-up",
-      "local_path": "assets\\clips\\scene1_clip2.mp4",
-      "used_at": "2026-03-14T06:12:57.370091+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/7414167/7414167-hd_1080_1920_24fps.mp4",
-      "source": "pexels",
-      "query": "professional reviewing AI generated document on laptop",
-      "local_path": "assets\\clips\\scene2_clip1.mp4",
-      "used_at": "2026-03-14T06:13:03.141229+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/5635823/5635823-uhd_2160_3840_24fps.mp4",
-      "source": "pexels",
-      "query": "professional reviewing AI generated document on laptop",
-      "local_path": "assets\\clips\\scene2_clip2.mp4",
-      "used_at": "2026-03-14T06:13:09.156985+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/13358208/13358208-hd_1080_1920_30fps.mp4",
-      "source": "pexels",
-      "query": "what changed explain shift from technology cinematic close-up",
-      "local_path": "assets\\clips\\scene3_clip1.mp4",
-      "used_at": "2026-03-14T06:13:14.618387+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/7547769/7547769-uhd_2160_3840_25fps.mp4",
-      "source": "pexels",
-      "query": "futuristic AI interface holographic display",
-      "local_path": "assets\\clips\\scene4_clip1.mp4",
-      "used_at": "2026-03-14T06:13:22.914506+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/7213862/7213862-uhd_2160_3840_30fps.mp4",
-      "source": "pexels",
-      "query": "futuristic AI interface holographic display",
-      "local_path": "assets\\clips\\scene4_clip2.mp4",
-      "used_at": "2026-03-14T06:13:31.183051+00:00"
-    },
-    {
-      "url": "https://cdn.pixabay.com/video/2019/05/05/23325-334689174_large.mp4",
-      "source": "pixabay",
-      "query": "cybersecurity lock screen with digital encryption visual",
-      "local_path": "assets\\clips\\scene5_clip1.mp4",
-      "used_at": "2026-03-14T06:13:37.638228+00:00"
-    },
-    {
-      "url": "https://cdn.pixabay.com/video/2021/07/30/83284-584710668_large.mp4",
-      "source": "pixabay",
-      "query": "cybersecurity lock screen with digital encryption visual",
-      "local_path": "assets\\clips\\scene5_clip2.mp4",
-      "used_at": "2026-03-14T06:13:39.542257+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/34296442/14530315_2160_3840_32fps.mp4",
-      "source": "pexels",
-      "query": "lithium battery fire hazard technology cinematic close-up",
-      "local_path": "assets\\clips\\scene1_clip1.mp4",
-      "used_at": "2026-03-14T06:35:33.157150+00:00"
+      "query": "would risk your life save technology cinematic close-up",
+      "local_path": "assets\\clips\\scene001_clip1.mp4",
+      "used_at": "2026-03-26T17:19:46.835334+00:00"
     },
     {
       "url": "https://videos.pexels.com/video-files/30728857/13145926_2160_3840_30fps.mp4",
       "source": "pexels",
-      "query": "lithium battery fire hazard technology cinematic close-up",
-      "local_path": "assets\\clips\\scene1_clip2.mp4",
-      "used_at": "2026-03-14T06:35:37.060695+00:00"
+      "query": "forest guard rajasthan single handedly technology cinematic close-up",
+      "local_path": "assets\\clips\\scene003_clip1.mp4",
+      "used_at": "2026-03-26T17:19:51.593152+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/34132691/14473083_1080_1920_30fps.mp4",
-      "source": "pexels",
-      "query": "this shift drastically increases energy technology cinematic close-up",
-      "local_path": "assets\\clips\\scene2_clip1.mp4",
-      "used_at": "2026-03-14T06:35:41.857194+00:00"
+      "url": "https://cdn.pixabay.com/video/2022/06/14/120302-720505018_large.mp4",
+      "source": "pixabay",
+      "query": "person tapping follow button on smartphone screen",
+      "local_path": "assets\\clips\\scene005_clip1.mp4",
+      "used_at": "2026-03-26T17:19:52.548345+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/6217345/6217345-hd_1080_1920_30fps.mp4",
+      "url": "https://videos.pexels.com/video-files/10273768/10273768-uhd_2160_4096_25fps.mp4",
       "source": "pexels",
-      "query": "this shift drastically increases energy technology cinematic close-up",
-      "local_path": "assets\\clips\\scene2_clip2.mp4",
-      "used_at": "2026-03-14T06:35:44.714878+00:00"
+      "query": "most people away from danger technology cinematic close-up",
+      "local_path": "assets\\clips\\scene002_clip1.mp4",
+      "used_at": "2026-03-26T17:19:56.528875+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/7793215/7793215-uhd_2160_3840_30fps.mp4",
+      "url": "https://videos.pexels.com/video-files/7236759/7236759-uhd_2160_3840_24fps.mp4",
       "source": "pexels",
-      "query": "traditional liquid electrolytes volatile solid technology cinematic close-up",
-      "local_path": "assets\\clips\\scene3_clip1.mp4",
-      "used_at": "2026-03-14T06:35:51.637901+00:00"
+      "query": "would risk your life save technology cinematic close-up",
+      "local_path": "assets\\clips\\scene001_clip2.mp4",
+      "used_at": "2026-03-26T17:20:03.463838+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/30728856/13145964_2160_3840_30fps.mp4",
+      "url": "https://videos.pexels.com/video-files/7649293/7649293-uhd_2160_3840_30fps.mp4",
       "source": "pexels",
-      "query": "scaling this technology mass transport technology cinematic close-up",
-      "local_path": "assets\\clips\\scene4_clip1.mp4",
-      "used_at": "2026-03-14T06:35:58.701950+00:00"
+      "query": "most people away from danger technology cinematic close-up",
+      "local_path": "assets\\clips\\scene002_clip2.mp4",
+      "used_at": "2026-03-26T17:20:07.858569+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8381586/8381586-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "here twist does without heavy technology cinematic close-up",
+      "local_path": "assets\\clips\\scene004_clip1.mp4",
+      "used_at": "2026-03-26T17:20:10.043753+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/15689201/15689201-hd_1080_1920_24fps.mp4",
+      "source": "pexels",
+      "query": "your kids being targeted tech technology cinematic close-up",
+      "local_path": "assets\\clips\\scene001_clip1.mp4",
+      "used_at": "2026-03-26T17:23:06.278803+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/3625766/3625766-uhd_2160_4096_25fps.mp4",
+      "source": "pexels",
+      "query": "smartphone screen",
+      "local_path": "assets\\clips\\scene005_clip1.mp4",
+      "used_at": "2026-03-26T17:23:14.555654+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/12280180/12280180-hd_1080_1920_60fps.mp4",
+      "source": "pexels",
+      "query": "smartphone screen",
+      "local_path": "assets\\clips\\scene005_clip2.mp4",
+      "used_at": "2026-03-26T17:23:16.608659+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2024/02/06/199545-910530517_large.mp4",
+      "source": "pixabay",
+      "query": "here twist this just about technology cinematic close-up",
+      "local_path": "assets\\clips\\scene004_clip1.mp4",
+      "used_at": "2026-03-26T17:23:18.315914+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/7652163/7652163-uhd_2160_3840_30fps.mp4",
+      "source": "pexels",
+      "query": "close-up of search engine results on computer screen",
+      "local_path": "assets\\clips\\scene002_clip1.mp4",
+      "used_at": "2026-03-26T17:23:20.365559+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/6590514/6590514-uhd_2160_4096_25fps.mp4",
+      "source": "pexels",
+      "query": "money burning",
+      "local_path": "assets\\clips\\scene008_clip1.mp4",
+      "used_at": "2026-03-26T17:23:28.520034+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/6211523/6211523-uhd_2160_3840_24fps.mp4",
+      "source": "pexels",
+      "query": "server room",
+      "local_path": "assets\\clips\\scene006_clip1.mp4",
+      "used_at": "2026-03-26T17:23:40.440912+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8061750/8061750-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "courtroom gavel",
+      "local_path": "assets\\clips\\scene009_clip1.mp4",
+      "used_at": "2026-03-26T17:23:44.737623+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/34534133/14632349_2160_3840_50fps.mp4",
+      "source": "pexels",
+      "query": "landmark court ruling just changed technology cinematic close-up",
+      "local_path": "assets\\clips\\scene003_clip1.mp4",
+      "used_at": "2026-03-26T17:23:46.511357+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/34536748/14633439_2160_3840_50fps.mp4",
+      "source": "pexels",
+      "query": "courtroom gavel",
+      "local_path": "assets\\clips\\scene007_clip1.mp4",
+      "used_at": "2026-03-26T17:23:56.183800+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8381579/8381579-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "server room",
+      "local_path": "assets\\clips\\scene006_clip2.mp4",
+      "used_at": "2026-03-26T17:23:59.183918+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/9831692/9831692-uhd_2160_4096_25fps.mp4",
+      "source": "pexels",
+      "query": "landmark court ruling just changed technology cinematic close-up",
+      "local_path": "assets\\clips\\scene003_clip2.mp4",
+      "used_at": "2026-03-26T17:24:13.634485+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/9831693/9831693-uhd_2160_4096_25fps.mp4",
+      "source": "pexels",
+      "query": "here twist this just about technology cinematic close-up",
+      "local_path": "assets\\clips\\scene010_clip1.mp4",
+      "used_at": "2026-03-26T17:24:13.725331+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/31830902/13560776_2160_3840_30fps.mp4",
+      "source": "pexels",
+      "query": "your kids being targeted tech technology cinematic close-up",
+      "local_path": "assets\\clips\\scene012_clip1.mp4",
+      "used_at": "2026-03-26T17:24:22.704400+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/6799752/6799752-uhd_2160_3840_30fps.mp4",
+      "source": "pexels",
+      "query": "money burning",
+      "local_path": "assets\\clips\\scene011_clip1.mp4",
+      "used_at": "2026-03-26T17:24:26.801639+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8381714/8381714-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "here twist this just about technology cinematic close-up",
+      "local_path": "assets\\clips\\scene010_clip2.mp4",
+      "used_at": "2026-03-26T17:24:32.653379+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/7744344/7744344-uhd_2160_4096_25fps.mp4",
+      "source": "pexels",
+      "query": "courtroom gavel",
+      "local_path": "assets\\clips\\scene007_clip2.mp4",
+      "used_at": "2026-03-26T17:24:34.831706+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/9047447/9047447-uhd_2160_3840_24fps.mp4",
+      "source": "pexels",
+      "query": "close-up of search engine results on computer screen",
+      "local_path": "assets\\clips\\scene014_clip1.mp4",
+      "used_at": "2026-03-26T17:24:44.842039+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2024/11/09/240531_large.mp4",
+      "source": "pixabay",
+      "query": "landmark court ruling just changed technology cinematic close-up",
+      "local_path": "assets\\clips\\scene015_clip1.mp4",
+      "used_at": "2026-03-26T17:24:52.747684+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/7822022/7822022-hd_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "smartphone screen",
+      "local_path": "assets\\clips\\scene016_clip1.mp4",
+      "used_at": "2026-03-26T17:24:55.078501+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/35340193/14973807_1080_1920_60fps.mp4",
+      "source": "pexels",
+      "query": "courtroom gavel",
+      "local_path": "assets\\clips\\scene017_clip1.mp4",
+      "used_at": "2026-03-26T17:24:56.754198+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2021/08/30/86867-594991237_large.mp4",
+      "source": "pixabay",
+      "query": "server room",
+      "local_path": "assets\\clips\\scene013_clip1.mp4",
+      "used_at": "2026-03-26T17:24:57.039599+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/35969017/15251062_2160_3240_30fps.mp4",
+      "source": "pexels",
+      "query": "money burning",
+      "local_path": "assets\\clips\\scene019_clip1.mp4",
+      "used_at": "2026-03-26T17:25:00.795778+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/26614210/11974174_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "money burning",
+      "local_path": "assets\\clips\\scene019_clip2.mp4",
+      "used_at": "2026-03-26T17:25:05.223847+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/6266655/6266655-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "money burning",
+      "local_path": "assets\\clips\\scene011_clip2.mp4",
+      "used_at": "2026-03-26T17:25:33.736481+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/34084466/14456317_2160_3840_30fps.mp4",
+      "source": "pexels",
+      "query": "your kids being targeted tech technology cinematic close-up",
+      "local_path": "assets\\clips\\scene012_clip2.mp4",
+      "used_at": "2026-03-26T17:25:36.379116+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/9821035/9821035-uhd_2160_3840_24fps.mp4",
+      "source": "pexels",
+      "query": "your kids being targeted tech technology cinematic close-up",
+      "local_path": "assets\\clips\\scene018_clip1.mp4",
+      "used_at": "2026-03-26T17:25:38.681367+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/34536744/14633451_2160_3840_50fps.mp4",
+      "source": "pexels",
+      "query": "here twist this just about technology cinematic close-up",
+      "local_path": "assets\\clips\\scene020_clip1.mp4",
+      "used_at": "2026-03-26T17:25:50.047843+00:00"
     },
     {
       "url": "https://videos.pexels.com/video-files/30728866/13145878_2160_3840_30fps.mp4",
       "source": "pexels",
-      "query": "scaling this technology mass transport technology cinematic close-up",
-      "local_path": "assets\\clips\\scene4_clip2.mp4",
-      "used_at": "2026-03-14T06:36:00.582411+00:00"
+      "query": "here twist this just about technology cinematic close-up",
+      "local_path": "assets\\clips\\scene020_clip2.mp4",
+      "used_at": "2026-03-26T17:25:51.667117+00:00"
     },
     {
-      "url": "https://cdn.pixabay.com/video/2022/02/21/108459-680697612_large.mp4",
-      "source": "pixabay",
-      "query": "productivity dashboard with analytics graphs on monitor",
-      "local_path": "assets\\clips\\scene5_clip1.mp4",
-      "used_at": "2026-03-14T06:36:03.058900+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/9756613/9756613-uhd_2160_3840_24fps.mp4",
+      "url": "https://videos.pexels.com/video-files/7417201/7417201-hd_1080_1920_30fps.mp4",
       "source": "pexels",
-      "query": "conflict involving iran officially entered technology cinematic close-up",
-      "local_path": "assets\\clips\\scene1_clip1.mp4",
-      "used_at": "2026-03-15T05:07:47.529884+00:00"
+      "query": "person looking amazed at smartphone screen close-up",
+      "local_path": "assets\\clips\\scene001_clip1.mp4",
+      "used_at": "2026-03-26T17:29:12.374267+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/5698607/5698607-uhd_2160_3840_24fps.mp4",
+      "url": "https://videos.pexels.com/video-files/36629601/15529711_1080_1920_30fps.mp4",
       "source": "pexels",
-      "query": "conflict involving iran officially entered technology cinematic close-up",
-      "local_path": "assets\\clips\\scene1_clip2.mp4",
-      "used_at": "2026-03-15T05:07:54.869293+00:00"
+      "query": "autonomous self driving car on highway with sensors",
+      "local_path": "assets\\clips\\scene002_clip1.mp4",
+      "used_at": "2026-03-26T17:29:17.231011+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/24879046/11898876_2160_3840_60fps.mp4",
+      "url": "https://videos.pexels.com/video-files/5377513/5377513-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "cybersecurity lock screen with digital encryption visual",
+      "local_path": "assets\\clips\\scene003_clip1.mp4",
+      "used_at": "2026-03-26T17:29:24.752225+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8128422/8128422-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "here terrifying twist these platforms technology cinematic close-up",
+      "local_path": "assets\\clips\\scene004_clip1.mp4",
+      "used_at": "2026-03-26T17:29:25.983278+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/7859360/7859360-uhd_2160_4096_25fps.mp4",
+      "source": "pexels",
+      "query": "would trust stranger with your technology cinematic close-up",
+      "local_path": "assets\\clips\\scene005_clip1.mp4",
+      "used_at": "2026-03-26T17:29:26.298034+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/36019280/15274638_1080_1920_24fps.mp4",
+      "source": "pexels",
+      "query": "twelve countries fighting four final technology cinematic close-up",
+      "local_path": "pipeline\\data\\assets\\clips\\scene003_clip1.mp4",
+      "used_at": "2026-03-26T17:32:12.227526+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/6611951/6611951-uhd_2160_3840_25fps.mp4",
       "source": "pexels",
       "query": "person tapping follow button on smartphone screen",
-      "local_path": "assets\\clips\\scene2_clip1.mp4",
-      "used_at": "2026-03-15T05:08:04.550411+00:00"
+      "local_path": "pipeline\\data\\assets\\clips\\scene005_clip1.mp4",
+      "used_at": "2026-03-26T17:32:17.028012+00:00"
     },
     {
-      "url": "https://cdn.pixabay.com/video/2025/06/03/283431_large.mp4",
+      "url": "https://videos.pexels.com/video-files/36592332/15514502_1440_2560_30fps.mp4",
+      "source": "pexels",
+      "query": "road world narrowing pressure reaching technology cinematic close-up",
+      "local_path": "pipeline\\data\\assets\\clips\\scene002_clip1.mp4",
+      "used_at": "2026-03-26T17:32:18.870635+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8085489/8085489-uhd_2160_3840_24fps.mp4",
+      "source": "pexels",
+      "query": "what told that four nations technology cinematic close-up",
+      "local_path": "pipeline\\data\\assets\\clips\\scene001_clip1.mp4",
+      "used_at": "2026-03-26T17:32:30.582625+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2019/12/22/30470-387715996_large.mp4",
       "source": "pixabay",
-      "query": "productivity dashboard with analytics graphs on monitor",
-      "local_path": "assets\\clips\\scene3_clip1.mp4",
-      "used_at": "2026-03-15T05:08:27.881967+00:00"
+      "query": "what told that four nations technology cinematic close-up",
+      "local_path": "pipeline\\data\\assets\\clips\\scene001_clip2.mp4",
+      "used_at": "2026-03-26T17:32:38.439212+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/35544540/15058221_2160_3840_25fps.mp4",
+      "url": "https://videos.pexels.com/video-files/7857000/7857000-uhd_2160_3840_24fps.mp4",
       "source": "pexels",
-      "query": "productivity dashboard with analytics graphs on monitor",
-      "local_path": "assets\\clips\\scene3_clip2.mp4",
-      "used_at": "2026-03-15T05:08:32.988102+00:00"
+      "query": "person tapping follow button on smartphone screen",
+      "local_path": "pipeline\\data\\assets\\clips\\scene005_clip2.mp4",
+      "used_at": "2026-03-26T17:32:38.469380+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/10200306/10200306-hd_2160_3840_25fps.mp4",
+      "url": "https://videos.pexels.com/video-files/34555962/14647577_2160_3840_50fps.mp4",
       "source": "pexels",
-      "query": "because this port serves critical technology cinematic close-up",
-      "local_path": "assets\\clips\\scene4_clip1.mp4",
-      "used_at": "2026-03-15T05:08:40.896224+00:00"
+      "query": "here twist history shows that technology cinematic close-up",
+      "local_path": "pipeline\\data\\assets\\clips\\scene004_clip1.mp4",
+      "used_at": "2026-03-26T17:32:43.701775+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/30978243/13242307_1080_1920_30fps.mp4",
+      "url": "https://videos.pexels.com/video-files/8111951/8111951-hd_1080_1920_30fps.mp4",
       "source": "pexels",
       "query": "modern server room with blue LED lights and cable racks",
-      "local_path": "assets\\clips\\scene5_clip1.mp4",
-      "used_at": "2026-03-15T05:08:44.748670+00:00"
+      "local_path": "pipeline\\data\\assets\\clips\\scene002_clip1.mp4",
+      "used_at": "2026-03-26T17:34:52.276427+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/16214007/16214007-hd_1080_1920_24fps.mp4",
+      "url": "https://videos.pexels.com/video-files/26867682/12024481_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "Surprised face",
+      "local_path": "pipeline\\data\\assets\\clips\\scene004_clip1.mp4",
+      "used_at": "2026-03-26T17:34:53.124180+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/7882748/7882748-hd_1080_1920_25fps.mp4",
+      "source": "pexels",
+      "query": "modern startup office team working on computers",
+      "local_path": "pipeline\\data\\assets\\clips\\scene001_clip1.mp4",
+      "used_at": "2026-03-26T17:34:54.442266+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2025/11/19/316854_large.mp4",
+      "source": "pixabay",
+      "query": "Data center",
+      "local_path": "pipeline\\data\\assets\\clips\\scene005_clip1.mp4",
+      "used_at": "2026-03-26T17:35:02.567798+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8128207/8128207-uhd_2160_3840_25fps.mp4",
       "source": "pexels",
       "query": "modern server room with blue LED lights and cable racks",
-      "local_path": "assets\\clips\\scene5_clip2.mp4",
-      "used_at": "2026-03-15T05:08:45.815726+00:00"
+      "local_path": "pipeline\\data\\assets\\clips\\scene002_clip2.mp4",
+      "used_at": "2026-03-26T17:35:04.812202+00:00"
     },
     {
-      "url": "https://videos.pexels.com/video-files/6801660/6801660-uhd_2160_3840_30fps.mp4",
+      "url": "https://videos.pexels.com/video-files/12896413/12896413-uhd_2160_3840_24fps.mp4",
       "source": "pexels",
-      "query": "angeles dodgers pitcher clayton kershaw technology cinematic close-up",
-      "local_path": "assets\\clips\\scene1_clip1.mp4",
-      "used_at": "2026-03-15T05:13:14.628964+00:00"
+      "query": "programmer automating tasks on multiple monitors",
+      "local_path": "pipeline\\data\\assets\\clips\\scene003_clip1.mp4",
+      "used_at": "2026-03-26T17:35:06.214865+00:00"
     },
     {
-      "url": "https://cdn.pixabay.com/video/2019/10/26/28320-369325356_large.mp4",
+      "url": "https://cdn.pixabay.com/video/2022/10/24/136268-764387688_large.mp4",
       "source": "pixabay",
-      "query": "productivity dashboard with analytics graphs on monitor",
-      "local_path": "assets\\clips\\scene2_clip1.mp4",
-      "used_at": "2026-03-15T05:13:17.513523+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/6799754/6799754-uhd_2160_3840_30fps.mp4",
-      "source": "pexels",
-      "query": "professional reviewing AI generated document on laptop",
-      "local_path": "assets\\clips\\scene3_clip1.mp4",
-      "used_at": "2026-03-15T05:13:22.123582+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/7776735/7776735-uhd_2160_4096_25fps.mp4",
-      "source": "pexels",
-      "query": "this absence creates major vacancy technology cinematic close-up",
-      "local_path": "assets\\clips\\scene4_clip1.mp4",
-      "used_at": "2026-03-15T05:13:31.691910+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/7033629/7033629-hd_1080_1920_25fps.mp4",
-      "source": "pexels",
-      "query": "this absence creates major vacancy technology cinematic close-up",
-      "local_path": "assets\\clips\\scene4_clip2.mp4",
-      "used_at": "2026-03-15T05:13:33.266867+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/31574415/13456095_2160_3840_30fps.mp4",
-      "source": "pexels",
-      "query": "officials looking toward their remaining technology cinematic close-up",
-      "local_path": "assets\\clips\\scene5_clip1.mp4",
-      "used_at": "2026-03-15T05:13:41.643835+00:00"
-    },
-    {
-      "url": "https://videos.pexels.com/video-files/6217268/6217268-hd_1080_1920_30fps.mp4",
-      "source": "pexels",
-      "query": "officials looking toward their remaining technology cinematic close-up",
-      "local_path": "assets\\clips\\scene5_clip2.mp4",
-      "used_at": "2026-03-15T05:13:43.691872+00:00"
+      "query": "programmer automating tasks on multiple monitors",
+      "local_path": "pipeline\\data\\assets\\clips\\scene003_clip2.mp4",
+      "used_at": "2026-03-26T17:35:09.762871+00:00"
     }
   ]
 }

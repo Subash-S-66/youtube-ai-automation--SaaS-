@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 from pathlib import Path
 import random
@@ -24,7 +25,13 @@ except Exception:  # pragma: no cover - optional dependency behavior
 LOGGER = logging.getLogger(__name__)
 
 # Gemini Audio API constants
-GEMINI_TTS_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash").strip()
+GEMINI_AUDIO_MODELS = [
+    m.strip() for m in os.getenv(
+        "GEMINI_AUDIO_MODELS",
+        f"{GEMINI_AUDIO_MODEL},gemini-2.5-flash-preview-tts,gemini-2.5-flash",
+    ).split(",") if m.strip()
+]
 
 ROTATION_VOICES = [
     "en-US-GuyNeural",
@@ -50,6 +57,21 @@ EDGE_TTS_SINGLE_RETRY_DELAY_SECONDS = float(os.getenv("EDGE_TTS_SINGLE_RETRY_DEL
 EDGE_TTS_CHUNK_RETRY_DELAY_SECONDS = float(os.getenv("EDGE_TTS_CHUNK_RETRY_DELAY_SECONDS", "4"))
 EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS = float(os.getenv("EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS", "6"))
 EDGE_TTS_INTER_CHUNK_DELAY_SECONDS = float(os.getenv("EDGE_TTS_INTER_CHUNK_DELAY_SECONDS", "1.2"))
+ALLOW_SILENT_AUDIO_FALLBACK = os.getenv("ALLOW_SILENT_AUDIO_FALLBACK", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+GEMINI_AUDIO_ENABLED = os.getenv("GEMINI_AUDIO_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+GEMINI_AUDIO_ONLY = os.getenv("GEMINI_AUDIO_ONLY", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 def _probe_media_duration(output_path: Path) -> float:
@@ -69,6 +91,84 @@ def _probe_media_duration(output_path: Path) -> float:
         return float(result.stdout.strip())
     except Exception:
         return 0.0
+
+
+def _normalize_audio_to_mp3(output_path: Path) -> None:
+    """
+    Ensure output_path is a valid, probeable MP3.
+    Handles cases where providers return WAV/PCM bytes but caller expects .mp3.
+    """
+    if not output_path.exists() or output_path.stat().st_size <= 0:
+        raise RuntimeError(f"Generated audio file is missing or empty: {output_path}")
+
+    current_duration = _probe_media_duration(output_path)
+    if math.isfinite(current_duration) and current_duration > 0:
+        return
+
+    tmp_mp3 = output_path.with_suffix(".normalized.mp3")
+    generic_cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(output_path),
+        "-ac",
+        "1",
+        "-ar",
+        "24000",
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        "4",
+        str(tmp_mp3),
+    ]
+    raw_pcm_attempts = [
+        ["24000", "1"],
+        ["22050", "1"],
+        ["16000", "1"],
+    ]
+
+    conversion_errors: list[str] = []
+    try:
+        subprocess.run(generic_cmd, check=True, capture_output=True, text=True)
+    except Exception as exc:
+        conversion_errors.append(f"generic ffmpeg input failed: {exc}")
+
+    if not tmp_mp3.exists() or tmp_mp3.stat().st_size <= 0:
+        for sample_rate, channels in raw_pcm_attempts:
+            raw_cmd = [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "s16le",
+                "-ar",
+                sample_rate,
+                "-ac",
+                channels,
+                "-i",
+                str(output_path),
+                "-c:a",
+                "libmp3lame",
+                "-q:a",
+                "4",
+                str(tmp_mp3),
+            ]
+            try:
+                subprocess.run(raw_cmd, check=True, capture_output=True, text=True)
+                if tmp_mp3.exists() and tmp_mp3.stat().st_size > 0:
+                    break
+            except Exception as exc:
+                conversion_errors.append(f"raw pcm {sample_rate}Hz failed: {exc}")
+
+    if not tmp_mp3.exists() or tmp_mp3.stat().st_size <= 0:
+        raise RuntimeError(
+            f"Failed to normalize generated audio to MP3 for {output_path}. "
+            f"Attempts: {' | '.join(conversion_errors)[:600]}"
+        )
+
+    tmp_mp3.replace(output_path)
+    normalized_duration = _probe_media_duration(output_path)
+    if not (math.isfinite(normalized_duration) and normalized_duration > 0):
+        raise RuntimeError(f"Audio normalization produced invalid duration for {output_path}")
 
 def _is_nonrecoverable_edge_error(message: str) -> bool:
     """
@@ -328,10 +428,84 @@ def _map_edge_voice_to_gemini(edge_voice: str) -> str:
         return random.choice(["Kore", "Aoede"])
 
 from .gemini_utils import execute_with_gemini_fallback
+from .gemini_utils import get_gemini_api_keys
+
+
+def _uses_live_native_audio(model_name: str) -> bool:
+    low = model_name.lower()
+    return "native-audio" in low or "dialog" in low
+
+
+async def _save_gemini_voice_live_async(
+    *,
+    script: str,
+    gemini_voice: str,
+    output_path: Path,
+    model_name: str,
+    api_key: str,
+) -> Path:
+    try:
+        from google import genai
+        from google.genai import types
+    except Exception as exc:
+        raise RuntimeError(
+            "google-genai package is required for Gemini Live native audio models. "
+            "Install dependency: pip install google-genai"
+        ) from exc
+
+    client = genai.Client(api_key=api_key, http_options={"api_version": "v1alpha"})
+    config = types.LiveConnectConfig(
+        response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=gemini_voice)
+            )
+        ),
+    )
+
+    chunks: list[bytes] = []
+    async with client.aio.live.connect(model=model_name, config=config) as session:
+        await session.send_client_content(
+            turns=types.Content(
+                role="user",
+                parts=[types.Part(text=script)],
+            ),
+            turn_complete=True,
+        )
+
+        async for response in session.receive():
+            server_content = getattr(response, "server_content", None)
+            if not server_content:
+                continue
+
+            model_turn = getattr(server_content, "model_turn", None)
+            if model_turn:
+                parts = getattr(model_turn, "parts", []) or []
+                for part in parts:
+                    inline = getattr(part, "inline_data", None)
+                    if not inline:
+                        continue
+                    data = getattr(inline, "data", None)
+                    if not data:
+                        continue
+                    if isinstance(data, str):
+                        chunks.append(base64.b64decode(data))
+                    else:
+                        chunks.append(bytes(data))
+
+            if getattr(server_content, "turn_complete", False):
+                break
+
+    if not chunks:
+        raise RuntimeError("Gemini Live API returned no audio chunks.")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "wb") as fh:
+        fh.write(b"".join(chunks))
+    return output_path
 
 def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
     gemini_voice = _map_edge_voice_to_gemini(voice)
-
     payload = {
         "contents": [{"parts": [{"text": script}]}],
         "generationConfig": {
@@ -346,50 +520,86 @@ def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
         }
     }
 
-    def operation(key: str) -> requests.Response:
-        LOGGER.info(f"Calling Gemini 2.5 Flash Native Audio (Voice: {gemini_voice})...")
-        response = requests.post(
-            GEMINI_TTS_URL,
-            params={"key": key},
-            json=payload,
-            timeout=60
-        )
-        response.raise_for_status()
-        return response
+    errors: list[str] = []
+    for model_name in GEMINI_AUDIO_MODELS:
+        try:
+            if _uses_live_native_audio(model_name):
+                keys = get_gemini_api_keys()
+                if not keys:
+                    raise RuntimeError("No Gemini API keys found for Live API call.")
+                live_last_error: Exception | None = None
+                for i, key in enumerate(keys):
+                    masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
+                    if i > 0:
+                        LOGGER.info("Trying Gemini Live fallback key %s (%s)", i, masked_key)
+                    try:
+                        LOGGER.info(
+                            "Calling Gemini Live native audio model '%s' (Voice: %s)...",
+                            model_name,
+                            gemini_voice,
+                        )
+                        return asyncio.run(
+                            _save_gemini_voice_live_async(
+                                script=script,
+                                gemini_voice=gemini_voice,
+                                output_path=output_path,
+                                model_name=model_name,
+                                api_key=key,
+                            )
+                        )
+                    except Exception as exc:
+                        live_last_error = exc
+                        LOGGER.warning("Gemini Live key %s (%s) failed: %s", i, masked_key, str(exc)[:180])
+                        continue
+                raise RuntimeError(
+                    f"All {len(keys)} Gemini Live API keys failed. Last error: {live_last_error}"
+                )
 
-    response = execute_with_gemini_fallback(operation)
-    data = response.json()
+            gemini_tts_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
-    try:
-        # Extract base64 audio data from the response.
-        # Note: The exact structure might vary slightly depending on the live Gemini 2.5 API response,
-        # but typically it returns inlineData for media.
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise RuntimeError("No candidates returned from Gemini")
+            def operation(key: str) -> requests.Response:
+                LOGGER.info(f"Calling Gemini Native Audio model '{model_name}' (Voice: {gemini_voice})...")
+                response = requests.post(
+                    gemini_tts_url,
+                    params={"key": key},
+                    json=payload,
+                    timeout=60
+                )
+                response.raise_for_status()
+                return response
 
-        parts = candidates[0].get("content", {}).get("parts", [])
-        if not parts:
-            raise RuntimeError("No parts returned from Gemini")
+            response = execute_with_gemini_fallback(operation)
+            data = response.json()
 
-        audio_part = None
-        for p in parts:
-            if "inlineData" in p and p["inlineData"].get("mimeType", "").startswith("audio/"):
-                audio_part = p["inlineData"]["data"]
-                break
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise RuntimeError("No candidates returned from Gemini")
 
-        if not audio_part:
-            raise RuntimeError("No audio data found in Gemini response")
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                raise RuntimeError("No parts returned from Gemini")
 
-        # Decode and save
-        audio_bytes = base64.b64decode(audio_part)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "wb") as f:
-            f.write(audio_bytes)
+            audio_part = None
+            for p in parts:
+                if "inlineData" in p and p["inlineData"].get("mimeType", "").startswith("audio/"):
+                    audio_part = p["inlineData"]["data"]
+                    break
 
-        return output_path
-    except Exception as e:
-        raise RuntimeError(f"Failed to parse Gemini audio response: {e}")
+            if not audio_part:
+                raise RuntimeError("No audio data found in Gemini response")
+
+            audio_bytes = base64.b64decode(audio_part)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "wb") as f:
+                f.write(audio_bytes)
+
+            return output_path
+        except Exception as e:
+            errors.append(f"{model_name}: {str(e)[:180]}")
+            LOGGER.warning("Gemini audio model '%s' failed: %s", model_name, str(e)[:180])
+            continue
+
+    raise RuntimeError("All configured Gemini audio models failed: " + " | ".join(errors))
 
 def generate_voice(
     script: str,
@@ -424,16 +634,26 @@ def generate_voice(
     edge_error = ""
     global _EDGE_TTS_DISABLED_REASON
 
+    gemini_error = ""
+
     # --- Stage 1: Try Gemini Audio (Primary) ---
-    try:
-        LOGGER.info("Attempting primary voice generation via Gemini Audio...")
-        audio_file = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
-        if audio_file.exists() and audio_file.stat().st_size > 1000:
-            LOGGER.info(f"Successfully generated voice via Gemini Audio ({audio_file.stat().st_size} bytes)")
-            return audio_file, True
-    except Exception as gemini_err:
-        LOGGER.warning(f"Gemini Audio failed, falling back to Edge TTS. Error: {gemini_err}")
-        LOGGER.info(f"FALLBACK TRIGGERED: Using Edge TTS for voice generation instead of Gemini Audio.")
+    if GEMINI_AUDIO_ENABLED:
+        try:
+            LOGGER.info("Attempting primary voice generation via Gemini Audio...")
+            audio_file = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
+            if audio_file.exists() and audio_file.stat().st_size > 1000:
+                _normalize_audio_to_mp3(audio_file)
+                LOGGER.info(f"Successfully generated voice via Gemini Audio ({audio_file.stat().st_size} bytes)")
+                return audio_file, True
+        except Exception as gemini_err:
+            gemini_error = str(gemini_err)
+            LOGGER.warning(f"Gemini Audio failed, falling back to Edge TTS. Error: {gemini_err}")
+            LOGGER.info(f"FALLBACK TRIGGERED: Using Edge TTS for voice generation instead of Gemini Audio.")
+    else:
+        LOGGER.info("Skipping Gemini Audio (GEMINI_AUDIO_ENABLED=false).")
+
+    if GEMINI_AUDIO_ONLY:
+        raise RuntimeError(f"Gemini Audio failed and GEMINI_AUDIO_ONLY=true: {gemini_error or 'no audio generated'}")
 
     # --- Stage 2: Try Edge TTS with multiple voices (Fallback) ---
     if _EDGE_TTS_DISABLED_REASON:
@@ -475,6 +695,17 @@ def generate_voice(
                     import time
                     time.sleep(max(0.0, EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS))
 
-    # --- Stage 3: Hard fail so we never skip narration ---
+    # --- Stage 3: Optional silent fallback ---
+    if ALLOW_SILENT_AUDIO_FALLBACK:
+        estimated_duration = _estimate_duration_seconds(clean_script)
+        LOGGER.warning(
+            "All voice providers failed. Generating silent fallback audio for %.1fs "
+            "(ALLOW_SILENT_AUDIO_FALLBACK=true).",
+            estimated_duration,
+        )
+        silent = _write_silent_audio(output_path, estimated_duration)
+        return silent, False
+
+    # --- Stage 4: Hard fail so we never skip narration unless explicitly allowed ---
     raise RuntimeError(f"All voice generation attempts failed: {edge_error}")
 

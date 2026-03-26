@@ -5,13 +5,16 @@ import { CsrfRequestMethod } from 'csrf-csrf';
 
 import { HttpError } from 'http-errors';
 
+const csrfCookieSameSite: 'none' | 'lax' =
+  process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+
 const doubleCsrfOptions = {
   getSecret: () => process.env.CSRF_SECRET || 'a-very-secure-fallback-secret-for-csrf',
   cookieName: 'x-csrf-token',
   cookieOptions: {
-    sameSite: 'none' as const,
+    sameSite: csrfCookieSameSite,
     path: '/',
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
   },
   size: 64,
   ignoredMethods: ['GET', 'HEAD', 'OPTIONS'] as CsrfRequestMethod[],

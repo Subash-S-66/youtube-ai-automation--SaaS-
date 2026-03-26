@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import logging
+import math
 import random
 import re
 import subprocess
@@ -59,18 +60,49 @@ def _format_ass_time(seconds: float) -> str:
 
 
 def _probe_duration(media_path: Path) -> float:
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(media_path),
+    probe_commands = [
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(media_path),
+        ],
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(media_path),
+        ],
     ]
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    return float(result.stdout.strip())
+
+    last_error: Exception | None = None
+    for cmd in probe_commands:
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            raw = (result.stdout or "").strip()
+            if not raw or raw.upper() == "N/A":
+                continue
+            duration = float(raw)
+            if math.isfinite(duration) and duration > 0:
+                return duration
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    raise RuntimeError(
+        f"Unable to probe media duration for '{media_path}'."
+        + (f" Last error: {last_error}" if last_error else "")
+    )
 
 
 def probe_media_duration(media_path: Path) -> float:

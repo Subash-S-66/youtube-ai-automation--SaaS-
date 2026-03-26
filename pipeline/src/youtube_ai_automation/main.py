@@ -1019,6 +1019,7 @@ def _build_video_from_content(
 
     if needed_clips > 0:
         remaining_queries = scene_queries[len(videos):]
+        from youtube_ai_automation.services.media_service import fetch_media
         if content_type == "images":
             LOGGER.info("Media mode 'images': Downloading stock images")
             from youtube_ai_automation.image_fetcher import fetch_images

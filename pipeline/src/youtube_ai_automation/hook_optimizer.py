@@ -322,7 +322,7 @@ def _normalize_gemini_model_name(model: str) -> str:
 
 
 def _gemini_model_candidates(primary_model: str) -> list[str]:
-    primary = _normalize_gemini_model_name(primary_model) or "gemini-3-flash"
+    primary = _normalize_gemini_model_name(primary_model) or "gemini-2.5-flash"
     env_fallbacks_raw = os.getenv("GEMINI_FALLBACK_MODELS", "")
     env_fallbacks = [
         _normalize_gemini_model_name(item)
@@ -650,7 +650,7 @@ def generate_idea_candidates(
     hook_count: int,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-3-flash",
+    gemini_model: str = "gemini-2.5-flash",
     openai_api_key: str = "",
     openai_model: str = "gpt-4.1-mini",
     anthropic_api_key: str = "",
@@ -1005,7 +1005,7 @@ def build_optimized_idea(
     score_breakdown: dict[str, float] | None = None,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-3-flash",
+    gemini_model: str = "gemini-2.5-flash",
     openai_api_key: str = "",
     openai_model: str = "gpt-4.1-mini",
     anthropic_api_key: str = "",

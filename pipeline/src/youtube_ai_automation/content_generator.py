@@ -422,10 +422,41 @@ def _call_model(
     # Try Jules API First
     jules_url = os.getenv("JULES_API_URL")
     jules_key = os.getenv("JULES_API_KEY")
+    jules_content_only = os.getenv("JULES_CONTENT_ONLY", "false").strip().lower() in {"1", "true", "yes"}
+    jules_local_fallback_url = os.getenv(
+        "JULES_LOCAL_FALLBACK_URL",
+        "http://localhost:5000/api/jules/generate",
+    ).strip()
+    jules_fallback_to_gemini_live = os.getenv("JULES_FALLBACK_TO_GEMINI_LIVE", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    gemini_live_fallback_model = os.getenv("GEMINI_LIVE_FALLBACK_MODEL", "gemini-2.5-flash").strip()
     if jules_url and jules_key:
         jules_result = _call_jules(prompt, jules_url, jules_key)
         if jules_result:
             return jules_result
+        if jules_local_fallback_url and jules_local_fallback_url != jules_url:
+            LOGGER.warning(
+                "Primary Jules failed; trying local Jules fallback '%s'.",
+                jules_local_fallback_url,
+            )
+            local_result = _call_jules(prompt, jules_local_fallback_url, jules_key)
+            if local_result:
+                return local_result
+        if jules_fallback_to_gemini_live:
+            if not gemini_api_key:
+                raise ValueError("Jules failed and GEMINI_API_KEY is missing for Gemini live fallback.")
+            LOGGER.warning(
+                "Jules content generation failed; falling back to Gemini model '%s'.",
+                gemini_live_fallback_model,
+            )
+            return _call_gemini(prompt, gemini_api_key, gemini_live_fallback_model)
+        if jules_content_only:
+            raise ValueError("JULES_CONTENT_ONLY=true but Jules content generation failed.")
+    elif jules_content_only:
+        raise ValueError("JULES_CONTENT_ONLY=true but JULES_API_URL/JULES_API_KEY are missing.")
 
     normalized = provider.strip().lower()
     if normalized in {"gemini", "google"}:

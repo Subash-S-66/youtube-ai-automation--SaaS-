@@ -56,9 +56,10 @@ def _get_authenticated_service(client_secret_file: str, scopes: list[str], token
                 token_path.write_text(creds.to_json(), encoding="utf-8")
             except RefreshError as exc:
                 _notify_token_issue(f"YouTube OAuth refresh failed: {exc}. Re-auth is required.")
-                if "invalid_scope" in str(exc).lower():
+                exc_low = str(exc).lower()
+                if "invalid_scope" in exc_low or "invalid_grant" in exc_low or "revoked" in exc_low:
                     LOGGER.warning(
-                        "OAuth token refresh failed with invalid_scope. "
+                        "OAuth token refresh failed with invalid/expired grant. "
                         "Clearing cached token and requesting new consent."
                     )
                     try:
