@@ -31,7 +31,7 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     return;
   }
 
-  const { jobId, status, logs, videoUrl, youtubeVideoId, errorMessage, errorStage } = req.body;
+  const { jobId, status, logs, videoUrl, youtubeVideoId, errorMessage, errorStage, processedVideos } = req.body;
 
   if (typeof jobId !== 'string' || !jobId.trim() || typeof status !== 'string' || !status.trim()) {
     res.status(400).json({ error: 'Missing jobId or status' });
@@ -53,6 +53,9 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
   }
   if (typeof youtubeVideoId === 'string' && youtubeVideoId.trim()) {
     job.youtubeVideoId = youtubeVideoId.trim();
+  }
+  if (typeof processedVideos === 'number' && processedVideos >= 0) {
+    job.processedVideos = processedVideos;
   }
 
   // Update status if it's changing
