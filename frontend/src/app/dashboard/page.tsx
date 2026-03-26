@@ -232,11 +232,14 @@ function Dashboard() {
             const seenJobNotifications = JSON.parse(localStorage.getItem('seenJobNotifications') || '[]');
 
             for (const job of currentJobs) {
-                if ((job.status === 'success' || job.status === 'failed') && !seenJobNotifications.includes(job._id)) {
+                const isSuccess = job.status === 'success' || job.status === 'completed';
+                const isFailed = job.status === 'failed';
+
+                if ((isSuccess || isFailed) && !seenJobNotifications.includes(job._id)) {
                     seenJobNotifications.push(job._id);
                     localStorage.setItem('seenJobNotifications', JSON.stringify(seenJobNotifications));
 
-                    if (job.status === 'success') {
+                    if (isSuccess) {
                         setModalConfig({
                             isOpen: true,
                             title: 'Job Completed',
@@ -245,7 +248,7 @@ function Dashboard() {
                             confirmText: 'Awesome',
                             onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
                         });
-                    } else if (job.status === 'failed') {
+                    } else if (isFailed) {
                         setModalConfig({
                             isOpen: true,
                             title: 'Job Failed',

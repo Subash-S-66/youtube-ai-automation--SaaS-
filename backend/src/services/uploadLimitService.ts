@@ -121,6 +121,72 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
   };
 };
 
+export const reserveCredits = async (userId: string, count: number = 1): Promise<boolean> => {
+  const now = new Date();
+  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+  // 1. Force a lazy reset check first so that we don't accidentally check limits against yesterday's values
+  await User.findOneAndUpdate(
+    {
+      _id: userId,
+      $or: [
+        { lastUploadReset: { $lt: startOfUTCDay } },
+        { lastUploadReset: { $exists: false } }
+      ]
+    },
+    {
+      $set: {
+        uploadsUsedToday: 0,
+        uploadsOnHold: 0,
+        lastUploadReset: startOfUTCDay
+      }
+    }
+  );
+
+  // Determine user's effective limit to reserve
+  const limits = await getUploadLimits(userId);
+  const maxLimit = limits.dailyLimit;
+
+  // 2. Atomic reservation: Only increment if (uploadsUsedToday + uploadsOnHold + count) <= dailyLimit
+  const result = await User.findOneAndUpdate(
+    {
+      _id: userId,
+      $expr: {
+        $lte: [{ $add: ["$uploadsUsedToday", "$uploadsOnHold", count] }, maxLimit]
+      }
+    },
+    {
+      $inc: { uploadsOnHold: count }
+    },
+    { new: true }
+  );
+
+  return !!result;
+};
+
+export const consumeReservedCredits = async (userId: string, count: number = 1): Promise<void> => {
+  await User.updateOne(
+    { _id: userId, uploadsOnHold: { $gte: count } },
+    {
+      $inc: {
+        uploadsUsedToday: count,
+        uploadsOnHold: -count
+      }
+    }
+  );
+};
+
+export const releaseReservedCredits = async (userId: string, count: number = 1): Promise<void> => {
+  await User.updateOne(
+    { _id: userId, uploadsOnHold: { $gte: count } },
+    {
+      $inc: {
+        uploadsOnHold: -count
+      }
+    }
+  );
+};
+
 export const incrementUploadCount = async (userId: string, count: number = 1): Promise<void> => {
   const now = new Date();
   const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));

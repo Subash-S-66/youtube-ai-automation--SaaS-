@@ -44,16 +44,34 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     return;
   }
 
+  // Prevent double-handling
+  if (job.holdConsumed || job.holdReleased) {
+     res.status(200).json({ success: true, message: 'Already handled' });
+     return;
+  }
+
   // Append new logs if provided
   if (logs) {
     job.logs = (job.logs || '') + '\n' + logs;
   }
 
   // Update status if it's changing
-  if (status !== job.status) {
-    job.status = status;
-    // Emitting via Socket.IO would go here if socket server was available globally
-    // e.g. req.app.get('io').to(job.userId.toString()).emit('jobStatusUpdate', { jobId, status });
+  const { consumeReservedCredits, releaseReservedCredits } = await import('../services/uploadLimitService.js');
+
+  if (status === 'success' || status === 'completed') {
+     job.status = 'completed';
+     job.completedAt = new Date();
+     job.holdConsumed = true;
+     await consumeReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+  } else if (status === 'failed') {
+     job.status = 'failed';
+     job.completedAt = new Date();
+     job.holdReleased = true;
+     job.error = logs || 'Failed via webhook';
+     await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+  } else if (status && status !== job.status) {
+     // queued, processing, running
+     job.status = status;
   }
 
   await job.save();
