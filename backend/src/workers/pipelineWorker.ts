@@ -9,6 +9,7 @@ import User from '../models/User';
 import Prompt from '../models/Prompt';
 import StoryProgress from '../models/StoryProgress';
 import { getValidYouTubeToken } from '../services/youtubeTokenService';
+import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -193,12 +194,18 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       console.log(`Triggering Azure Container App Job: ${AZURE_JOB_NAME}`);
 
+      // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.
+      // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
+      // We will encrypt the token using the same ENCRYPTION_KEY used for DB storage.
+      const encryptedYoutubeToken = encrypt(youtubeToken);
+
       // Setup payload configuring environment variables for the container run
       const envVars = [
         { name: "USER_ID", value: userId },
         { name: "PROMPT", value: geminiPrompt },
         { name: "SETTINGS", value: JSON.stringify(settings) },
-        { name: "YOUTUBE_TOKEN", value: youtubeToken },
+        { name: "YOUTUBE_TOKEN_ENCRYPTED", value: encryptedYoutubeToken },
+        { name: "ENCRYPTION_KEY", value: process.env.ENCRYPTION_KEY || "" },
         { name: "JOB_ID", value: jobId },
         { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
         { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },

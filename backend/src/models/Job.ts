@@ -59,6 +59,7 @@ const JobSchema = new Schema<IJob>(
 
 // Optimize lookups for pending/running jobs per user
 JobSchema.index({ userId: 1, status: 1 });
+JobSchema.index({ userId: 1, _id: -1 }); // Index for cursor pagination
 
 const Job = mongoose.model<IJob>('Job', JobSchema);
 

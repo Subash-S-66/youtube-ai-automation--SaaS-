@@ -21,9 +21,13 @@ export const authService = {
     return response.data;
   },
 
-  logout() {
+  async logout() {
+    try {
+      await api.post('/auth/logout');
+    } catch (e) {
+      console.warn('Logout request failed');
+    }
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('token');
       window.location.href = '/login';
     }
   },
@@ -31,7 +35,9 @@ export const authService = {
   handleAuthError(err: any) {
     const status = err?.response?.status;
     if (status === 401 || status === 403) {
-      this.logout();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
     }
   },
 

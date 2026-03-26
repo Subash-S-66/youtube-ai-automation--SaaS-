@@ -1,6 +1,6 @@
 import express, { Request } from 'express';
 import { protect } from '../middleware/authMiddleware';
-import { uploadMedia, getMedia, deleteMedia, updateMedia, reorderMedia, reorderMixedMedia, getSequence, addToSequence, reorderSequence, deleteSequenceItem } from '../controllers/mediaController';
+import { uploadMedia, getMedia, getSecureMediaFile, deleteMedia, updateMedia, reorderMedia, reorderMixedMedia, getSequence, addToSequence, reorderSequence, deleteSequenceItem } from '../controllers/mediaController';
 import multer, { FileFilterCallback } from 'multer';
 
 const router = express.Router();
@@ -21,7 +21,9 @@ const storage = multer.diskStorage({
   },
   filename: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + '-' + file.originalname.replace(/\s+/g, '_'));
+    // Sanitize filename properly using path.extname to avoid path traversal and malicious extensions
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `file-${uniqueSuffix}${ext}`);
   }
 });
 
@@ -42,6 +44,7 @@ router.use(protect);
 
 router.post('/upload', upload.single('file'), uploadMedia);
 router.get('/', getMedia);
+router.get('/file/:filename', getSecureMediaFile);
 router.get('/sequence', getSequence);
 router.post('/sequence', addToSequence);
 router.post('/sequence/reorder', reorderSequence);

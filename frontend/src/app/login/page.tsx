@@ -11,7 +11,9 @@ import { getApiOrigin } from '../../lib/apiBase';
 
 
 
-export default function Login() {
+import { Suspense } from 'react';
+
+function LoginContent() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -116,7 +118,7 @@ export default function Login() {
     try {
       const data = await authService.login({ email, password });
       if (data.success && data.data.token) {
-        localStorage.setItem('token', data.data.token);
+
         const emailKey = email.trim().toLowerCase();
         if (emailKey) {
           localStorage.removeItem(`resendCooldown:${emailKey}`);
@@ -183,7 +185,7 @@ export default function Login() {
       const data = await authService.verifyOtp(verificationEmail || email, otp);
       if (data.success && data.token) {
         setOtpSuccess('Email verified successfully!');
-        localStorage.setItem('token', data.token);
+
         const emailKey = (verificationEmail || email).trim().toLowerCase();
         if (emailKey) {
           localStorage.removeItem(`resendCooldown:${emailKey}`);
@@ -438,5 +440,13 @@ export default function Login() {
         </div>
       </m.div>
     </div>
+  );
+}
+
+export default function Login() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center"><div className="w-8 h-8 rounded-full border-2 border-[#7C5CFF] border-t-transparent animate-spin"></div></div>}>
+      <LoginContent />
+    </Suspense>
   );
 }

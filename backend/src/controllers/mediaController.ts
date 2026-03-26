@@ -5,6 +5,7 @@ import Media from '../models/Media';
 import MediaSequence from '../models/MediaSequence';
 import fs from 'fs';
 import path from 'path';
+import { fileTypeFromFile } from 'file-type';
 
 // @desc    Upload new media
 // @route   POST /api/media/upload
@@ -33,6 +34,18 @@ async function probeVideoDuration(filePath: string): Promise<number> {
 export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
+  }
+
+  // Validate file type properly
+  try {
+    const fileType = await fileTypeFromFile(req.file.path);
+    if (!fileType || (!fileType.mime.startsWith('video/') && !fileType.mime.startsWith('image/'))) {
+      fs.unlinkSync(req.file.path);
+      throw new AppError('Invalid file type detected. Only videos and images are allowed.', 400);
+    }
+  } catch (err: any) {
+    if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    throw new AppError(err.message || 'Error validating file type', err.statusCode || 500);
   }
 
   const file = req.file;
@@ -357,6 +370,29 @@ export const reorderMixedMedia = asyncHandler(async (req: Request, res: Response
 // @desc    Delete media
 // @route   DELETE /api/media/:id
 // @access  Private
+// @desc    Get secure media file
+// @route   GET /api/media/file/:filename
+// @access  Private
+export const getSecureMediaFile = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) throw new AppError('Not authorized', 401);
+
+  const { filename } = req.params;
+
+  if (!filename || typeof filename !== 'string') throw new AppError('Filename is required and must be a string', 400);
+
+  // Prevent path traversal
+  const safeFilename = path.basename(filename);
+
+  const filePath = path.join(__dirname, '../../uploads', safeFilename);
+
+  if (!fs.existsSync(filePath)) {
+    throw new AppError('File not found', 404);
+  }
+
+  res.sendFile(filePath);
+});
+
 export const deleteMedia = asyncHandler(async (req: Request, res: Response) => {
   const mediaId = req.params.id;
   if (!mediaId) {

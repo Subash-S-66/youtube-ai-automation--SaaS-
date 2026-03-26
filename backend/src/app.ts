@@ -88,9 +88,7 @@ app.use(cors({
 }));
 
 // Webhook payload needs to remain raw for Razorpay signature verification.
-// We mount the explicit route here BEFORE `express.json()` is applied globally.
 import { webhookHandler } from './controllers/paymentController';
-app.post('/api/payment/webhook', express.raw({ type: 'application/json', limit: '2mb' }), webhookHandler);
 
 // Body parser
 app.use(express.json());
@@ -98,6 +96,22 @@ app.use(express.urlencoded({ extended: true }));
 
 // Cookie parser
 app.use(cookieParser());
+
+// CSRF Protection setup
+import { doubleCsrfProtection, generateToken, csrfErrorHandler } from './middleware/csrfMiddleware';
+
+// We do NOT apply CSRF to webhook routes
+app.use('/api/payment/webhook', express.raw({ type: 'application/json', limit: '2mb' }), webhookHandler);
+
+// Endpoint to fetch CSRF token for the frontend
+app.get('/api/csrf-token', (req: Request, res: Response) => {
+  const csrfToken = generateToken(req, res);
+  res.json({ csrfToken });
+});
+
+// Apply CSRF to all following routes except Webhooks which we mapped above
+app.use(doubleCsrfProtection);
+app.use(csrfErrorHandler);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -117,8 +131,8 @@ app.use('/api/plans', planRoutes);
 
 import path from 'path';
 
-// Serve static uploads
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Disable public access to uploads unless explicitly requested via authenticated endpoint
+// app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Base route
 app.get('/', (req: Request, res: Response) => {

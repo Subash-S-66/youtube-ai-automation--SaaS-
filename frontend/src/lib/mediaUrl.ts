@@ -11,11 +11,13 @@ export const getMediaUrl = (rawPath?: string) => {
   const uploadsIdx = lower.lastIndexOf('/uploads/');
 
   if (uploadsIdx !== -1) {
-    return `${getApiOrigin()}${normalized.substring(uploadsIdx)}`;
+    const filename = normalized.substring(uploadsIdx).split('/').pop();
+    return `${getApiOrigin()}/api/media/file/${filename}`;
   }
 
   if (lower.startsWith('uploads/')) {
-    return `${getApiOrigin()}/${normalized}`;
+    const filename = normalized.split('/').pop();
+    return `${getApiOrigin()}/api/media/file/${filename}`;
   }
 
   const trimmed = normalized.startsWith('/') ? normalized.slice(1) : normalized;

@@ -23,7 +23,7 @@ export default function AdminLogin() {
     try {
       const data = await authService.adminLogin({ username, password });
       if (data.success && data.data.token) {
-        localStorage.setItem('token', data.data.token);
+
         router.push('/admin');
       }
     } catch (err: any) {

@@ -75,20 +75,39 @@ def _get_authenticated_service(client_secret_file: str, scopes: list[str], token
         if not creds or not creds.valid:
             import os
 
-            # Use YOUTUBE_TOKEN environment variable if available (passed from the backend)
-            # This is the proper headless token sync mechanism in Docker
-            env_token = os.environ.get("YOUTUBE_TOKEN")
-            if env_token:
-                try:
-                    import json
-                    token_data = json.loads(env_token)
-                    creds = Credentials.from_authorized_user_info(token_data)
+            # Use YOUTUBE_TOKEN_ENCRYPTED environment variable if available (passed from the backend)
+            # We must decrypt it using the ENCRYPTION_KEY environment variable.
+            env_token_encrypted = os.environ.get("YOUTUBE_TOKEN_ENCRYPTED")
+            encryption_key = os.environ.get("ENCRYPTION_KEY")
 
-                    if not creds.valid and creds.expired and creds.refresh_token:
-                        creds.refresh(Request())
+            if env_token_encrypted and encryption_key:
+                try:
+                    import base64
+                    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+                    from cryptography.hazmat.backends import default_backend
+
+                    parts = env_token_encrypted.split(':')
+                    if len(parts) == 2:
+                        iv = bytes.fromhex(parts[0])
+                        encrypted_data = bytes.fromhex(parts[1])
+                        key_bytes = encryption_key.encode('utf-8')[:32]
+                        if len(key_bytes) < 32:
+                            key_bytes = key_bytes.ljust(32, b'\0')
+
+                        cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
+                        decryptor = cipher.decryptor()
+                        decrypted_padded = decryptor.update(encrypted_data) + decryptor.finalize()
+
+                        env_token = decrypted_padded[:-decrypted_padded[-1]].decode('utf-8')
+
+                        # env_token is just the access token string based on backend implementation
+                        creds = Credentials(token=env_token)
+
+                        if not creds.valid and creds.expired and creds.refresh_token:
+                            creds.refresh(Request())
                 except Exception as e:
-                    LOGGER.error(f"Failed to use YOUTUBE_TOKEN from environment: {e}")
-                    raise RuntimeError("Invalid YouTube token provided by backend. Re-auth required.")
+                    LOGGER.error(f"Failed to decrypt and use YOUTUBE_TOKEN_ENCRYPTED: {e}")
+                    raise RuntimeError("Invalid encrypted YouTube token provided by backend. Re-auth required.")
             else:
                 # Local development fallback
                 if os.environ.get("NON_INTERACTIVE") == "1" or not os.environ.get("DISPLAY"):

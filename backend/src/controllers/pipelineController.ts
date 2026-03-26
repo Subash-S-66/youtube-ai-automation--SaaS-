@@ -13,25 +13,33 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError('Not authorized', 401);
   }
 
-  const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 10;
-
+  const cursor = req.query.cursor as string;
   const query: any = { userId: req.user.id };
 
-  const skip = (page - 1) * limit;
+  if (cursor) {
+    // cursor based pagination using _id which contains timestamp
+    query._id = { $lt: cursor };
+  }
 
-  // We could implement search if the job had searchable strings. Currently mostly ID/Status
-  // For basic usage, paginating is good enough for performance.
-  const jobs = await Job.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit);
-  const total = await Job.countDocuments(query);
+  // Request limit + 1 to check if there is a next page
+  const jobs = await Job.find(query).sort({ _id: -1 }).limit(limit + 1);
+
+  let nextCursor = null;
+  if (jobs.length > limit) {
+    const nextJob = jobs.pop();
+    nextCursor = nextJob?._id;
+  }
+
+  const total = await Job.countDocuments({ userId: req.user.id });
 
   res.status(200).json({
     success: true,
     data: jobs,
     pagination: {
+      limit,
       total,
-      page,
-      pages: Math.ceil(total / limit),
+      nextCursor,
     },
   });
 });

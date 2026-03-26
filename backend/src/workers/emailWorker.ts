@@ -25,7 +25,7 @@ const processEmailJob = async (job: Job<EmailJobPayload>) => {
   console.log(`[EmailWorker] Processing email job for ${to}`);
   try {
     // sendEmail handles its own retries, but we could also rely on BullMQ retries
-    await sendEmail(to, subject, message, 2);
+    await sendEmail(to, subject, message, undefined, 2);
     console.log(`[EmailWorker] Successfully processed email for ${to}`);
     return { success: true };
   } catch (error: any) {
