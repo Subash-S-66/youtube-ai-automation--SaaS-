@@ -1,6 +1,7 @@
 # Environment variables
 .env
 config/.env
+pipeline/config/.env
 .env.local
 .env.*.local
 
@@ -41,12 +42,14 @@ env/
 # Credentials and secrets
 client_secret.json
 config/client_secret.json
+pipeline/config/client_secret.json
 token.json
 credentials.json
 
 # Generated outputs and media
 output/
 data/output/
+pipeline/data/output/
 *.mp4
 *.mp3
 *.wav
@@ -63,6 +66,7 @@ data/output/
 assets/clips/
 output/clips/
 data/assets/clips/
+pipeline/data/assets/clips/
 
 # Cache files
 .cache/

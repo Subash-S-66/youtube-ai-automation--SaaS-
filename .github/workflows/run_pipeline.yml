@@ -41,15 +41,15 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r pipeline/requirements.txt
 
       - name: Prepare Config Files
         shell: bash
         run: |
-          mkdir -p config data/output
-          echo "${{ secrets.ENV_FILE_BASE64 }}" | base64 -d > config/.env
-          echo "${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}" | base64 -d > config/client_secret.json
-          echo "${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}" | base64 -d > data/output/token.json
+          mkdir -p pipeline/config pipeline/data/output
+          echo "${{ secrets.ENV_FILE_BASE64 }}" | base64 -d > pipeline/config/.env
+          echo "${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}" | base64 -d > pipeline/config/client_secret.json
+          echo "${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}" | base64 -d > pipeline/data/output/token.json
 
       - name: Parse Settings
         id: settings
@@ -81,7 +81,7 @@ jobs:
         env:
           GEMINI_API_KEY_SECRET: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          GEMINI_FROM_ENV_FILE="$(grep -E '^GEMINI_API_KEY=' config/.env 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '\r' || true)"
+          GEMINI_FROM_ENV_FILE="$(grep -E '^GEMINI_API_KEY=' pipeline/config/.env 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '\r' || true)"
           GEMINI_EFFECTIVE_KEY="${GEMINI_FROM_ENV_FILE:-$GEMINI_API_KEY_SECRET}"
           if [ -z "${GEMINI_EFFECTIVE_KEY}" ]; then
             echo "GEMINI_API_KEY is missing. Set repository secret GEMINI_API_KEY or include GEMINI_API_KEY in ENV_FILE_BASE64."
@@ -90,7 +90,7 @@ jobs:
 
       - name: Run Pipeline Runner
         env:
-          PYTHONPATH: ${{ github.workspace }}/src
+          PYTHONPATH: ${{ github.workspace }}/pipeline/src
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
           TOPIC: ${{ inputs.prompt || github.event.head_commit.message || 'Auto pipeline run' }}

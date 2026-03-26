@@ -148,6 +148,8 @@ Add-KeyValueIfPresent -Target $secretArgs -Key "yt-token-b64" -Value $tokenJsonB
 Add-KeyValueIfPresent -Target $secretArgs -Key "telegram-bot-token" -Value $envMap["TELEGRAM_BOT_TOKEN"]
 Add-KeyValueIfPresent -Target $secretArgs -Key "telegram-allowed-chat-id" -Value $envMap["TELEGRAM_ALLOWED_CHAT_ID"]
 Add-KeyValueIfPresent -Target $secretArgs -Key "azure-client-secret" -Value $envMap["AZURE_CLIENT_SECRET"]
+Add-KeyValueIfPresent -Target $secretArgs -Key "webhook-secret" -Value $envMap["WEBHOOK_SECRET"]
+Add-KeyValueIfPresent -Target $secretArgs -Key "encryption-key" -Value $envMap["ENCRYPTION_KEY"]
 
 $envArgs = New-Object System.Collections.Generic.List[string]
 Add-KeyValueIfPresent -Target $envArgs -Key "AI_PROVIDER" -Value $envMap["AI_PROVIDER"]
@@ -159,6 +161,7 @@ Add-KeyValueIfPresent -Target $envArgs -Key "ANTHROPIC_MODEL" -Value $envMap["AN
 Add-KeyValueIfPresent -Target $envArgs -Key "DEFAULT_NICHE" -Value $envMap["DEFAULT_NICHE"]
 Add-KeyValueIfPresent -Target $envArgs -Key "LOG_LEVEL" -Value $envMap["LOG_LEVEL"]
 Add-KeyValueIfPresent -Target $envArgs -Key "RUN_MODE" -Value $envMap["RUN_MODE"]
+Add-KeyValueIfPresent -Target $envArgs -Key "WEBHOOK_URL" -Value $envMap["WEBHOOK_URL"]
 Add-KeyValueIfPresent -Target $envArgs -Key "EDGE_TTS_VOICE" -Value $envMap["EDGE_TTS_VOICE"]
 Add-KeyValueIfPresent -Target $envArgs -Key "CLIPS_DIR" -Value $envMap["CLIPS_DIR"]
 Add-KeyValueIfPresent -Target $envArgs -Key "USED_CLIPS_FILE" -Value $envMap["USED_CLIPS_FILE"]
@@ -223,6 +226,8 @@ if ([string]::IsNullOrWhiteSpace($envMap["YOUTUBE_CLIENT_SECRET_FILE"])) {
     $envArgs.Add("YOUTUBE_CLIENT_SECRET_FILE=config/client_secret.json")
 }
 $envArgs.Add("AZURE_CLIENT_SECRET=secretref:azure-client-secret")
+$envArgs.Add("ENCRYPTION_KEY=secretref:encryption-key")
+$envArgs.Add("WEBHOOK_SECRET=secretref:webhook-secret")
 $envArgs.Add("YOUTUBE_CLIENT_SECRET_B64=secretref:yt-client-b64")
 $envArgs.Add("YOUTUBE_TOKEN_B64=secretref:yt-token-b64")
 $envArgs.Add("TELEGRAM_BOT_TOKEN=secretref:telegram-bot-token")

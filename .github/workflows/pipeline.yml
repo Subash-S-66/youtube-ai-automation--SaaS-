@@ -5,12 +5,12 @@ on:
     branches:
       - main
     paths:
-      - 'src/**'
-      - 'Dockerfile'
-      - 'requirements.txt'
-      - 'scripts/deploy_azure_job.ps1'
-      - 'config/**'
-      - 'data/**'
+      - 'pipeline/src/**'
+      - 'pipeline/Dockerfile'
+      - 'pipeline/requirements.txt'
+      - 'pipeline/scripts/deploy_azure_job.ps1'
+      - 'pipeline/config/**'
+      - 'pipeline/data/**'
 
 jobs:
   deploy-azure-job:
@@ -28,13 +28,14 @@ jobs:
       - name: Prepare Config Files
         shell: bash
         run: |
-          mkdir -p config data/output
-          echo "${{ secrets.ENV_FILE_BASE64 }}" | base64 -d > config/.env
-          echo "${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}" | base64 -d > config/client_secret.json
-          echo "${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}" | base64 -d > data/output/token.json
+          mkdir -p pipeline/config pipeline/data/output
+          echo "${{ secrets.ENV_FILE_BASE64 }}" | base64 -d > pipeline/config/.env
+          echo "${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}" | base64 -d > pipeline/config/client_secret.json
+          echo "${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}" | base64 -d > pipeline/data/output/token.json
 
       - name: Deploy Azure Container Apps Job
         shell: pwsh
+        working-directory: ./pipeline
         env:
           AZURE_JOB_CPU: "1"
           AZURE_JOB_MEMORY: "2Gi"
