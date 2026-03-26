@@ -4,7 +4,7 @@ import { releaseReservedCredits } from '../services/uploadLimitService';
 export const recoverCrashedJobs = async () => {
   try {
     const crashedJobs = await JobModel.find({
-      status: { $in: ['processing', 'running'] }
+      status: 'processing'
     });
 
     if (crashedJobs.length > 0) {
@@ -15,6 +15,8 @@ export const recoverCrashedJobs = async () => {
                status: 'failed',
                completedAt: new Date(),
                error: 'Server crash during processing',
+               errorMessage: 'Server crash during processing',
+               errorStage: 'RENDER',
                holdReleased: true
            });
            await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
@@ -22,7 +24,9 @@ export const recoverCrashedJobs = async () => {
            await JobModel.findByIdAndUpdate(job._id, {
                status: 'failed',
                completedAt: new Date(),
-               error: 'Server crash during processing'
+               error: 'Server crash during processing',
+               errorMessage: 'Server crash during processing',
+               errorStage: 'RENDER',
            });
         }
       }
@@ -36,10 +40,11 @@ export const startStuckJobCleanupInterval = () => {
   // Run every 5 minutes
   setInterval(async () => {
     try {
-      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      const threshold = Number(process.env.STUCK_JOB_THRESHOLD_MS || 15 * 60 * 1000);
+      const staleTime = new Date(Date.now() - threshold);
       const stuckJobs = await JobModel.find({
-        status: { $in: ['processing', 'running'] },
-        startedAt: { $lt: tenMinutesAgo }
+        status: 'processing',
+        executionLockedAt: { $lt: staleTime }
       });
 
       if (stuckJobs.length > 0) {
@@ -49,7 +54,9 @@ export const startStuckJobCleanupInterval = () => {
              await JobModel.findByIdAndUpdate(job._id, {
                  status: 'failed',
                  completedAt: new Date(),
-                 error: 'Job timed out (exceeded 10 mins processing/running limit)',
+                 error: 'Job timed out (stuck in processing beyond threshold)',
+                 errorMessage: 'Job timed out (stuck in processing beyond threshold)',
+                 errorStage: 'RENDER',
                  holdReleased: true
              });
              await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
@@ -57,7 +64,9 @@ export const startStuckJobCleanupInterval = () => {
              await JobModel.findByIdAndUpdate(job._id, {
                  status: 'failed',
                  completedAt: new Date(),
-                 error: 'Job timed out (exceeded 10 mins processing/running limit)'
+                 error: 'Job timed out (stuck in processing beyond threshold)',
+                 errorMessage: 'Job timed out (stuck in processing beyond threshold)',
+                 errorStage: 'RENDER',
              });
           }
         }

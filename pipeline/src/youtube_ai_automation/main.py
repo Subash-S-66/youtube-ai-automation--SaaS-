@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import json
 import logging
 import math
+import os
 from pathlib import Path
 import random
 import socket
@@ -1264,8 +1265,115 @@ def run_pipeline(topic: str, upload: bool, niche: str, generate_topic: bool, pub
     """
     Backward-compatible entrypoint expected by prior versions.
     """
-    resolved_topic = _resolve_topic(auto=generate_topic, topic=topic, niche=niche, mark_used=False)
-    return _build_single_short(topic=resolved_topic, upload=upload, publish_at=publish_at)
+    raise RuntimeError("Legacy AI generation mode is disabled. Pipeline supports only prepared mode.")
+
+
+def _normalize_prepared_item(raw: dict) -> GeneratedContent:
+    topic = " ".join(str(raw.get("topic", "")).split()).strip()
+    title = " ".join(str(raw.get("title", "")).split()).strip()
+    hook = " ".join(str(raw.get("hook", "")).split()).strip()
+    description = " ".join(str(raw.get("description", "")).split()).strip()
+    script = str(raw.get("script", "")).strip()
+    captions_raw = raw.get("captions", [])
+
+    hashtags_raw = raw.get("hashtags", [])
+    scenes_raw = raw.get("scenes", [])
+    queries_raw = raw.get("searchQueries", raw.get("search_queries", []))
+
+    if not topic or not title or not description:
+        raise ValueError("Prepared content item is missing topic/title/description/script.")
+
+    if not script and isinstance(captions_raw, list) and captions_raw:
+        caption_lines = []
+        for cap in captions_raw:
+            if not isinstance(cap, dict):
+                continue
+            text = str(cap.get("text", "")).strip()
+            if text:
+                caption_lines.append(text)
+        script = "\n".join(caption_lines[:5]).strip()
+
+    if not script:
+        raise ValueError("Prepared content item is missing script/captions text.")
+
+    hashtags = [str(item).strip() for item in hashtags_raw if str(item).strip()]
+    scenes = [str(item).strip() for item in scenes_raw if str(item).strip()]
+    search_queries = [str(item).strip() for item in queries_raw if str(item).strip()]
+
+    if len(hashtags) == 0:
+        raise ValueError("Prepared content item has no hashtags.")
+    if len(scenes) < 5 or len(search_queries) < 5:
+        raise ValueError("Prepared content item requires at least 5 scenes and 5 search queries.")
+
+    if not hook:
+        script_lines = [line.strip() for line in script.splitlines() if line.strip()]
+        hook = script_lines[0] if script_lines else topic
+
+    return GeneratedContent(
+        topic=topic,
+        title=title,
+        hook=hook,
+        description=description,
+        hashtags=hashtags[:15],
+        script=script,
+        scenes=scenes[:5],
+        search_queries=search_queries[:5],
+    )
+
+
+def _normalize_script_from_payload(script_items: list[dict]) -> str:
+    if not isinstance(script_items, list) or not script_items:
+        raise ValueError("pipeline payload script must be a non-empty array.")
+    lines: list[str] = []
+    for idx, item in enumerate(script_items):
+        if not isinstance(item, dict):
+            raise ValueError(f"script[{idx}] must be an object with text.")
+        text = str(item.get("text", "")).strip()
+        if not text:
+            raise ValueError(f"script[{idx}].text is required.")
+        lines.append(text)
+    return "\n".join(lines)
+
+
+def run_prepared_pipeline(
+    payload: dict,
+    upload: bool,
+    publish_at: str | None,
+    count: int,
+) -> list[Path]:
+    created: list[Path] = []
+    if not isinstance(payload, dict):
+        raise ValueError("PIPELINE_PAYLOAD must be an object.")
+
+    script_items = payload.get("script", [])
+    youtube = payload.get("youtube", {})
+    video_config = payload.get("videoConfig", {})
+    captions = payload.get("captions", [])
+
+    if not isinstance(youtube, dict) or not isinstance(video_config, dict):
+        raise ValueError("PIPELINE_PAYLOAD.youtube and videoConfig must be objects.")
+
+    script_text = _normalize_script_from_payload(script_items)
+    normalized = {
+        "topic": str(youtube.get("title", "Prepared Topic") or "Prepared Topic"),
+        "title": str(youtube.get("title", "Prepared Title") or "Prepared Title"),
+        "hook": str(youtube.get("title", "Prepared Hook") or "Prepared Hook"),
+        "description": str(youtube.get("description", "Prepared description") or "Prepared description"),
+        "hashtags": youtube.get("hashtags", ["#shorts"]),
+        "script": script_text,
+        "scenes": [f"scene {i}" for i in range(1, 6)],
+        "searchQueries": [f"query {i}" for i in range(1, 6)],
+        "captions": captions if isinstance(captions, list) else [],
+    }
+    content = _normalize_prepared_item(normalized)
+    LOGGER.info("Running prepared payload execution for title=%s", content.title)
+    video_path = _build_video_from_content(
+        content=content,
+        upload=upload,
+        publish_at=publish_at,
+    )
+    created.append(video_path)
+    return created
 
 
 def run_news_pipeline(
@@ -1277,6 +1385,7 @@ def run_news_pipeline(
     News pipeline:
     news_fetcher -> gemini_content_generator -> video pipeline
     """
+    raise RuntimeError("Legacy AI generation mode is disabled. Pipeline supports only prepared mode.")
     created: list[Path] = []
     target_duration = 40 # Default if settings not available here
     LOGGER.info("Starting news generation")
@@ -1363,6 +1472,7 @@ def run_auto_pipeline(
     -> scene_extractor -> video_fetcher -> voice_generator
     -> video_creator -> youtube_uploader
     """
+    raise RuntimeError("Legacy AI generation mode is disabled. Pipeline supports only prepared mode.")
     created: list[Path] = []
     target_duration = 40
     for index in range(max(1, count)):
@@ -1411,6 +1521,7 @@ def run_optimized_pipeline(
     trend_engine -> competitor_analyzer -> AI idea generation
     -> ranking/dedup -> optimized script build -> video pipeline
     """
+    raise RuntimeError("Legacy AI generation mode is disabled. Pipeline supports only prepared mode.")
     created: list[Path] = []
     for index in range(max(1, count)):
         LOGGER.info("Starting optimized generation %s/%s", index + 1, count)
@@ -1507,37 +1618,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     _setup_logging()
-    reset_upload_report(UPLOAD_REPORT_FILE)
-    args = parse_args()
-    update_upload_report_metadata(UPLOAD_REPORT_FILE, requested_count=max(1, args.count))
-    if sum([args.auto, args.optimized, args.news]) > 1:
-        raise SystemExit("Choose only one mode: --auto, --optimized, or --news")
-
-    is_trending_mode = args.auto or args.optimized or args.generate_topic
-    _run_network_preflight(check_trend_sources=is_trending_mode, upload=args.upload)
-
-    if args.optimized:
-        run_optimized_pipeline(
-            topic=args.topic,
-            niche=args.niche,
-            upload=args.upload,
-            publish_at=args.publish_at,
-            count=max(1, args.count),
-        )
-    elif args.auto:
-        run_auto_pipeline(
-            topic=args.topic,
-            niche=args.niche,
-            upload=args.upload,
-            publish_at=args.publish_at,
-            count=max(1, args.count),
-        )
-    else:
-        run_news_pipeline(
-            upload=args.upload,
-            publish_at=args.publish_at,
-            count=max(1, args.count),
-        )
+    run_mode = os.getenv("RUN_MODE", "").strip().lower()
+    if run_mode != "prepared":
+        raise SystemExit("Pipeline supports only prepared mode")
+    raise SystemExit("Use azure_job_runner for prepared execution.")
 
 
 if __name__ == "__main__":

@@ -6,15 +6,15 @@ import { pipelineQueue } from '../queues/pipelineQueue';
 import { connection } from '../config/redis';
 import JobModel from '../models/Job';
 import User from '../models/User';
-import Prompt from '../models/Prompt';
 import StoryProgress from '../models/StoryProgress';
 import SystemConfig from '../models/SystemConfig';
-import { getValidYouTubeToken } from '../services/youtubeTokenService';
+import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
 import { triggerGithubWorkflow } from './githubWorkflowTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
+import { normalizePipelineSettings } from '../services/pipelineRunService';
 
 if (process.env.SENTRY_DSN) {
   Sentry.init({
@@ -109,13 +109,44 @@ const resolvePipelineRunner = async (): Promise<'github' | 'azure'> => {
 const pipelineWorker = new Worker<PipelineJobPayload>(
   'pipelineQueue',
   async (job: BullJob<PipelineJobPayload>) => {
-    const { userId, promptId, jobId, settings } = job.data;
+    const { userId, jobId, settings: rawSettings } = job.data;
+    const inputAudit = normalizePipelineSettings(rawSettings || {});
+    let settings = inputAudit.normalizedSettings;
     console.log(`Processing job ${jobId} for user ${userId}`);
 
     let isSkipped = false;
 
-    await JobModel.findByIdAndUpdate(jobId, { status: 'processing', startedAt: new Date() });
+    const res = await JobModel.updateOne(
+      { _id: jobId, status: 'pending' },
+      {
+        $set: {
+          status: 'processing',
+          startedAt: new Date(),
+          executionLockedAt: new Date(),
+        }
+      }
+    );
+    if (res.modifiedCount === 0) {
+      return;
+    }
+    const lockedJob = await JobModel.findById(jobId);
+    if (!lockedJob) return;
+
+    if (lockedJob.pipelineConfig) {
+      const persistedAudit = normalizePipelineSettings(lockedJob.pipelineConfig as Record<string, any>);
+      settings = persistedAudit.normalizedSettings;
+    }
+
     await appendLogSafe(jobId, 'Job is processing...\n');
+    if (inputAudit.aliasMappings.length) {
+      await appendLogSafe(jobId, `Input alias mappings applied: ${inputAudit.aliasMappings.join(', ')}\n`);
+    }
+    if (inputAudit.unusedFields.length) {
+      await appendLogSafe(jobId, `Input fields currently not used by runtime: ${inputAudit.unusedFields.join(', ')}\n`);
+    }
+    if (inputAudit.notes.length) {
+      await appendLogSafe(jobId, `Input notes: ${inputAudit.notes.join(' | ')}\n`);
+    }
 
     try {
       // 1. Check Rolling Limit
@@ -140,9 +171,8 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
                if (jobScheduledAt.getTime() < nextAllowedAt.getTime()) {
                   isSkipped = true;
-                  await appendLogSafe(jobId, `\nJob skipped due to YouTube 24-hour upload limit. Will not execute pipeline.\n`, 'skipped_due_to_limit');
-                  // Update job status manually to ensure the finally block knows it's a completed state
-                  await JobModel.findByIdAndUpdate(jobId, { status: 'skipped_due_to_limit' });
+                  await appendLogSafe(jobId, `\nJob rejected due to YouTube 24-hour upload limit.\n`, 'failed');
+                  await JobModel.findByIdAndUpdate(jobId, { status: 'failed', errorMessage: 'Skipped due to YouTube 24-hour upload limit', errorStage: 'UPLOAD' });
 
                   // Notify user only once per limit window
                   const u = await User.findById(userId);
@@ -165,45 +195,96 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
          }
       }
 
-      // 2. Fetch Prompt to get gemini_prompt
-      const prompt = await Prompt.findById(promptId);
-      if (!prompt) {
-        throw new Error(`Prompt ${promptId} not found`);
+      // 2. Load backend-prepared content from DB (execution-only pipeline)
+      const dbJobForExecution = await JobModel.findById(jobId);
+      if (!dbJobForExecution) {
+        throw new Error(`Job ${jobId} not found`);
       }
-      const geminiPrompt = prompt.gemini_prompt;
+      if (dbJobForExecution.youtubeVideoId) {
+        await appendLogSafe(jobId, 'Job already has youtubeVideoId. Skipping duplicate execution.\n', 'success');
+        await JobModel.findByIdAndUpdate(jobId, {
+          status: 'success',
+          completedAt: new Date(),
+          errorMessage: '',
+          errorStage: undefined as any,
+        });
+        return;
+      }
+      const preparedContent = Array.isArray(dbJobForExecution.preparedContent) ? dbJobForExecution.preparedContent : [];
+      if (preparedContent.length === 0) {
+        const err: any = new Error('Prepared content is missing. Backend content generation must complete before pipeline execution.');
+        err.stage = 'RENDER';
+        throw err;
+      }
+      const generatedPrompt = dbJobForExecution.generatedPrompt || '';
+      const pipelinePayload = {
+        script: Array.isArray(dbJobForExecution.generatedScript?.[0])
+          ? (dbJobForExecution.generatedScript?.[0] || [])
+          : (dbJobForExecution.generatedScript || []),
+        captions: dbJobForExecution.captions || [],
+        videoConfig: dbJobForExecution.pipelineConfig || settings,
+        youtube: {
+          title: dbJobForExecution.title || '',
+          description: dbJobForExecution.description || '',
+          hashtags: dbJobForExecution.hashtags || [],
+          accountId: dbJobForExecution.youtubeAccountId || settings.channelId,
+        },
+      };
 
       // 2b. Safely compute Story Mode state exactly before passing to container
       if (settings.storyMode && settings.storyId) {
         const progress = await StoryProgress.findOne({ userId, storyId: settings.storyId });
+        const hasCurrentPartInput = typeof settings.currentPart === 'number' && Number.isFinite(settings.currentPart);
+        const hasLastPromptInput = typeof settings.lastPrompt === 'string' && settings.lastPrompt.length > 0;
+
         if (progress) {
-          settings.currentPart = progress.currentPart;
-          settings.lastPrompt = progress.lastPrompt;
+          if (!hasCurrentPartInput) {
+            settings.currentPart = progress.currentPart;
+          }
+          if (!hasLastPromptInput) {
+            settings.lastPrompt = progress.lastPrompt;
+          }
         } else {
-          settings.currentPart = 1;
-          settings.lastPrompt = "";
+          if (!hasCurrentPartInput) {
+            settings.currentPart = 1;
+          }
+          if (!hasLastPromptInput) {
+            settings.lastPrompt = '';
+          }
         }
 
         // Ensure recap is strictly disabled for Part 1 regardless of frontend payload
-        if (settings.currentPart <= 1) {
+        if ((settings.currentPart || 1) <= 1) {
+            if (settings.recapEnabled) {
+              await appendLogSafe(jobId, 'recapEnabled was provided but disabled for story part 1.\n');
+            }
             settings.recapEnabled = false;
         }
 
         await appendLogSafe(jobId, `
 Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
-`, 'running');
+`, 'processing');
       }
 
-      // 3. Get valid YouTube token
-      const youtubeToken = await getValidYouTubeToken(userId, settings.channelId);
+      // 3. Ensure valid YouTube token before upload execution
+      let youtubeToken = '';
+      try {
+        youtubeToken = (await ensureValidYouTubeToken(settings.channelId, userId)).accessToken;
+      } catch (error: any) {
+        error.stage = 'TOKEN';
+        throw error;
+      }
       if (!youtubeToken) {
-        throw new Error('Failed to obtain a valid YouTube token');
+        const err: any = new Error('Failed to obtain a valid YouTube token');
+        err.stage = 'TOKEN';
+        throw err;
       }
 
       // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
       const pipelineRunner = await resolvePipelineRunner();
 
-      await JobModel.findByIdAndUpdate(jobId, { status: 'running' });
-      await appendLogSafe(jobId, 'Job is running in pipeline...\n');
+      await JobModel.findByIdAndUpdate(jobId, { status: 'processing' });
+      await appendLogSafe(jobId, 'Job is running in pipeline...\n', 'processing');
 
       // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.
       // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
@@ -213,8 +294,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // Setup payload configuring environment variables for the container run
       const envVars = [
         { name: "USER_ID", value: userId },
-        { name: "PROMPT", value: geminiPrompt },
-        { name: "SETTINGS", value: JSON.stringify(settings) },
+        { name: "PIPELINE_PAYLOAD", value: JSON.stringify(pipelinePayload) },
+        { name: "RUN_MODE", value: "prepared" },
         { name: "YOUTUBE_TOKEN_ENCRYPTED", value: encryptedYoutubeToken },
         { name: "ENCRYPTION_KEY", value: process.env.ENCRYPTION_KEY || "" },
         { name: "JOB_ID", value: jobId },
@@ -228,8 +309,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          await triggerGithubWorkflow({
            jobId,
            userId,
-           prompt: geminiPrompt,
-           settings: JSON.stringify(settings),
+           runMode: 'prepared',
+           pipelinePayload: JSON.stringify(pipelinePayload),
            youtubeTokenEncrypted: encryptedYoutubeToken,
          });
          await appendLogSafe(jobId, `\nGitHub Actions workflow dispatched. Awaiting webhook updates.\n`);
@@ -242,7 +323,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
 
       if (!AZURE_JOB_NAME || !AZURE_RESOURCE_GROUP || !AZURE_SUBSCRIPTION_ID) {
-         throw new Error("Azure Container App Job configuration is missing.");
+         const err: any = new Error("Azure Container App Job configuration is missing.");
+         err.stage = 'RENDER';
+         throw err;
       }
 
       console.log(`Triggering Azure Container App Job: ${AZURE_JOB_NAME}`);
@@ -374,9 +457,11 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
          if (finalStatusMarker === 'SUCCESS') {
             await JobModel.findByIdAndUpdate(jobId, {
-                status: 'completed',
+                status: 'success',
                 completedAt: new Date(),
-                holdConsumed: true
+                holdConsumed: true,
+                errorMessage: '',
+                errorStage: undefined as any,
             });
             await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
 
@@ -388,7 +473,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                        { userId, storyId: settings.storyId },
                        {
                            $set: {
-                               lastPrompt: geminiPrompt,
+                               lastPrompt: generatedPrompt,
                                currentPart: nextPart
                            }
                        },
@@ -413,7 +498,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                   status: 'failed',
                   completedAt: new Date(),
                   holdConsumed: true,
-                  error: 'YouTube Quota Exceeded (Warning Accepted)'
+                  error: 'YouTube Quota Exceeded (Warning Accepted)',
+                  errorMessage: 'YouTube Quota Exceeded (Warning Accepted)',
+                  errorStage: 'UPLOAD',
               });
               await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
             } else {
@@ -421,7 +508,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                   status: 'failed',
                   completedAt: new Date(),
                   holdReleased: true,
-                  error: 'YouTube Quota Exceeded'
+                  error: 'YouTube Quota Exceeded',
+                  errorMessage: 'YouTube Quota Exceeded',
+                  errorStage: 'UPLOAD',
               });
               await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
             }
@@ -434,7 +523,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                 status: 'failed',
                 completedAt: new Date(),
                 holdReleased: true,
-                error: 'Generation or upload failed'
+                error: 'Generation or upload failed',
+                errorMessage: 'Generation or upload failed',
+                errorStage: 'RENDER',
             });
             await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
 
@@ -445,7 +536,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          }
 
       } else {
-         throw new Error("Failed to trigger Azure Container App Job via REST API");
+         const err: any = new Error("Failed to trigger Azure Container App Job via REST API");
+         err.stage = 'RENDER';
+         throw err;
       }
 
     } catch (error: any) {
@@ -465,7 +558,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
              status: 'failed',
              completedAt: new Date(),
              holdReleased: true,
-             error: error.message
+             error: error.message,
+             errorMessage: error.message,
+             errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
          });
          await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
       }
@@ -475,7 +570,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // Decrease the channel specific hold unconditionally if the job finished/failed/was skipped
       // The `releaseReservedCredits` covers global. Channel holds are just local guards.
       const dbJob = await JobModel.findById(jobId);
-      if (dbJob && dbJob.status !== 'running' && dbJob.status !== 'processing' && dbJob.status !== 'queued') {
+      if (dbJob && dbJob.status !== 'processing' && dbJob.status !== 'pending') {
         const decrementCount = settings.videoCount || 1;
         await User.updateOne(
           { _id: userId, 'youtubeChannels.channelId': settings.channelId, 'youtubeChannels.videosOnHold': { $gte: decrementCount } },

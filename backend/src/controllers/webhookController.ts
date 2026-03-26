@@ -31,9 +31,9 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     return;
   }
 
-  const { jobId, status, logs } = req.body;
+  const { jobId, status, logs, videoUrl, youtubeVideoId, errorMessage, errorStage } = req.body;
 
-  if (!jobId || !status) {
+  if (typeof jobId !== 'string' || !jobId.trim() || typeof status !== 'string' || !status.trim()) {
     res.status(400).json({ error: 'Missing jobId or status' });
     return;
   }
@@ -44,34 +44,76 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     return;
   }
 
-  // Prevent double-handling
-  if (job.holdConsumed || job.holdReleased) {
-     res.status(200).json({ success: true, message: 'Already handled' });
-     return;
-  }
-
   // Append new logs if provided
   if (logs) {
     job.logs = (job.logs || '') + '\n' + logs;
+  }
+  if (typeof videoUrl === 'string' && videoUrl.trim()) {
+    job.videoUrl = videoUrl.trim();
+  }
+  if (typeof youtubeVideoId === 'string' && youtubeVideoId.trim()) {
+    job.youtubeVideoId = youtubeVideoId.trim();
   }
 
   // Update status if it's changing
   const { consumeReservedCredits, releaseReservedCredits } = await import('../services/uploadLimitService.js');
 
-  if (status === 'success' || status === 'completed') {
-     job.status = 'completed';
+  const normalizedStatus = status.toLowerCase();
+  if (normalizedStatus === 'success' || normalizedStatus === 'completed') {
+     job.status = 'success';
      job.completedAt = new Date();
-     job.holdConsumed = true;
-     await consumeReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
-  } else if (status === 'failed') {
+     if (!job.holdConsumed && !job.holdReleased) {
+       job.holdConsumed = true;
+       await consumeReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+     }
+     job.errorMessage = '';
+     job.errorStage = undefined as any;
+     job.result = {
+       success: true,
+       videoUrl: job.videoUrl || '',
+       youtubeVideoId: job.youtubeVideoId || '',
+     };
+  } else if (normalizedStatus === 'failed') {
      job.status = 'failed';
      job.completedAt = new Date();
-     job.holdReleased = true;
-     job.error = logs || 'Failed via webhook';
-     await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
-  } else if (status && status !== job.status) {
-     // queued, processing, running
-     job.status = status;
+     if (!job.holdConsumed && !job.holdReleased) {
+       job.holdReleased = true;
+       await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+     }
+     const resolvedError = (typeof errorMessage === 'string' && errorMessage.trim()) ? errorMessage.trim() : (logs || 'Failed via webhook');
+     job.error = resolvedError;
+     job.errorMessage = resolvedError;
+     if (typeof errorStage === 'string' && ['TOKEN', 'CONTENT_GENERATION', 'RENDER', 'UPLOAD'].includes(errorStage)) {
+       job.errorStage = errorStage as any;
+     }
+     job.result = {
+       success: false,
+       videoUrl: job.videoUrl || '',
+       youtubeVideoId: job.youtubeVideoId || '',
+     };
+  } else if (normalizedStatus === 'youtube_rejected') {
+     job.status = 'failed';
+     job.completedAt = new Date();
+     if (!job.holdConsumed && !job.holdReleased) {
+       job.holdReleased = true;
+       await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+     }
+     const resolvedError = (typeof errorMessage === 'string' && errorMessage.trim()) ? errorMessage.trim() : 'YouTube limits rejected the upload';
+     job.error = resolvedError;
+     job.errorMessage = resolvedError;
+     job.errorStage = 'UPLOAD' as any;
+     job.result = {
+       success: false,
+       videoUrl: job.videoUrl || '',
+       youtubeVideoId: job.youtubeVideoId || '',
+     };
+  } else if (normalizedStatus === 'processing') {
+     job.status = 'processing';
+  } else if (normalizedStatus === 'pending') {
+     job.status = 'pending';
+  } else {
+     res.status(400).json({ error: `Unsupported status '${status}'` });
+     return;
   }
 
   await job.save();

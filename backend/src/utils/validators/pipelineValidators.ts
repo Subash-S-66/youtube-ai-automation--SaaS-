@@ -2,9 +2,13 @@ import { z } from 'zod';
 
 export const runPipelineSchema = z.object({
   body: z.object({
-    promptId: z.string({
-      message: 'promptId is required',
-    }),
+    promptId: z.string().optional(),
+    title: z.string().trim().min(1).max(500).optional(),
+    prompt: z.string().trim().min(1).max(5000).optional(),
+    videoSize: z.string().trim().min(1).max(20).optional(),
+    duration: z.number().optional(),
+    tone: z.string().trim().min(1).max(100).optional(),
+    style: z.string().trim().min(1).max(100).optional(),
     settings: z.object({
       targetDuration: z.number().optional().default(40),
       duration: z.number().optional(),
@@ -35,6 +39,18 @@ export const runPipelineSchema = z.object({
       message: 'settings are required',
     }),
     acceptedYouTubeLimitWarning: z.boolean().optional(),
+  }).superRefine((data, ctx) => {
+    const hasPromptId = !!data.promptId;
+    const hasTitle = !!data.title;
+    const hasPrompt = !!data.prompt;
+
+    if (!hasPromptId && !hasTitle && !hasPrompt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide either promptId or one of title/prompt.',
+        path: ['promptId'],
+      });
+    }
   }),
 });
 

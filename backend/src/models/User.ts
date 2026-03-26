@@ -12,6 +12,7 @@ export interface IYoutubeChannel {
   channelName: string;
   tokens: IYoutubeTokens;
   videosOnHold: number;
+  isValid?: boolean;
   lastLimitWarningSentAt?: Date;
   status?: string;
   createdAt?: Date;
@@ -93,6 +94,7 @@ const YoutubeChannelSchema = new Schema<IYoutubeChannel>(
     channelName: { type: String, required: true },
     tokens: { type: YoutubeTokensSchema, required: true },
     videosOnHold: { type: Number, default: 0 },
+    isValid: { type: Boolean, default: true },
     lastLimitWarningSentAt: { type: Date },
     status: { type: String, default: 'active', enum: ['active', 'disabled_due_to_plan'] },
     createdAt: { type: Date, default: Date.now },

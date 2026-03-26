@@ -15,12 +15,12 @@ on:
       user_id:
         description: "User id"
         required: true
-      prompt:
-        description: "Prompt text"
-        required: true
-      settings:
-        description: "Pipeline settings JSON"
-        required: true
+      run_mode:
+        description: "Execution mode"
+        required: false
+      pipeline_payload:
+        description: "Prepared pipeline payload JSON"
+        required: false
       youtube_token_encrypted:
         description: "Encrypted YouTube token"
         required: true
@@ -79,20 +79,21 @@ jobs:
               path.write_bytes(decoded)
           PY
 
-      - name: Parse Settings
+      - name: Parse Payload
         id: settings
         shell: bash
         env:
-          INPUT_SETTINGS: ${{ inputs.settings }}
+          INPUT_PIPELINE_PAYLOAD: ${{ inputs.pipeline_payload || '{}' }}
         run: |
           python - <<'PY'
           import json, os
-          raw = os.getenv("INPUT_SETTINGS", "{}")
+          raw = os.getenv("INPUT_PIPELINE_PAYLOAD", "{}")
           try:
-              settings = json.loads(raw)
+              payload = json.loads(raw)
           except Exception:
-              settings = {}
-          count = settings.get("videoCount") or 1
+              payload = {}
+          config = payload.get("videoConfig", {}) if isinstance(payload, dict) else {}
+          count = config.get("videoCount") or 1
           try:
               count = int(count)
           except Exception:
@@ -119,12 +120,9 @@ jobs:
       - name: Run Pipeline Runner
         env:
           PYTHONPATH: ${{ github.workspace }}/pipeline/src
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
-          TOPIC: ${{ inputs.prompt || github.event.head_commit.message || 'Auto pipeline run' }}
+          RUN_MODE: ${{ inputs.run_mode || 'prepared' }}
           RUN_COUNT: ${{ steps.settings.outputs.video_count }}
-          SETTINGS: ${{ inputs.settings || '{}' }}
-          PROMPT: ${{ inputs.prompt || github.event.head_commit.message || 'Auto pipeline run' }}
+          PIPELINE_PAYLOAD: ${{ inputs.pipeline_payload || '{}' }}
           USER_ID: ${{ inputs.user_id || github.actor }}
           JOB_ID: ${{ inputs.job_id || github.run_id }}
           YOUTUBE_TOKEN_ENCRYPTED: ${{ inputs.youtube_token_encrypted || '' }}

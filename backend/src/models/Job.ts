@@ -3,7 +3,24 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IJob extends Document {
   userId: mongoose.Types.ObjectId;
   promptId: mongoose.Types.ObjectId;
-  status: 'queued' | 'processing' | 'running' | 'completed' | 'failed' | 'paused_due_to_limit' | 'skipped_due_to_limit';
+  topic?: string;
+  generatedPrompt?: string;
+  generatedScript?: Array<Array<{ text: string; duration?: number }>>;
+  captions?: Array<Array<{ startMs: number; endMs: number; text: string }>>;
+  title?: string;
+  description?: string;
+  hashtags?: string[];
+  generatedScenes?: string[][];
+  generatedMetadata?: Array<Record<string, any>>;
+  pipelineConfig?: Record<string, any>;
+  youtubeAccountId?: string;
+  preparedContent?: Array<Record<string, any>>;
+  videoUrl?: string;
+  youtubeVideoId?: string;
+  errorMessage?: string;
+  errorStage?: 'TOKEN' | 'CONTENT_GENERATION' | 'RENDER' | 'UPLOAD';
+  executionLockedAt?: Date;
+  status: 'pending' | 'processing' | 'success' | 'failed';
   logs: string;
   error?: string;
   result?: any;
@@ -34,10 +51,70 @@ const JobSchema = new Schema<IJob>(
       ref: 'Prompt',
       required: true,
     },
+    topic: {
+      type: String,
+      trim: true,
+    },
+    generatedPrompt: {
+      type: String,
+      trim: true,
+    },
+    generatedScript: {
+      type: [Schema.Types.Mixed],
+      default: [],
+    },
+    captions: {
+      type: [Schema.Types.Mixed],
+      default: [],
+    },
+    title: {
+      type: String,
+      trim: true,
+    },
+    description: {
+      type: String,
+      trim: true,
+    },
+    hashtags: [{ type: String }],
+    generatedScenes: {
+      type: [[String]],
+      default: [],
+    },
+    generatedMetadata: {
+      type: [Schema.Types.Mixed],
+      default: [],
+    },
+    pipelineConfig: {
+      type: Schema.Types.Mixed,
+      default: {},
+    },
+    youtubeAccountId: {
+      type: String,
+    },
+    preparedContent: {
+      type: [Schema.Types.Mixed],
+      default: [],
+    },
+    videoUrl: {
+      type: String,
+    },
+    youtubeVideoId: {
+      type: String,
+    },
+    errorMessage: {
+      type: String,
+    },
+    errorStage: {
+      type: String,
+      enum: ['TOKEN', 'CONTENT_GENERATION', 'RENDER', 'UPLOAD'],
+    },
+    executionLockedAt: {
+      type: Date,
+    },
     status: {
       type: String,
-      enum: ['queued', 'processing', 'running', 'completed', 'failed', 'paused_due_to_limit', 'skipped_due_to_limit'],
-      default: 'queued',
+      enum: ['pending', 'processing', 'success', 'failed'],
+      default: 'pending',
     },
     logs: {
       type: String,

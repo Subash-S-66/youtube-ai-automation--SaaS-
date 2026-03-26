@@ -5,7 +5,122 @@ import Job from '../models/Job';
 import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { getUploadLimits, reserveCredits } from './uploadLimitService';
-import { getValidYouTubeToken } from './youtubeTokenService';
+import { ensureValidYouTubeToken } from './youtubeTokenService';
+import { generateContent } from './contentGenerationService';
+import { buildStandardPrompt } from './promptBuilderService';
+
+export interface PipelineInputSettings {
+  targetDuration?: number;
+  duration?: number;
+  contentType?: 'clips' | 'images' | 'mixed';
+  videoCount: number;
+  channelId: string;
+  storyMode?: boolean;
+  storyId?: string;
+  currentPart?: number;
+  recapEnabled?: boolean;
+  ctaEnabled?: boolean;
+  voices?: string[];
+  resetStory?: boolean;
+  userMediaPaths?: string[];
+  lastPrompt?: string;
+  templateConfig?: {
+    fontStyle?: string;
+    subtitleColor?: string;
+  };
+  customVideoIds?: string[];
+  customImageIds?: string[];
+  customThumbnailId?: string;
+  theme?: string;
+  videoStyle?: string;
+  enableCTA?: boolean;
+  voice?: string;
+  voiceRate?: string;
+  musicVolume?: number;
+  useImages?: boolean;
+}
+
+export interface PipelineInput {
+  userId: string;
+  promptId: string;
+  settings: PipelineInputSettings;
+  acceptedYouTubeLimitWarning?: boolean;
+}
+
+export interface PipelineInputAudit {
+  normalizedSettings: PipelineInputSettings;
+  aliasMappings: string[];
+  unusedFields: string[];
+  notes: string[];
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> => {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+};
+
+export const normalizePipelineSettings = (rawSettings: Record<string, any>): PipelineInputAudit => {
+  const settings: PipelineInputSettings = { ...rawSettings } as PipelineInputSettings;
+  const aliasMappings: string[] = [];
+  const notes: string[] = [];
+
+  if (typeof settings.voice === 'string' && settings.voice.trim() && (!settings.voices || settings.voices.length === 0)) {
+    settings.voices = [settings.voice.trim()];
+    aliasMappings.push('voice -> voices[0]');
+  }
+
+  if (typeof settings.enableCTA === 'boolean' && typeof settings.ctaEnabled !== 'boolean') {
+    settings.ctaEnabled = settings.enableCTA;
+    aliasMappings.push('enableCTA -> ctaEnabled');
+  }
+
+  if (typeof settings.useImages === 'boolean' && !settings.contentType) {
+    settings.contentType = settings.useImages ? 'images' : 'clips';
+    aliasMappings.push('useImages -> contentType');
+  }
+
+  if (!settings.contentType) {
+    settings.contentType = 'clips';
+  }
+
+  if (!settings.targetDuration && settings.duration) {
+    notes.push('duration provided without targetDuration; duration will drive script length.');
+  }
+
+  if (settings.targetDuration && settings.duration && settings.targetDuration !== settings.duration) {
+    notes.push('Both targetDuration and duration were provided; targetDuration takes precedence in pipeline runtime.');
+  }
+
+  if (settings.storyMode && !settings.storyId) {
+    throw new AppError('storyId is required when storyMode is enabled.', 400);
+  }
+
+  if (settings.resetStory && !settings.storyId) {
+    throw new AppError('storyId is required when resetStory is enabled.', 400);
+  }
+
+  if (!isObject(rawSettings.templateConfig) && rawSettings.templateConfig !== undefined) {
+    throw new AppError('templateConfig must be an object when provided.', 400);
+  }
+
+  const unusedFields = [
+    settings.ctaEnabled !== undefined ? 'ctaEnabled' : '',
+    settings.templateConfig !== undefined ? 'templateConfig' : '',
+    settings.customVideoIds?.length ? 'customVideoIds' : '',
+    settings.customImageIds?.length ? 'customImageIds' : '',
+    settings.customThumbnailId ? 'customThumbnailId' : '',
+    settings.theme ? 'theme' : '',
+    settings.videoStyle ? 'videoStyle' : '',
+    settings.voiceRate ? 'voiceRate' : '',
+    settings.musicVolume !== undefined ? 'musicVolume' : '',
+  ].filter(Boolean);
+
+  return {
+    normalizedSettings: settings,
+    aliasMappings,
+    unusedFields,
+    notes,
+  };
+};
 
 export interface EnqueuePipelineParams {
   userId: string;
@@ -21,7 +136,16 @@ export interface EnqueuePipelineResult {
   plan?: string;
   remainingUploads?: number;
   uploadsOnHold?: number;
+  standardizedPrompt?: string;
+  generatedScript?: Array<Array<{ text: string; duration?: number }>>;
+  metadata?: {
+    title: string;
+    description: string;
+    hashtags: string[];
+  };
 }
+
+type GeneratedJobContent = Awaited<ReturnType<typeof generateContent>>;
 
 export const enqueuePipelineJob = async ({
   userId,
@@ -29,6 +153,9 @@ export const enqueuePipelineJob = async ({
   settings,
   acceptedYouTubeLimitWarning = false,
 }: EnqueuePipelineParams): Promise<EnqueuePipelineResult> => {
+  const inputAudit = normalizePipelineSettings(settings as Record<string, any>);
+  const finalSettings = inputAudit.normalizedSettings;
+
   // Global Emergency Stop for cost control / safety
   if (process.env.EMERGENCY_STOP === 'true') {
     throw new AppError('Pipeline generation is temporarily paused for maintenance.', 503);
@@ -40,33 +167,36 @@ export const enqueuePipelineJob = async ({
   }
 
   if (limitCheck.plan === 'free') {
-    if (settings.storyMode) {
+    if (finalSettings.storyMode) {
       throw new AppError('Story Mode is not available on the Free plan. Please upgrade to Basic or higher.', 403);
     }
-    if ((settings as any).scheduledAt || (settings as any).scheduleEnabled) {
+    if ((finalSettings as any).scheduledAt || (finalSettings as any).scheduleEnabled) {
       throw new AppError('Scheduling is not available on the Free plan. Please upgrade to Basic or higher.', 403);
     }
   }
 
   // Prevent unbounded story growth
-  if (settings.storyMode && settings.currentPart && Number(settings.currentPart) > 100) {
+  if (finalSettings.storyMode && finalSettings.currentPart && Number(finalSettings.currentPart) > 100) {
     throw new AppError(
       'Story has reached the maximum of 100 parts. Please reset your story to start a new one.',
       400
     );
   }
 
-  if (settings.templateConfig && !limitCheck.features?.template_customization) {
+  if (finalSettings.templateConfig && !limitCheck.features?.template_customization) {
     throw new AppError('Template Customization is only available on Pro and Premium plans.', 403);
   }
 
-  if ((settings.customVideoIds?.length || settings.customImageIds?.length) && !limitCheck.features?.custom_media) {
+  if (
+    (finalSettings.customVideoIds?.length || finalSettings.customImageIds?.length || finalSettings.customThumbnailId) &&
+    !limitCheck.features?.custom_media
+  ) {
     throw new AppError('Custom Media is only available on Pro and Premium plans.', 403);
   }
 
-  if (limitCheck.remainingUploads < settings.videoCount) {
+  if (limitCheck.remainingUploads < finalSettings.videoCount) {
     throw new AppError(
-      `Not enough uploads remaining. You requested ${settings.videoCount} videos but only have ${limitCheck.remainingUploads} uploads available today.`,
+      `Not enough uploads remaining. You requested ${finalSettings.videoCount} videos but only have ${limitCheck.remainingUploads} uploads available today.`,
       400
     );
   }
@@ -86,7 +216,7 @@ export const enqueuePipelineJob = async ({
 
   const activeJobsCount = await Job.countDocuments({
     userId,
-    status: { $in: ['pending', 'running'] },
+    status: { $in: ['pending', 'processing'] },
   });
 
   if (activeJobsCount >= maxConcurrentJobs) {
@@ -96,14 +226,14 @@ export const enqueuePipelineJob = async ({
     );
   }
 
-  const channel = user.youtubeChannels.find(c => c.channelId === settings.channelId);
+  const channel = user.youtubeChannels.find(c => c.channelId === finalSettings.channelId);
   if (!channel) {
-    throw new AppError(`YouTube channel with ID ${settings.channelId} not found`, 404);
+    throw new AppError(`YouTube channel with ID ${finalSettings.channelId} not found`, 404);
   }
 
-  if (channel.videosOnHold + settings.videoCount > 10) {
+  if (channel.videosOnHold + finalSettings.videoCount > 10) {
     throw new AppError(
-      `Cannot queue job. This channel currently has ${channel.videosOnHold} videos running/pending. Requesting ${settings.videoCount} more exceeds the strict limit of 10 per channel.`,
+      `Cannot queue job. This channel currently has ${channel.videosOnHold} videos running/pending. Requesting ${finalSettings.videoCount} more exceeds the strict limit of 10 per channel.`,
       400
     );
   }
@@ -117,9 +247,58 @@ export const enqueuePipelineJob = async ({
     throw new AppError('Prompt does not belong to user', 403);
   }
 
+  let generatedContent: GeneratedJobContent | null = null;
+  try {
+    const standardizedPrompt = buildStandardPrompt({
+      prompt: prompt.gemini_prompt || prompt.user_prompt,
+      title: prompt.user_prompt,
+      duration: finalSettings.targetDuration || finalSettings.duration,
+      style: finalSettings.videoStyle,
+    });
+
+    const generationInput: any = {
+      topic: prompt.user_prompt,
+      prompt: standardizedPrompt,
+      videoCount: finalSettings.videoCount,
+    };
+    if (typeof finalSettings.targetDuration === 'number') generationInput.targetDuration = finalSettings.targetDuration;
+    if (typeof finalSettings.duration === 'number') generationInput.duration = finalSettings.duration;
+    if (typeof finalSettings.storyMode === 'boolean') generationInput.storyMode = finalSettings.storyMode;
+    if (typeof finalSettings.currentPart === 'number') generationInput.currentPart = finalSettings.currentPart;
+    if (typeof finalSettings.recapEnabled === 'boolean') generationInput.recapEnabled = finalSettings.recapEnabled;
+    if (typeof finalSettings.lastPrompt === 'string') generationInput.lastPrompt = finalSettings.lastPrompt;
+
+    generatedContent = await generateContent(generationInput);
+
+    const validStructuredScript = Array.isArray(generatedContent.script)
+      && generatedContent.script.every(
+        (part) => Array.isArray(part) && part.every((line) => line && typeof line.text === 'string' && line.text.trim().length > 0)
+      );
+    if (!validStructuredScript) {
+      throw new AppError('Generated script must be structured as array of { text, duration? } lines.', 502);
+    }
+  } catch (error: any) {
+    const generationError = error?.message || 'Failed to generate content before pipeline execution.';
+    await Job.create({
+      userId,
+      promptId,
+      status: 'failed',
+      logs: `Content generation failed before enqueue.\n${generationError}\n`,
+      error: generationError,
+      errorMessage: generationError,
+      errorStage: 'CONTENT_GENERATION',
+      videoCount: finalSettings.videoCount,
+      channelId: finalSettings.channelId,
+      pipelineConfig: finalSettings,
+      topic: prompt.user_prompt,
+      generatedPrompt: prompt.gemini_prompt,
+    });
+    throw new AppError(generationError, 502);
+  }
+
   let youtubeToken = '';
   try {
-    youtubeToken = await getValidYouTubeToken(userId, settings.channelId);
+    youtubeToken = (await ensureValidYouTubeToken(finalSettings.channelId, userId)).accessToken;
   } catch {
     throw new AppError('youtube_token_expired', 400);
   }
@@ -131,36 +310,36 @@ export const enqueuePipelineJob = async ({
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const recentJobs = await Job.find({
     userId,
-    channelId: settings.channelId,
+    channelId: finalSettings.channelId,
     status: 'success',
     createdAt: { $gte: oneDayAgo },
   });
   const uploadsLast24h = recentJobs.reduce((sum, job) => sum + (job.videoCount || 1), 0);
 
-  if (uploadsLast24h + settings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
+  if (uploadsLast24h + finalSettings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
     return {
       warningOnly: true,
       warning: 'YouTube allows ~10 uploads per 24 hours. This may affect uploads. Proceed?',
     };
   }
 
-  if (settings.storyMode && settings.storyId) {
-    if (settings.resetStory) {
-      await StoryProgress.findOneAndDelete({ userId, storyId: settings.storyId });
+  if (finalSettings.storyMode && finalSettings.storyId) {
+    if (finalSettings.resetStory) {
+      await StoryProgress.findOneAndDelete({ userId, storyId: finalSettings.storyId });
     }
   }
 
-  const reserved = await reserveCredits(userId, settings.videoCount);
+  const reserved = await reserveCredits(userId, finalSettings.videoCount);
   if (!reserved) {
      throw new AppError('Daily upload limit reached or insufficient credits', 403);
   }
 
   // Still increment channel-specific hold
   const updatedUser = await User.findOneAndUpdate(
-    { _id: userId, 'youtubeChannels.channelId': settings.channelId },
+    { _id: userId, 'youtubeChannels.channelId': finalSettings.channelId },
     {
       $inc: {
-        'youtubeChannels.$.videosOnHold': settings.videoCount,
+        'youtubeChannels.$.videosOnHold': finalSettings.videoCount,
       },
     },
     { returnDocument: 'after' }
@@ -168,18 +347,41 @@ export const enqueuePipelineJob = async ({
 
   const finalLimitCheck = await getUploadLimits(userId);
 
-  const job = await Job.create({
+  const jobData: Record<string, any> = {
     userId,
     promptId,
-    status: 'queued',
-    logs: 'Job added to queue...\n',
+    status: 'pending',
+    logs: [
+      'Job added to queue...',
+      generatedContent ? `Prepared ${generatedContent.preparedContent.length} content item(s) in backend.` : '',
+      inputAudit.aliasMappings.length ? `Input alias mappings: ${inputAudit.aliasMappings.join(', ')}` : '',
+      inputAudit.unusedFields.length ? `Input fields currently not used by runtime: ${inputAudit.unusedFields.join(', ')}` : '',
+      inputAudit.notes.length ? `Input notes: ${inputAudit.notes.join(' | ')}` : '',
+    ].filter(Boolean).join('\n') + '\n',
+    topic: prompt.user_prompt,
+    generatedPrompt: generatedContent?.prompt || prompt.gemini_prompt,
+    generatedScript: generatedContent?.script || [],
+    captions: generatedContent?.captions || [],
+    title: generatedContent?.title || '',
+    description: generatedContent?.description || '',
+    hashtags: generatedContent?.hashtags || [],
+    generatedScenes: generatedContent?.scenes || [],
+    generatedMetadata: generatedContent?.metadata || [],
+    preparedContent: generatedContent?.preparedContent || [],
+    pipelineConfig: finalSettings,
+    youtubeAccountId: finalSettings.channelId,
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
-    videoCount: settings.videoCount,
-    channelId: settings.channelId,
-    customVideoIds: settings.customVideoIds || [],
-    customImageIds: settings.customImageIds || [],
-    customThumbnailId: settings.customThumbnailId || undefined,
-  });
+    videoCount: finalSettings.videoCount,
+    channelId: finalSettings.channelId,
+    customVideoIds: finalSettings.customVideoIds || [],
+    customImageIds: finalSettings.customImageIds || [],
+  };
+
+  if (finalSettings.customThumbnailId) {
+    jobData.customThumbnailId = finalSettings.customThumbnailId;
+  }
+
+  const job = await Job.create(jobData);
 
   const planPriorities: Record<string, number> = {
     premium: 1,
@@ -189,7 +391,7 @@ export const enqueuePipelineJob = async ({
   };
   const jobPriority = planPriorities[finalLimitCheck.plan] || 4;
 
-  const count = settings.videoCount || 1;
+  const count = finalSettings.videoCount || 1;
   const jobTimeoutMinutes = 10 + (count - 1) * 5;
   const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
 
@@ -199,7 +401,7 @@ export const enqueuePipelineJob = async ({
       userId,
       promptId,
       jobId: job._id.toString(),
-      settings,
+      settings: finalSettings, // worker re-reads canonical config from DB before dispatch
     },
     {
       priority: jobPriority,
@@ -218,9 +420,16 @@ export const enqueuePipelineJob = async ({
     plan: finalLimitCheck.plan,
     remainingUploads: finalLimitCheck.remainingUploads,
     uploadsOnHold: updatedUser?.uploadsOnHold || 0,
+    standardizedPrompt: generatedContent?.prompt || '',
+    generatedScript: generatedContent?.script || [],
+    metadata: {
+      title: generatedContent?.title || '',
+      description: generatedContent?.description || '',
+      hashtags: generatedContent?.hashtags || [],
+    },
   };
 
-  if (uploadsLast24h + settings.videoCount > 10) {
+  if (uploadsLast24h + finalSettings.videoCount > 10) {
     result.warning = 'YouTube allows ~10 uploads per 24 hours. This may affect uploads. Proceed?';
   }
 

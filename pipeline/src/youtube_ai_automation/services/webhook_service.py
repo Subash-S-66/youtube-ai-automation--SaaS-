@@ -4,7 +4,15 @@ import logging
 
 LOGGER = logging.getLogger("webhook_service")
 
-def send_job_status(job_id: str, status: str, logs: str = "") -> None:
+def send_job_status(
+    job_id: str,
+    status: str,
+    logs: str = "",
+    video_url: str = "",
+    youtube_video_id: str = "",
+    error_message: str = "",
+    error_stage: str = "",
+) -> None:
     webhook_url = os.getenv("WEBHOOK_URL")
     webhook_secret = os.getenv("WEBHOOK_SECRET")
 
@@ -15,7 +23,11 @@ def send_job_status(job_id: str, status: str, logs: str = "") -> None:
         payload = {
             "jobId": job_id,
             "status": status,
-            "logs": logs
+            "logs": logs,
+            "videoUrl": video_url,
+            "youtubeVideoId": youtube_video_id,
+            "errorMessage": error_message,
+            "errorStage": error_stage,
         }
         headers = {"Content-Type": "application/json"}
         if webhook_secret:

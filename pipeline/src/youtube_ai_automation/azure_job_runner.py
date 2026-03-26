@@ -1,4 +1,5 @@
 import base64
+import json
 import logging
 import os
 from pathlib import Path
@@ -10,10 +11,7 @@ from youtube_ai_automation.main import (
     _run_network_preflight,
     _setup_logging,
     reset_upload_report,
-    run_auto_pipeline,
-    run_news_pipeline,
-    run_optimized_pipeline,
-    run_pipeline,
+    run_prepared_pipeline,
     update_upload_report_metadata,
     UPLOAD_REPORT_FILE,
 )
@@ -55,6 +53,8 @@ def _normalize_mode(value: str) -> str:
         "opt": "optimized",
         "manual": "manual",
         "single": "single",
+        "prepared": "prepared",
+        "execution": "prepared",
     }
     return aliases.get(token, token)
 
@@ -63,11 +63,7 @@ def _resolve_mode() -> str:
     explicit = _normalize_mode(os.getenv("RUN_MODE", ""))
     if explicit:
         return explicit
-    if _env_flag("RUN_OPTIMIZED", False):
-        return "optimized"
-    if _env_flag("RUN_AUTO", False):
-        return "auto"
-    return "optimized"
+    return "prepared"
 
 
 def _safe_write_text(path: Path, content: str) -> None:
@@ -119,10 +115,35 @@ def _notify_telegram(message: str) -> None:
         LOGGER.warning("Telegram notify failed: %s", exc, exc_info=True)
         return
 
-def _notify_backend(status: str, logs: str = "") -> None:
+def _notify_backend(
+    status: str,
+    logs: str = "",
+    video_url: str = "",
+    youtube_video_id: str = "",
+    error_message: str = "",
+    error_stage: str = "",
+) -> None:
     job_id = os.getenv("JOB_ID", "").strip()
     if job_id:
-        send_job_status(job_id, status, logs)
+        send_job_status(
+            job_id,
+            status,
+            logs,
+            video_url=video_url,
+            youtube_video_id=youtube_video_id,
+            error_message=error_message,
+            error_stage=error_stage,
+        )
+
+
+def _extract_video_result(report: dict) -> tuple[str, str]:
+    uploads = report.get("uploads", []) if isinstance(report, dict) else []
+    if not isinstance(uploads, list) or not uploads:
+        return "", ""
+    latest = uploads[-1] if isinstance(uploads[-1], dict) else {}
+    youtube_video_id = str(latest.get("video_id", "")).strip()
+    video_url = f"https://www.youtube.com/watch?v={youtube_video_id}" if youtube_video_id else ""
+    return video_url, youtube_video_id
 
 
 def _acquire_arm_token(tenant_id: str, client_id: str, client_secret: str) -> str:
@@ -239,6 +260,8 @@ def main() -> None:
     reset_upload_report(UPLOAD_REPORT_FILE)
 
     run_mode = _resolve_mode()
+    if run_mode != "prepared":
+        raise SystemExit("Pipeline supports only prepared mode")
     count = _env_int("RUN_COUNT", 1)
     upload = _env_flag("UPLOAD", True) or _env_flag("RUN_UPLOAD", True)
     topic = os.getenv("TOPIC", "").strip()
@@ -257,34 +280,17 @@ def main() -> None:
     _run_network_preflight(check_trend_sources=run_mode in {"auto", "optimized"}, upload=upload)
 
     try:
-        if run_mode == "news":
-            run_news_pipeline(upload=upload, publish_at=publish_at, count=count)
-            report = load_upload_report(UPLOAD_REPORT_FILE)
-            _notify_telegram(build_upload_summary_message(report))
-            _notify_backend("SUCCESS", "Pipeline completed successfully.")
-            return
-        if run_mode == "optimized":
-            run_optimized_pipeline(topic=topic, niche=niche, upload=upload, publish_at=publish_at, count=count)
-            report = load_upload_report(UPLOAD_REPORT_FILE)
-            _notify_telegram(build_upload_summary_message(report))
-            _notify_backend("SUCCESS", "Pipeline completed successfully.")
-            return
-        if run_mode == "auto":
-            run_auto_pipeline(topic=topic, niche=niche, upload=upload, publish_at=publish_at, count=count)
-            report = load_upload_report(UPLOAD_REPORT_FILE)
-            _notify_telegram(build_upload_summary_message(report))
-            _notify_backend("SUCCESS", "Pipeline completed successfully.")
-            return
-        if run_mode in {"manual", "single"}:
-            if not topic:
-                raise SystemExit("RUN_MODE=manual requires TOPIC.")
-            run_pipeline(topic=topic, upload=upload, niche=niche, generate_topic=False, publish_at=publish_at)
-            report = load_upload_report(UPLOAD_REPORT_FILE)
-            _notify_telegram(build_upload_summary_message(report))
-            _notify_backend("SUCCESS", "Pipeline completed successfully.")
-            return
-
-        raise SystemExit(f"Unknown RUN_MODE: {run_mode}")
+        payload_raw = os.getenv("PIPELINE_PAYLOAD", "{}").strip() or "{}"
+        try:
+            payload = json.loads(payload_raw)
+        except Exception as exc:
+            raise SystemExit(f"RUN_MODE=prepared received invalid PIPELINE_PAYLOAD JSON: {exc}")
+        run_prepared_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
+        report = load_upload_report(UPLOAD_REPORT_FILE)
+        _notify_telegram(build_upload_summary_message(report))
+        video_url, youtube_video_id = _extract_video_result(report)
+        _notify_backend("SUCCESS", "Pipeline completed successfully.", video_url=video_url, youtube_video_id=youtube_video_id)
+        return
     except Exception as exc:
         LOGGER.exception("Azure job failed: %s", exc)
         _notify_telegram(f"Azure job failed: {exc}")
@@ -292,9 +298,19 @@ def main() -> None:
         # Determine if failed due to YouTube limits
         err_str = str(exc).lower()
         if "quota" in err_str or "upload limit" in err_str or "daily limit" in err_str:
-            _notify_backend("YOUTUBE_REJECTED", f"PIPELINE_STATUS:YOUTUBE_REJECTED\nAzure job failed: {exc}")
+            _notify_backend(
+                "YOUTUBE_REJECTED",
+                f"PIPELINE_STATUS:YOUTUBE_REJECTED\nAzure job failed: {exc}",
+                error_message=str(exc),
+                error_stage="UPLOAD",
+            )
         else:
-            _notify_backend("FAILED", f"PIPELINE_STATUS:FAILED\nAzure job failed: {exc}")
+            _notify_backend(
+                "FAILED",
+                f"PIPELINE_STATUS:FAILED\nAzure job failed: {exc}",
+                error_message=str(exc),
+                error_stage="RENDER",
+            )
 
         raise
     finally:

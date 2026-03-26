@@ -3,8 +3,8 @@ import crypto from 'crypto';
 export interface GithubWorkflowInputs {
   jobId: string;
   userId: string;
-  prompt: string;
-  settings: string;
+  runMode?: string;
+  pipelinePayload?: string;
   youtubeTokenEncrypted: string;
 }
 
@@ -35,8 +35,8 @@ export const triggerGithubWorkflow = async (
       dispatch_id: dispatchId,
       job_id: inputs.jobId,
       user_id: inputs.userId,
-      prompt: inputs.prompt,
-      settings: inputs.settings,
+      run_mode: inputs.runMode || 'prepared',
+      pipeline_payload: inputs.pipelinePayload || '{}',
       youtube_token_encrypted: inputs.youtubeTokenEncrypted,
     },
   };
