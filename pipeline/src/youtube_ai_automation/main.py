@@ -1321,16 +1321,29 @@ def _normalize_prepared_item(raw: dict) -> GeneratedContent:
     )
 
 
-def _normalize_script_from_payload(script_items: list[dict]) -> str:
+def _normalize_script_from_payload(script_items: list[object]) -> str:
     if not isinstance(script_items, list) or not script_items:
         raise ValueError("pipeline payload script must be a non-empty array.")
     lines: list[str] = []
     for idx, item in enumerate(script_items):
-        if not isinstance(item, dict):
-            raise ValueError(f"script[{idx}] must be an object with text.")
-        text = str(item.get("text", "")).strip()
+        text = ""
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            text = str(item.get("text", "")).strip()
+            if not text:
+                # Accept legacy or alternate key names from older callers.
+                text = str(item.get("prompt", "")).strip()
+            if not text:
+                text = str(item.get("line", "")).strip()
+        else:
+            raise ValueError(
+                f"script[{idx}] must be a string or object with text/prompt/line."
+            )
         if not text:
-            raise ValueError(f"script[{idx}].text is required.")
+            raise ValueError(
+                f"script[{idx}] is empty; provide a non-empty string or object with text."
+            )
         lines.append(text)
     return "\n".join(lines)
 
