@@ -35,8 +35,8 @@ jobs:
       - name: Deploy to Render
         run: |
           if [ -z "${RENDER_DEPLOY_HOOK}" ]; then
-            echo "Missing required secret: RENDER_DEPLOY_HOOK"
-            exit 1
+            echo "RENDER_DEPLOY_HOOK is not set. Skipping Render deploy."
+            exit 0
           fi
 
           case "${RENDER_DEPLOY_HOOK}" in
