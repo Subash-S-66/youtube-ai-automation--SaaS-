@@ -13,12 +13,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_DIR = PROJECT_ROOT / "data"
 
-# Load variables from .env if present. Override shell values to ensure repo config wins.
+# Load variables from .env if present, but keep runtime env precedence.
+# This allows CI/job-level env (for example RUN_MODE=prepared) to override .env defaults.
 env_file = CONFIG_DIR / ".env"
 if env_file.exists():
-    load_dotenv(env_file, override=True)
+    load_dotenv(env_file, override=False)
 else:
-    load_dotenv(override=True)
+    load_dotenv(override=False)
 
 # Base paths used across modules.
 OUTPUT_DIR = DATA_DIR / "output"
