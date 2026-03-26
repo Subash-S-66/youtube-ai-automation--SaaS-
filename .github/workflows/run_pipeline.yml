@@ -78,11 +78,12 @@ jobs:
 
       - name: Validate Gemini Credentials
         shell: bash
+        env:
+          GEMINI_API_KEY_SECRET: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          set -a
-          source config/.env || true
-          set +a
-          if [ -z "${GEMINI_API_KEY:-}" ]; then
+          GEMINI_FROM_ENV_FILE="$(grep -E '^GEMINI_API_KEY=' config/.env | tail -n1 | cut -d= -f2- | tr -d '\r')"
+          GEMINI_EFFECTIVE_KEY="${GEMINI_FROM_ENV_FILE:-$GEMINI_API_KEY_SECRET}"
+          if [ -z "${GEMINI_EFFECTIVE_KEY}" ]; then
             echo "GEMINI_API_KEY is missing. Set repository secret GEMINI_API_KEY or include GEMINI_API_KEY in ENV_FILE_BASE64."
             exit 1
           fi
