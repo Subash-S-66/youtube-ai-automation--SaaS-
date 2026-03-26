@@ -1,6 +1,9 @@
 name: Run Pipeline (GitHub Workspace)
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       dispatch_id:
