@@ -8,24 +8,14 @@ from pathlib import Path
 import random
 import wave
 
-import requests
-
-from .gemini_utils import execute_with_gemini_fallback
 from .gemini_utils import get_gemini_api_keys
 
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Puck")
 GEMINI_VOICE_OPTIONS = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
-GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash-preview-tts").strip()
-GEMINI_AUDIO_MODELS = [
-    item.strip()
-    for item in os.getenv(
-        "GEMINI_AUDIO_MODELS",
-        f"{GEMINI_AUDIO_MODEL},gemini-2.5-flash-preview-tts,gemini-2.5-flash",
-    ).split(",")
-    if item.strip()
-]
+GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash-native-audio-dialog").strip()
+GEMINI_AUDIO_MODELS = [GEMINI_AUDIO_MODEL]
 
 
 def pick_voice_profile(voice: str = "", rate: str = "") -> tuple[str, str]:
@@ -139,81 +129,37 @@ async def _save_gemini_voice_live_async(
 
 def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
     gemini_voice = _resolve_gemini_voice(voice)
-    payload = {
-        "contents": [{"parts": [{"text": script}]}],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {
-                "voiceConfig": {
-                    "prebuiltVoiceConfig": {
-                        "voiceName": gemini_voice
-                    }
-                }
-            }
-        }
-    }
 
     errors: list[str] = []
     for model_name in GEMINI_AUDIO_MODELS:
         try:
-            if _uses_live_native_audio(model_name):
-                keys = get_gemini_api_keys()
-                if not keys:
-                    raise RuntimeError("No Gemini API keys found for Live API call.")
-                last_error: Exception | None = None
-                for key in keys:
-                    try:
-                        output = asyncio.run(
-                            _save_gemini_voice_live_async(
-                                script=script,
-                                gemini_voice=gemini_voice,
-                                output_path=output_path,
-                                model_name=model_name,
-                                api_key=key,
-                            )
-                        )
-                        _validate_audio_file(output)
-                        return output
-                    except Exception as exc:
-                        last_error = exc
-                        continue
-                raise RuntimeError(f"All Gemini Live keys failed. Last error: {last_error}")
-
-            gemini_tts_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-
-            def operation(key: str) -> requests.Response:
-                response = requests.post(
-                    gemini_tts_url,
-                    params={"key": key},
-                    json=payload,
-                    timeout=60
+            if not _uses_live_native_audio(model_name):
+                raise RuntimeError(
+                    f"Invalid audio model '{model_name}'. "
+                    "Audio is restricted to Gemini native-audio dialog models only."
                 )
-                response.raise_for_status()
-                return response
+            keys = get_gemini_api_keys()
+            if not keys:
+                raise RuntimeError("No Gemini API keys found for Live API call.")
+            last_error: Exception | None = None
+            for key in keys:
+                try:
+                    output = asyncio.run(
+                        _save_gemini_voice_live_async(
+                            script=script,
+                            gemini_voice=gemini_voice,
+                            output_path=output_path,
+                            model_name=model_name,
+                            api_key=key,
+                        )
+                    )
+                    _validate_audio_file(output)
+                    return output
+                except Exception as exc:
+                    last_error = exc
+                    continue
+            raise RuntimeError(f"All Gemini Live keys failed. Last error: {last_error}")
 
-            response = execute_with_gemini_fallback(operation)
-            data = response.json()
-            candidates = data.get("candidates", [])
-            if not candidates:
-                raise RuntimeError("No candidates returned from Gemini")
-
-            parts = candidates[0].get("content", {}).get("parts", [])
-            audio_part = None
-            for part in parts:
-                inline = part.get("inlineData", {})
-                if inline.get("mimeType", "").startswith("audio/"):
-                    audio_part = inline.get("data")
-                    break
-
-            if not audio_part:
-                raise RuntimeError("No audio data found in Gemini response")
-
-            audio_bytes = base64.b64decode(audio_part)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "wb") as file_handle:
-                file_handle.write(audio_bytes)
-            _validate_audio_file(output_path)
-            return output_path
         except Exception as exc:
             errors.append(f"{model_name}: {str(exc)[:180]}")
             continue

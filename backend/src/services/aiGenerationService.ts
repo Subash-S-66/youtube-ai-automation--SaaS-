@@ -48,7 +48,7 @@ const callFallbackModel = async (prompt: string, timeoutMs = 45000): Promise<str
     throw new Error('Fallback model key is not configured');
   }
 
-  const modelName = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite').trim();
+  const modelName = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-preview').trim();
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 

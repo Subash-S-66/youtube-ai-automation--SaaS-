@@ -17,10 +17,7 @@ import requests
 
 LOGGER = logging.getLogger(__name__)
 GEMINI_FALLBACK_MODELS_DEFAULT = (
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-3.1-flash-preview",
 )
 GEMINI_RETRY_STATUS_CODES = {429, 503}
 GEMINI_MAX_RETRIES_PER_MODEL = 2
@@ -431,7 +428,7 @@ def generate_content(
     topic: str,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-2.5-flash",
+    gemini_model: str = "gemini-3.1-flash-preview",
     openai_api_key: str = "",
     openai_model: str = "gpt-4.1-mini",
     anthropic_api_key: str = "",

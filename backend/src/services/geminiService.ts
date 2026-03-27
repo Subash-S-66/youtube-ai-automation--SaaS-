@@ -116,7 +116,7 @@ export const generateGeminiPromptDirect = async (user_prompt: string): Promise<s
     const genAI = new GoogleGenerativeAI(apiKey);
 
     const model = genAI.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-3.1-flash-preview',
       systemInstruction: SYSTEM_PROMPT,
     });
 
