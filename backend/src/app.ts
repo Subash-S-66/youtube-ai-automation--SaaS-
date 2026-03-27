@@ -104,6 +104,7 @@ import { doubleCsrfProtection, generateToken, csrfErrorHandler } from './middlew
 
 // We do NOT apply CSRF to webhook routes
 app.use('/api/payment/webhook', express.raw({ type: 'application/json', limit: '2mb' }), webhookHandler);
+app.use('/api/webhook', webhookRoutes);
 
 // Endpoint to fetch CSRF token for the frontend
 app.get('/api/csrf-token', (req: Request, res: Response) => {
@@ -131,7 +132,6 @@ app.use('/api/user', userRoutes);
 app.use('/api/banner', bannerRoutes);
 app.use('/api/schedules', scheduleRoutes);
 app.use('/api/media', mediaRoutes);
-app.use('/api/webhook', webhookRoutes);
 app.use('/api/plans', planRoutes);
 
 import path from 'path';

@@ -72,6 +72,11 @@ GEMINI_AUDIO_ONLY = os.getenv("GEMINI_AUDIO_ONLY", "false").strip().lower() in {
     "true",
     "yes",
 }
+FORCE_GOOGLE_AUDIO_ONLY = os.getenv("FORCE_GOOGLE_AUDIO_ONLY", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 
 def _probe_media_duration(output_path: Path) -> float:
@@ -652,8 +657,10 @@ def generate_voice(
     else:
         LOGGER.info("Skipping Gemini Audio (GEMINI_AUDIO_ENABLED=false).")
 
-    if GEMINI_AUDIO_ONLY:
-        raise RuntimeError(f"Gemini Audio failed and GEMINI_AUDIO_ONLY=true: {gemini_error or 'no audio generated'}")
+    if FORCE_GOOGLE_AUDIO_ONLY or GEMINI_AUDIO_ONLY:
+        raise RuntimeError(
+            f"Google/Gemini audio failed (Edge fallback disabled): {gemini_error or 'no audio generated'}"
+        )
 
     # --- Stage 2: Try Edge TTS with multiple voices (Fallback) ---
     if _EDGE_TTS_DISABLED_REASON:
@@ -696,6 +703,8 @@ def generate_voice(
                     time.sleep(max(0.0, EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS))
 
     # --- Stage 3: Optional silent fallback ---
+    if FORCE_GOOGLE_AUDIO_ONLY:
+        raise RuntimeError("Google/Gemini audio failed and FORCE_GOOGLE_AUDIO_ONLY=true.")
     if ALLOW_SILENT_AUDIO_FALLBACK:
         estimated_duration = _estimate_duration_seconds(clean_script)
         LOGGER.warning(

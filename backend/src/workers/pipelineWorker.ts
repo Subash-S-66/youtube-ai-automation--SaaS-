@@ -633,6 +633,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         }
         if (!result.success) {
           const err: any = new Error(`Local pipeline process failed with exit code ${result.exitCode ?? 'unknown'}`);
+          err.stderrTail = stderrTail;
+          err.stdoutTail = stdoutTail;
           err.stage = 'RENDER';
           throw err;
         }
@@ -904,8 +906,12 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         Sentry.captureException(error, { extra: { jobId, userId } });
       }
 
-      const errorMsg = `\nWorker Error: ${error.message}`;
-      await appendLogSafe(jobId, errorMsg);
+      const errorDetailParts = [
+        typeof error?.stderrTail === 'string' && error.stderrTail ? `[stderr-tail]\n${error.stderrTail}` : '',
+        typeof error?.stdoutTail === 'string' && error.stdoutTail ? `[stdout-tail]\n${error.stdoutTail}` : '',
+      ].filter(Boolean);
+      const errorMsg = `\nWorker Error: ${error.message}${errorDetailParts.length ? `\n${errorDetailParts.join('\n')}` : ''}`;
+      await appendLogSafe(jobId, errorMsg, 'failed');
 
       // Gracefully handle failure and credit release atomically
       const updatedJob = await JobModel.findOneAndUpdate(
@@ -924,6 +930,23 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       );
       if (updatedJob && !updatedJob.holdConsumed) {
          await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+      }
+      if (!updatedJob) {
+        await JobModel.updateOne(
+          { _id: jobId },
+          {
+            $set: {
+              status: 'failed',
+              completedAt: new Date(),
+              holdReleased: true,
+              error: error.message,
+              errorMessage: error.message,
+              errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
+            },
+          }
+        ).catch((dbErr) => {
+          console.error(`[PipelineWorker] Failed to force-update failed state for job ${jobId}:`, dbErr);
+        });
       }
 
       if (error?.stage === 'TOKEN') {
