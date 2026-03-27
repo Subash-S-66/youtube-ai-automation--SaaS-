@@ -381,7 +381,7 @@ export const enqueuePipelineJob = async ({
   const count = finalSettings.videoCount || 1;
   const jobTimeoutMinutes = 10 + (count - 1) * 5;
   const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
-  const queueJobId = `${userId}-${promptId}`;
+  const queueJobId = `${userId}-${promptId}-${Date.now()}`;
 
   await pipelineQueue.add(
     'runPipeline',

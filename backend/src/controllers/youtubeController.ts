@@ -221,6 +221,21 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
        });
     }
 
+    // Cleanup stale/orphan invalid channels after successful auth/reconnect.
+    // These are usually generic placeholders left from interrupted OAuth flows.
+    const hasAnyValidChannel = user.youtubeChannels.some((c: any) => c?.isValid !== false);
+    if (hasAnyValidChannel) {
+      user.youtubeChannels = user.youtubeChannels.filter((channel: any) => {
+        const isInvalid = channel?.isValid === false;
+        const name = String(channel?.channelName || '').trim();
+        const hasRefresh = Boolean(channel?.tokens?.refresh_token);
+        const hasAccess = Boolean(channel?.tokens?.access_token);
+        const isPlaceholderName = !name || name.toLowerCase() === 'youtube channel';
+        const isOrphanInvalid = isInvalid && isPlaceholderName && !hasRefresh && !hasAccess;
+        return !isOrphanInvalid;
+      });
+    }
+
     user.isYoutubeConnected = true;
 
     user.markModified('youtubeChannels');

@@ -107,6 +107,12 @@ function Dashboard() {
   const activeYouTubeChannels = allYouTubeChannels.filter((channel: any) => channel?.status !== 'disabled_due_to_plan');
   const validYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid !== false);
   const invalidYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid === false);
+  const selectedChannelInvalid = selectedChannelId
+    ? invalidYouTubeChannels.some((channel: any) => channel?.channelId === selectedChannelId)
+    : false;
+  const reconnectChannelsToShow = selectedChannelInvalid
+    ? invalidYouTubeChannels.filter((channel: any) => channel?.channelId === selectedChannelId)
+    : (validYouTubeChannels.length === 0 ? invalidYouTubeChannels : []);
 
   useEffect(() => {
     if (searchParams.get('payment') === 'success') {
@@ -487,18 +493,19 @@ function Dashboard() {
     }
 
     if (!selectedChannelId || validYouTubeChannels.length === 0) {
+      const reconnectTarget = reconnectChannelsToShow[0]?.channelId || '';
       setModalConfig({
         isOpen: true,
         title: 'Valid Channel Required',
-        description: invalidYouTubeChannels.length > 0
+        description: reconnectTarget
           ? 'Your connected channel token is expired. Reconnect that channel before starting generation.'
           : 'Please select a connected YouTube channel first.',
         type: 'error',
-        confirmText: invalidYouTubeChannels.length > 0 ? 'Reconnect' : 'Close',
+        confirmText: reconnectTarget ? 'Reconnect' : 'Close',
         onConfirm: () => {
           setModalConfig(prev => ({ ...prev, isOpen: false }));
-          if (invalidYouTubeChannels.length > 0) {
-            handleReconnectChannel(invalidYouTubeChannels[0].channelId);
+          if (reconnectTarget) {
+            handleReconnectChannel(reconnectTarget);
           }
         },
         cancelText: 'Cancel',
@@ -596,7 +603,14 @@ function Dashboard() {
       }
 
       const promptRes = await promptService.generatePrompt(finalPrompt);
-      const promptId = promptRes.data.id;
+      const promptId =
+        promptRes?.promptId ||
+        promptRes?.data?.promptId ||
+        promptRes?.data?.id ||
+        '';
+      if (!promptId) {
+        throw new Error('Prompt generation response is missing promptId');
+      }
 
       // Determine final voice(s) selected
       let finalVoices = selectedVoices;
@@ -604,7 +618,12 @@ function Dashboard() {
         finalVoices = [AVAILABLE_VOICES[Math.floor(Math.random() * AVAILABLE_VOICES.length)].id];
       }
 
-      await executePipeline(promptId, false, promptRes.data?.gemini_prompt, currentStoryId);
+      await executePipeline(
+        promptId,
+        false,
+        promptRes?.gemini_prompt || promptRes?.data?.gemini_prompt,
+        currentStoryId
+      );
     } catch (err: any) {
       console.error(err);
       if (err.response?.data?.warning) {
@@ -633,7 +652,7 @@ function Dashboard() {
      const errorMsg = err.response?.data?.message || err.message || 'An unknown error occurred.';
 
      if (errorMsg.includes('youtube_token_expired') || errorMsg.includes('YouTube channel is not connected or token is invalid')) {
-         const reconnectTarget = selectedChannelId || invalidYouTubeChannels[0]?.channelId || '';
+         const reconnectTarget = reconnectChannelsToShow[0]?.channelId || selectedChannelId || invalidYouTubeChannels[0]?.channelId || '';
          setModalConfig({
              isOpen: true,
              title: 'YouTube Reconnect Required',
@@ -1547,11 +1566,11 @@ function Dashboard() {
                       </select>
                     </div>
                   )}
-                  {user?.isYoutubeConnected && invalidYouTubeChannels.length > 0 && (
+                  {user?.isYoutubeConnected && reconnectChannelsToShow.length > 0 && (
                     <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
                       <p className="text-xs font-semibold text-red-300 mb-2">Reconnect Required</p>
                       <div className="space-y-2">
-                        {invalidYouTubeChannels.map((channel: any) => (
+                        {reconnectChannelsToShow.map((channel: any) => (
                           <div key={channel.channelId} className="flex items-center justify-between gap-2">
                             <span className="text-xs text-slate-300 truncate">{channel.channelName}</span>
                             <button

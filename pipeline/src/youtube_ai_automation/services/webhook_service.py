@@ -20,23 +20,21 @@ def _normalize_webhook_candidates(webhook_url: str) -> list[str]:
 
 
 def send_with_retry(url: str, payload: dict, headers: dict) -> None:
-    last_error: Exception | None = None
     for attempt in range(3):
         try:
             response = requests.post(
                 url,
                 json=payload,
                 headers=headers,
-                timeout=10
+                timeout=5
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                raise Exception(f"Webhook failed: {response.status_code}")
             return
         except Exception as exc:
-            last_error = exc
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            raise
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
 
 def send_job_status(
     job_id: str,

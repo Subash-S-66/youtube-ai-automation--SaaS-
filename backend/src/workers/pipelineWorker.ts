@@ -1075,6 +1075,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
   {
     connection: connection as any, // Cast to any to bypass strict type matching
     concurrency: 5, // Limit concurrency to 5 jobs at a time to improve performance
+    lockDuration: 60000,
+    stalledInterval: 30000,
+    maxStalledCount: 2,
   }
 );
 
@@ -1084,6 +1087,10 @@ pipelineWorker.on('completed', (job) => {
 
 pipelineWorker.on('failed', (job, err) => {
   console.error(`[PipelineWorker] Job ${job?.id} has failed in BullMQ with error: ${err.message}`, err);
+});
+
+pipelineWorker.on('stalled', (jobId) => {
+  console.warn(`[PipelineWorker] Job stalled and will be retried: ${jobId}`);
 });
 
 // Graceful Shutdown
