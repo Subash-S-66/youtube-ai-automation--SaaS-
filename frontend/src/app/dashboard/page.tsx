@@ -292,27 +292,6 @@ function Dashboard() {
       }
       return;
     }
-
-    if (!selectedChannelId) {
-      setModalConfig({
-        isOpen: true,
-        title: 'Valid Channel Required',
-        description: invalidYouTubeChannels.length > 0
-          ? 'Your connected channel token is expired. Reconnect that channel before starting generation.'
-          : 'Please select a connected YouTube channel first.',
-        type: 'error',
-        confirmText: invalidYouTubeChannels.length > 0 ? 'Reconnect' : 'Close',
-        onConfirm: () => {
-          setModalConfig(prev => ({ ...prev, isOpen: false }));
-          if (invalidYouTubeChannels.length > 0) {
-            handleReconnectChannel(invalidYouTubeChannels[0].channelId);
-          }
-        },
-        cancelText: 'Cancel',
-        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
-      });
-      return;
-    }
     if (validYouTubeChannels.length === 0) {
       if (selectedChannelId) {
         setSelectedChannelId('');
@@ -466,6 +445,11 @@ function Dashboard() {
 
   const handleGenerateAndRun = async (e: React.FormEvent) => {
     e.preventDefault();
+    const submitEvent = e.nativeEvent as SubmitEvent;
+    const submitter = submitEvent?.submitter as HTMLButtonElement | null;
+    if (submitter && submitter.id !== 'generate-pipeline-btn') {
+      return;
+    }
 
     // Prevent double entry
     if (generating) return;
@@ -480,6 +464,27 @@ function Dashboard() {
         onConfirm: () => {
           setModalConfig(prev => ({ ...prev, isOpen: false }));
           handleConnectYouTube();
+        },
+        cancelText: 'Cancel',
+        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+      });
+      return;
+    }
+
+    if (!selectedChannelId || validYouTubeChannels.length === 0) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Valid Channel Required',
+        description: invalidYouTubeChannels.length > 0
+          ? 'Your connected channel token is expired. Reconnect that channel before starting generation.'
+          : 'Please select a connected YouTube channel first.',
+        type: 'error',
+        confirmText: invalidYouTubeChannels.length > 0 ? 'Reconnect' : 'Close',
+        onConfirm: () => {
+          setModalConfig(prev => ({ ...prev, isOpen: false }));
+          if (invalidYouTubeChannels.length > 0) {
+            handleReconnectChannel(invalidYouTubeChannels[0].channelId);
+          }
         },
         cancelText: 'Cancel',
         onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
@@ -1087,11 +1092,11 @@ function Dashboard() {
                       )}
                     <div className="mt-2 sm:hidden">
                       {!user?.isYoutubeConnected ? (
-                        <button onClick={handleConnectYouTube} className="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-semibold py-2 rounded-lg border border-white/10 transition-colors">
+                        <button type="button" onClick={handleConnectYouTube} className="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-semibold py-2 rounded-lg border border-white/10 transition-colors">
                           Connect YouTube
                         </button>
                       ) : (
-                        <button onClick={handleConnectYouTube} className="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-semibold py-2 rounded-lg border border-white/10 transition-colors">
+                        <button type="button" onClick={handleConnectYouTube} className="w-full text-xs bg-white/5 hover:bg-white/10 text-white font-semibold py-2 rounded-lg border border-white/10 transition-colors">
                           Add Channel
                         </button>
                       )}
@@ -1460,10 +1465,11 @@ function Dashboard() {
                   </div>
 
                 <m.button
+                  id="generate-pipeline-btn"
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.99 }}
                   type="submit"
-                  disabled={generating || !user?.isYoutubeConnected || !selectedChannelId || validYouTubeChannels.length === 0}
+                  disabled={generating || !user?.isYoutubeConnected}
                   className="w-full py-4 px-4 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-lg tracking-wide border border-white/20"
                 >
                 {generating ? (
