@@ -100,11 +100,12 @@ from youtube_ai_automation.topic_selector import choose_topic
 from youtube_ai_automation.topic_filter import mark_topic_as_used, select_best_unused_topic, filter_unused_topics
 from youtube_ai_automation.trend_engine import get_trending_topics
 from youtube_ai_automation.news_fetcher import get_latest_news
-from youtube_ai_automation.video_creator import create_subtitles_from_script
+from youtube_ai_automation.video_creator import create_subtitles_from_script, render_vertical_video
 from youtube_ai_automation.video_fetcher import download_scene_videos
 from youtube_ai_automation.viral_pattern_engine import ViralPatternScore, estimate_viral_probability
 from youtube_ai_automation.voice_generator import generate_voice, pick_voice_profile
 from youtube_ai_automation.youtube_uploader import SHORTS_MAX_DURATION_SECONDS, upload_video
+from youtube_ai_automation.services.webhook_service import send_pipeline_complete
 from youtube_ai_automation.duration_controller import (
     allocate_section_budget,
     adjust_script_to_duration,
@@ -996,8 +997,15 @@ def _normalize_script_from_payload(script_items: list[object]) -> str:
     return " ".join(lines)
 
 
-def _extract_target_duration(video_config: dict) -> int:
-    raw = video_config.get("targetDuration", video_config.get("duration", 60))
+def _extract_target_duration(video_config: dict, payload: dict | None = None) -> int:
+    payload = payload or {}
+    raw = video_config.get(
+        "targetDuration",
+        video_config.get(
+            "duration",
+            payload.get("targetDuration", payload.get("duration", 60)),
+        ),
+    )
     try:
         target = int(raw)
     except Exception:
@@ -1168,6 +1176,7 @@ def _resize_main_content_to_total_words(
     sections: dict[str, str],
     target_total_words: int,
     min_main_words: int = 20,
+    allow_expand: bool = True,
 ) -> str:
     non_main = " ".join(
         p for p in [sections.get("hook", ""), sections.get("recap", ""), sections.get("cta", "")]
@@ -1183,7 +1192,7 @@ def _resize_main_content_to_total_words(
         if trimmed and trimmed[-1] not in ".!?":
             trimmed += "."
         sections["main_content"] = trimmed
-    elif len(main_words) < target_main_words:
+    elif allow_expand and len(main_words) < target_main_words:
         sections["main_content"] = expand_meaningfully(main_text, target_main_words - len(main_words))
 
     return _assemble_sections_script(sections)
@@ -1252,6 +1261,7 @@ def run_prepared_pipeline(
     upload: bool,
     publish_at: str | None,
     count: int,
+    notify_webhook: bool = True,
 ) -> list[Path]:
     # Production prepared mode: deterministic timing + Google audio only.
     # Video stitching/upload side-effects are intentionally disabled in this mode.
@@ -1273,9 +1283,10 @@ def run_prepared_pipeline(
     if not isinstance(video_config.get("customImageUrls", []), list):
         raise ValueError("videoConfig.customImageUrls must be an array when provided.")
 
-    target_duration = _extract_target_duration(video_config)
+    target_duration = _extract_target_duration(video_config, payload)
+    hard_max_words = int(min(60, target_duration) * 2.5)
     # Hard cap early so oversized generated scripts don't start at ~70s for a 60s request.
-    script_text = _enforce_word_cap(script_text, int(min(60, target_duration) * 2.5))
+    script_text = _enforce_word_cap(script_text, hard_max_words)
     cta_enabled = bool(video_config.get("ctaEnabled", video_config.get("enableCTA", False)))
     recap_enabled = bool(video_config.get("recapEnabled", False))
     story_mode = bool(video_config.get("storyMode", False))
@@ -1311,13 +1322,12 @@ def run_prepared_pipeline(
             current_part=current_part,
             last_prompt=last_prompt,
         )
-        ordered_parts = [
-            section_scripts["hook"],
-            section_scripts["main_content"],
-            section_scripts["recap"],
-            section_scripts["cta"],
-        ]
-        full_script = " ".join(p for p in ordered_parts if p).strip()
+        full_script = _resize_main_content_to_total_words(
+            section_scripts,
+            hard_max_words,
+            min_main_words=max(12, int(target_duration * 1.5)),
+            allow_expand=False,
+        )
         if full_script:
             last_valid_script = full_script
         estimated = estimate_script_duration_seconds(full_script)
@@ -1344,14 +1354,12 @@ def run_prepared_pipeline(
                 section_scripts["main_content"],
                 max(8, extra_words),
             )
-            full_script = " ".join(
-                p for p in [
-                    section_scripts["hook"],
-                    section_scripts["main_content"],
-                    section_scripts["recap"],
-                    section_scripts["cta"],
-                ] if p
-            ).strip()
+            full_script = _resize_main_content_to_total_words(
+                section_scripts,
+                hard_max_words,
+                min_main_words=max(12, int(target_duration * 1.5)),
+                allow_expand=False,
+            )
             estimated = estimate_script_duration_seconds(full_script)
 
         if estimated > upper_bound:
@@ -1364,7 +1372,7 @@ def run_prepared_pipeline(
             if full_script and not full_script.endswith("."):
                 full_script += "."
 
-        best_script = full_script
+        best_script = _enforce_word_cap(full_script, hard_max_words)
         best_sections = section_scripts
         best_section_budget = section_budget
 
@@ -1415,7 +1423,7 @@ def run_prepared_pipeline(
             ] if p
         ).strip()
 
-    hard_cap_words = int(60 * 2.5)
+    hard_cap_words = hard_max_words
     words = best_script.split()
     if len(words) > hard_cap_words:
         best_script = " ".join(words[:hard_cap_words])
@@ -1443,35 +1451,11 @@ def run_prepared_pipeline(
     actual_audio_seconds = 0.0
     audio_retry_count = 0
     audio_failed = False
-    max_words = int(min(60, target_duration) * 2.5)
+    max_words = hard_max_words
     try:
-        # Stable strategy: generate once from bounded script.
-        best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
-        full_audio_path, _ = generate_voice(
-            script=best_package["script"],
-            voice=voice_name,
-            rate=voice_rate,
-            output_path=(output_dir / "voice_full.wav"),
-            rotate_profile=False,
-        )
-        actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
-        if actual_audio_seconds <= 0:
-            actual_audio_seconds = estimate_audio_duration(best_package["script"])
-            LOGGER.warning(
-                "Unable to measure generated audio duration; using estimated duration %.2fs",
-                actual_audio_seconds,
-            )
-        LOGGER.info(
-            "audio_attempt=%s actual=%.2fs target=%ss drift=%.2fs",
-            1,
-            actual_audio_seconds,
-            target_duration,
-            actual_audio_seconds - target_duration,
-        )
-
-        # Single corrective pass only if hard cap exceeded.
-        if actual_audio_seconds > 60:
-            audio_retry_count = 1
+        min_words = max(20, int(max(10, target_duration - 5) * 2.5))
+        max_words_for_target = int(min(60, target_duration + 5) * 2.5)
+        for attempt in range(1, 4):
             best_package["script"] = _enforce_word_cap(best_package["script"], int(60 * 2.5))
             full_audio_path, _ = generate_voice(
                 script=best_package["script"],
@@ -1480,14 +1464,43 @@ def run_prepared_pipeline(
                 output_path=(output_dir / "voice_full.wav"),
                 rotate_profile=False,
             )
-            actual_audio_seconds = get_audio_duration_seconds(full_audio_path) or estimate_audio_duration(best_package["script"])
+            actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
+            if actual_audio_seconds <= 0:
+                actual_audio_seconds = estimate_audio_duration(best_package["script"])
             LOGGER.info(
                 "audio_attempt=%s actual=%.2fs target=%ss drift=%.2fs",
-                2,
+                attempt,
                 actual_audio_seconds,
                 target_duration,
                 actual_audio_seconds - target_duration,
             )
+            drift = actual_audio_seconds - target_duration
+            if abs(drift) <= 3:
+                audio_retry_count = max(0, attempt - 1)
+                break
+
+            current_words = max(1, len(best_package["script"].split()))
+            target_words = int(current_words * (target_duration / max(1.0, actual_audio_seconds)))
+            target_words = max(min_words, min(max_words_for_target, target_words))
+
+            if actual_audio_seconds > target_duration:
+                best_package["script"] = _enforce_word_cap(best_package["script"], target_words)
+                best_package["sections"]["main_content"] = _enforce_word_cap(
+                    best_package["sections"].get("main_content", ""),
+                    max(10, target_words - len(" ".join([
+                        best_package["sections"].get("hook", ""),
+                        best_package["sections"].get("recap", ""),
+                        best_package["sections"].get("cta", ""),
+                    ]).split())),
+                )
+            else:
+                best_package["script"] = _resize_main_content_to_total_words(
+                    best_package["sections"],
+                    target_words,
+                    min_main_words=max(12, int(target_duration * 1.5)),
+                    allow_expand=True,
+                )
+            audio_retry_count = attempt
     except Exception as exc:
         audio_failed = True
         last_errors.append(f"audio_fallback:{str(exc)[:120]}")
@@ -1520,18 +1533,6 @@ def run_prepared_pipeline(
 
     # Final hard guard: never return >60s practical script size.
     best_package["script"] = _enforce_word_cap(best_package["script"], int(60 * 2.5))
-    timed_lines = build_timed_lines(best_package["script"])
-    subtitle_file = create_subtitles_from_script(
-        script=best_package["script"],
-        estimated_duration_seconds=estimated_duration,
-        subtitle_path=SUBTITLE_PATH,
-        max_words=4,
-        highlight_words=_extract_highlight_words(topic, best_package["sections"].get("hook", "")),
-        line_mode=True,
-        font_style=font_style,
-        subtitle_color=subtitle_color,
-    )
-
     final_duration_seconds = float(actual_audio_seconds or estimated_duration)
     valid, errors = validate_output(
         # Validate against final rendered clip duration to avoid false drift failures.
@@ -1569,11 +1570,25 @@ def run_prepared_pipeline(
                 best_package["sections"].get("cta", ""),
             ] if p
         ).strip()
+        best_package["script"] = _enforce_word_cap(best_package["script"], hard_max_words)
         ending_ok = True
+        errors = [err for err in errors if str(err) not in {"abrupt_ending"}]
     if ending_error:
         errors.append(f"ending:{ending_error}")
     # Prepared mode: treat duration drift as informational, not fatal.
     errors = [err for err in errors if not str(err).startswith("duration_out_of_range:")]
+
+    timed_lines = build_timed_lines(best_package["script"])
+    subtitle_file = create_subtitles_from_script(
+        script=best_package["script"],
+        estimated_duration_seconds=estimated_duration,
+        subtitle_path=SUBTITLE_PATH,
+        max_words=4,
+        highlight_words=_extract_highlight_words(topic, best_package["sections"].get("hook", "")),
+        line_mode=True,
+        font_style=font_style,
+        subtitle_color=subtitle_color,
+    )
 
     sectionAudio = {
         "full": str(full_audio_path) if full_audio_path is not None else "",
@@ -1631,8 +1646,134 @@ def run_prepared_pipeline(
     result_file = output_dir / "prepared_result.json"
     result_file.write_text(json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"PIPELINE_OUTPUT_JSON:{json.dumps(result_payload, ensure_ascii=False)}")
+    if notify_webhook:
+        try:
+            send_pipeline_complete({
+                "jobId": str(payload.get("jobId", "") or payload.get("job_id", "")).strip(),
+                "status": "completed",
+                "result": result_payload,
+            })
+        except Exception as exc:
+            LOGGER.warning("Failed to send pipeline-complete webhook: %s", str(exc)[:240])
     LOGGER.info("Prepared deterministic payload written to %s", result_file)
     return created
+
+
+def _load_prepared_result_payload(delete_after_read: bool = False) -> dict:
+    result_file = AUDIO_PATH.parent / "prepared_result.json"
+    if not result_file.exists():
+        raise RuntimeError("Prepared result payload missing after generation.")
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    if delete_after_read:
+        try:
+            result_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return payload
+
+
+def _collect_media_paths_for_full_mode(payload: dict, target_dir: Path) -> list[Path]:
+    video_config = payload.get("videoConfig", {}) if isinstance(payload, dict) else {}
+    custom_video_urls = video_config.get("customVideoUrls", []) if isinstance(video_config, dict) else []
+    custom_image_urls = video_config.get("customImageUrls", []) if isinstance(video_config, dict) else []
+    media_urls: list[str] = []
+    if isinstance(custom_video_urls, list):
+        media_urls.extend([str(x).strip() for x in custom_video_urls if str(x).strip()])
+    if isinstance(custom_image_urls, list):
+        media_urls.extend([str(x).strip() for x in custom_image_urls if str(x).strip()])
+    return _download_custom_media(media_urls, target_dir)
+
+
+def run_full_pipeline(
+    payload: dict,
+    upload: bool,
+    publish_at: str | None,
+    count: int,
+) -> list[Path]:
+    if not isinstance(payload, dict):
+        raise ValueError("PIPELINE_PAYLOAD must be an object for full mode.")
+
+    strict_validation_attempts = 3
+    prepared_payload: dict = {}
+    last_validation_error = ""
+    for attempt in range(1, strict_validation_attempts + 1):
+        run_prepared_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count, notify_webhook=False)
+        prepared_payload = _load_prepared_result_payload(delete_after_read=True)
+        validation_errors = prepared_payload.get("validationErrors", [])
+        if not isinstance(validation_errors, list):
+            validation_errors = []
+        blocking = [
+            str(err) for err in validation_errors
+            if str(err).startswith("ending:") or str(err) in {"abrupt_ending", "missing_cta", "missing_recap", "empty_script"}
+        ]
+        if not blocking:
+            break
+        last_validation_error = ", ".join(blocking)
+        LOGGER.warning(
+            json.dumps(
+                {"event": "validation_retry", "attempt": attempt, "blocking_errors": blocking},
+                ensure_ascii=False,
+            )
+        )
+        if attempt == strict_validation_attempts:
+            raise RuntimeError(f"Strict validation failed after retries: {last_validation_error}")
+
+    output_dir = AUDIO_PATH.parent
+    target_duration = float(prepared_payload.get("duration_actual") or prepared_payload.get("duration") or 0.0)
+    audio_path = Path(str(prepared_payload.get("audio_path", "")).strip())
+    subtitle_path = Path(str(prepared_payload.get("subtitle_path", "")).strip()) if prepared_payload.get("subtitle_path") else None
+    if not audio_path.exists():
+        raise RuntimeError("Full mode cannot continue: audio file missing.")
+
+    media_dir = output_dir / "media_full"
+    media_paths = _collect_media_paths_for_full_mode(payload, media_dir)
+    output_video_path = output_dir / "final_full.mp4"
+    render_vertical_video(
+        media_paths=media_paths,
+        audio_path=audio_path,
+        subtitle_path=subtitle_path,
+        output_path=output_video_path,
+        target_duration_seconds=max(1.0, target_duration),
+    )
+
+    youtube_cfg = payload.get("youtube", {}) if isinstance(payload.get("youtube"), dict) else {}
+    upload_requested = bool(upload)
+    uploaded_video_id = ""
+    uploaded_video_url = ""
+    if upload_requested:
+        upload_result = upload_video(
+            video_path=output_video_path,
+            title=str(youtube_cfg.get("title", "Untitled Short")).strip()[:100] or "Untitled Short",
+            description=str(youtube_cfg.get("description", "")).strip(),
+            tags=[str(x).strip() for x in (youtube_cfg.get("hashtags") or []) if str(x).strip()],
+            privacy_status="public",
+            client_secret_file=str(YOUTUBE_CLIENT_SECRET_FILE),
+            scopes=YOUTUBE_SCOPES,
+            token_path=TOKEN_PATH,
+            publish_at=publish_at,
+            validate_shorts=False,
+            strict_shorts_validation=False,
+        )
+        uploaded_video_id = str(upload_result.get("id", "")).strip()
+        if uploaded_video_id:
+            uploaded_video_url = f"https://www.youtube.com/watch?v={uploaded_video_id}"
+
+    final_payload = {
+        "jobId": str(payload.get("jobId", "") or payload.get("job_id", "")).strip(),
+        "status": "completed",
+        "result": {
+            **prepared_payload,
+            "mode": "full",
+            "video_path": str(output_video_path),
+            "uploadRequested": upload_requested,
+            "uploadSkipped": not upload_requested,
+            "youtubeVideoId": uploaded_video_id,
+            "videoUrl": uploaded_video_url,
+        },
+    }
+    send_pipeline_complete(final_payload)
+    LOGGER.info(json.dumps({"event": "full_mode_complete", "videoPath": str(output_video_path), "uploaded": bool(uploaded_video_id)}, ensure_ascii=False))
+    return [output_video_path]
 
 
 def run_news_pipeline(
@@ -1710,16 +1851,14 @@ def main() -> None:
     cleaned = run_mode_raw.strip().strip('"').strip("'").lower()
     token = cleaned.replace(",", " ").split()[0] if cleaned else ""
     run_mode = {"execution": "prepared"}.get(token, token)
-    if run_mode != "prepared":
+    if run_mode not in {"prepared", "full"}:
         raise SystemExit(
-            f"Pipeline supports only prepared mode "
+            f"Pipeline supports only prepared/full mode "
             f"(RUN_MODE raw={run_mode_raw!r}, normalized={run_mode!r})"
         )
-    raise SystemExit("Use azure_job_runner for prepared execution.")
+    raise SystemExit("Use azure_job_runner for execution.")
 
 
 if __name__ == "__main__":
     main()
-
-
-
+    LOGGER.info(json.dumps({"event": "full_mode_start", "uploadRequested": bool(upload)}, ensure_ascii=False))

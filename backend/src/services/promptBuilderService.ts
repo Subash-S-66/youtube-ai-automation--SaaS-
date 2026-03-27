@@ -11,6 +11,17 @@ export interface PromptBuilderInput {
 
 const clean = (value: unknown): string => String(value ?? '').trim();
 
+export const extractTopicValue = (value: unknown): string => {
+  const raw = clean(value);
+  if (!raw) return '';
+  const normalized = raw
+    .replace(/^create\s+a?\s*viral\s+short-?form\s+video\s+about\s+the\s+topic\s*:\s*/i, '')
+    .replace(/^create\s+a?\s*viral\s+short-?form\s+video\s+script\s+about\s*:\s*/i, '')
+    .replace(/^topic\s*:\s*/i, '')
+    .trim();
+  return normalized || raw;
+};
+
 export const buildStandardPrompt = (input: PromptBuilderInput): string => {
   const normalizedPrompt = clean(input.prompt);
   const normalizedTitle = clean(input.title);
@@ -19,7 +30,7 @@ export const buildStandardPrompt = (input: PromptBuilderInput): string => {
     throw new AppError('At least one of title or prompt is required.', 400);
   }
 
-  const chosenTopic = normalizedPrompt || normalizedTitle;
+  const chosenTopic = extractTopicValue(normalizedPrompt || normalizedTitle);
   const normalizedVideoSize = clean(input.videoSize) || '9:16';
   const normalizedStyle = clean(input.style) || clean(input.tone) || 'viral/engaging';
   const durationLine = typeof input.duration === 'number' && Number.isFinite(input.duration)

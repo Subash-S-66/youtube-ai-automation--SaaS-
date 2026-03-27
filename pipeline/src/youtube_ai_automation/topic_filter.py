@@ -66,11 +66,10 @@ def _is_similar_to_used(candidate: str, used_topics: set[str], raw_used: list[st
     return False
 
 
-import os
 from .topic_tracker import TopicTracker
 
 def _read_used_topics(path: Path = USED_TOPICS_FILE) -> list[UsedTopicEntry]:
-    tracker = TopicTracker(os.getenv("MONGO_URI"))
+    tracker = TopicTracker()
     if tracker.collection is not None:
         try:
             records = tracker.get_all_topics()
@@ -100,7 +99,7 @@ def _read_used_topics(path: Path = USED_TOPICS_FILE) -> list[UsedTopicEntry]:
 
 
 def _write_used_topics(entries: list[UsedTopicEntry], path: Path = USED_TOPICS_FILE) -> None:
-    tracker = TopicTracker(os.getenv("MONGO_URI"))
+    tracker = TopicTracker()
     if tracker.collection is not None:
         for entry in entries[-500:]:
              tracker.mark_topic_used(entry.topic)

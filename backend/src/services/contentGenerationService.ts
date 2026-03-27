@@ -1,5 +1,6 @@
 import { AppError } from '../middleware/errorHandler';
 import { generateFromAI } from './aiGenerationService';
+import { extractTopicValue } from './promptBuilderService';
 
 export interface ContentGenerationInput {
   topic: string;
@@ -361,7 +362,7 @@ const deterministicFallback = (
 };
 
 export const generateContent = async (input: ContentGenerationInput): Promise<ContentGenerationResult> => {
-  const topic = clean(input.topic);
+  const topic = extractTopicValue(input.topic);
   if (!topic) {
     throw new AppError('Topic is required for content generation.', 400);
   }

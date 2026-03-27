@@ -548,6 +548,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       });
 
       const pipelinePayload = sanitizePayloadValue({
+        jobId,
+        mode: String((settings as any)?.mode || (settings as any)?.executionMode || process.env.PIPELINE_DEFAULT_MODE || 'full')
+          .trim()
+          .toLowerCase() === 'prepared'
+          ? 'prepared'
+          : 'full',
         script: payloadScript,
         captions: payloadCaptions.length > 0 ? payloadCaptions : fallbackCaptions,
         videoConfig: payloadVideoConfig,
@@ -666,10 +672,15 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       const encryptedYoutubeToken = youtubeToken ? encrypt(youtubeToken) : '';
 
       // Setup payload configuring environment variables for the container run
+      const runtimeMode = String((settings as any)?.mode || (settings as any)?.executionMode || process.env.PIPELINE_DEFAULT_MODE || 'full')
+        .trim()
+        .toLowerCase() === 'prepared'
+        ? 'prepared'
+        : 'full';
       const envVars = [
         { name: "USER_ID", value: userId },
         { name: "PIPELINE_PAYLOAD", value: JSON.stringify(pipelinePayload) },
-        { name: "RUN_MODE", value: "prepared" },
+        { name: "RUN_MODE", value: runtimeMode },
         { name: "YOUTUBE_TOKEN_ENCRYPTED", value: encryptedYoutubeToken },
         { name: "ENCRYPTION_KEY", value: process.env.ENCRYPTION_KEY || "" },
         { name: "UPLOAD", value: requiresUpload ? "true" : "false" },
@@ -682,7 +693,6 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "FORCE_GOOGLE_AUDIO_ONLY", value: "true" },
         { name: "GEMINI_AUDIO_MODEL", value: process.env.GEMINI_AUDIO_MODEL || "gemini-2.5-flash-native-audio-latest" },
         { name: "ALLOW_SILENT_AUDIO_FALLBACK", value: "false" },
-        { name: "MONGO_URI", value: process.env.MONGO_URI || "" },
         { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },
         { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
       ];

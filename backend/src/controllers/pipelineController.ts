@@ -5,7 +5,7 @@ import { RunPipelineInput } from '../utils/validators/pipelineValidators';
 import { enqueuePipelineJob } from '../services/pipelineRunService';
 import Job from '../models/Job';
 import Prompt from '../models/Prompt';
-import { buildStandardPrompt } from '../services/promptBuilderService';
+import { buildStandardPrompt, extractTopicValue } from '../services/promptBuilderService';
 
 // @desc    Get user's jobs
 // @route   GET /api/pipeline/jobs
@@ -73,7 +73,7 @@ export const startPipeline = asyncHandler(
 
       const createdPrompt = await Prompt.create({
         userId,
-        user_prompt: standardizedPrompt,
+        user_prompt: extractTopicValue(prompt || title || standardizedPrompt),
         gemini_prompt: standardizedPrompt,
       });
       resolvedPromptId = createdPrompt._id.toString();

@@ -5,6 +5,7 @@ import time
 
 LOGGER = logging.getLogger("webhook_service")
 _JOB_STATUS_PATH = "/api/webhook/job-status"
+_PIPELINE_COMPLETE_PATH = "/api/webhook/pipeline-complete"
 
 
 def _normalize_webhook_candidates(webhook_url: str) -> list[str]:
@@ -35,6 +36,18 @@ def send_with_retry(url: str, payload: dict, headers: dict) -> None:
             if attempt == 2:
                 raise
             time.sleep(2 ** attempt)
+
+
+def _normalize_pipeline_complete_candidates(webhook_url: str) -> list[str]:
+    base = (webhook_url or "").strip().rstrip("/")
+    if not base:
+        return []
+    if base.endswith(_PIPELINE_COMPLETE_PATH):
+        return [base]
+    from urllib.parse import urlparse
+    parsed = urlparse(base)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return [origin + _PIPELINE_COMPLETE_PATH]
 
 def send_job_status(
     job_id: str,
@@ -85,3 +98,29 @@ def send_job_status(
 
     if last_error:
         LOGGER.warning(f"Failed to send webhook update for job {job_id}: {last_error}")
+
+
+def send_pipeline_complete(payload: dict) -> None:
+    webhook_url = os.getenv("WEBHOOK_URL")
+    webhook_secret = os.getenv("WEBHOOK_SECRET")
+    if not webhook_url:
+        return
+
+    headers = {"Content-Type": "application/json"}
+    if webhook_secret:
+        headers["x-webhook-secret"] = webhook_secret
+
+    LOGGER.info("Sending webhook: %s", payload)
+    print("Sending webhook:", payload)
+
+    last_error: Exception | None = None
+    for candidate_url in _normalize_pipeline_complete_candidates(webhook_url):
+        try:
+            send_with_retry(candidate_url, payload, headers)
+            return
+        except Exception as exc:
+            last_error = exc
+            break
+
+    if last_error:
+        LOGGER.warning("Failed to send pipeline-complete webhook for job %s: %s", payload.get("jobId", ""), last_error)

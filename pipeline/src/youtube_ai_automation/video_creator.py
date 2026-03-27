@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import tempfile
 import re
 from typing import Iterable
 
@@ -189,3 +191,137 @@ def create_subtitles_from_script(
 
     subtitle_path.write_text("\n".join(lines), encoding="utf-8")
     return subtitle_path
+
+
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+_VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
+
+
+def _run_ffmpeg(args: list[str]) -> None:
+    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {proc.stderr[-600:]}")
+
+
+def _is_image(path: Path) -> bool:
+    return path.suffix.lower() in _IMAGE_EXTS
+
+
+def _is_video(path: Path) -> bool:
+    return path.suffix.lower() in _VIDEO_EXTS
+
+
+def render_vertical_video(
+    *,
+    media_paths: list[Path],
+    audio_path: Path,
+    subtitle_path: Path | None,
+    output_path: Path,
+    target_duration_seconds: float,
+) -> Path:
+    """
+    Render a 1080x1920 mp4 video from mixed image/video inputs and merge narration audio.
+    Stateless: all artifacts are temp/intermediate files under output directory.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    duration = max(1.0, float(target_duration_seconds))
+
+    usable_media = [p for p in media_paths if p.exists() and (_is_image(p) or _is_video(p))]
+    if not usable_media:
+        # Fallback visual when no media is provided.
+        visual_fallback = output_path.parent / "visual_fallback.mp4"
+        _run_ffmpeg([
+            "ffmpeg", "-y",
+            "-f", "lavfi",
+            "-i", "color=c=0x0B1020:s=1080x1920:r=30",
+            "-t", f"{duration:.2f}",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            str(visual_fallback),
+        ])
+        usable_media = [visual_fallback]
+
+    with tempfile.TemporaryDirectory(prefix="cf_render_", dir=str(output_path.parent)) as tmpdir:
+        tmp = Path(tmpdir)
+        seg_duration = max(0.7, duration / max(1, len(usable_media)))
+        segments: list[Path] = []
+
+        for idx, media in enumerate(usable_media, start=1):
+            seg = tmp / f"seg_{idx:04d}.mp4"
+            if _is_image(media):
+                _run_ffmpeg([
+                    "ffmpeg", "-y",
+                    "-loop", "1",
+                    "-t", f"{seg_duration:.2f}",
+                    "-i", str(media),
+                    "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p",
+                    "-r", "30",
+                    "-an",
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    str(seg),
+                ])
+            else:
+                _run_ffmpeg([
+                    "ffmpeg", "-y",
+                    "-stream_loop", "-1",
+                    "-t", f"{seg_duration:.2f}",
+                    "-i", str(media),
+                    "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p",
+                    "-r", "30",
+                    "-an",
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    str(seg),
+                ])
+            segments.append(seg)
+
+        concat_file = tmp / "concat.txt"
+        concat_file.write_text("\n".join([f"file '{p.as_posix()}'" for p in segments]), encoding="utf-8")
+        visual_track = tmp / "visual_track.mp4"
+        _run_ffmpeg([
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_file),
+            "-c", "copy",
+            str(visual_track),
+        ])
+
+        muxed_no_sub = tmp / "muxed_no_sub.mp4"
+        _run_ffmpeg([
+            "ffmpeg", "-y",
+            "-i", str(visual_track),
+            "-i", str(audio_path),
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-shortest",
+            str(muxed_no_sub),
+        ])
+
+        if subtitle_path and subtitle_path.exists() and subtitle_path.suffix.lower() == ".ass":
+            # Keep subtitles optional; if burn fails, return muxed video.
+            try:
+                _run_ffmpeg([
+                    "ffmpeg", "-y",
+                    "-i", str(muxed_no_sub),
+                    "-vf", f"subtitles={subtitle_path.as_posix()}",
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "copy",
+                    str(output_path),
+                ])
+                return output_path
+            except Exception:
+                pass
+
+        _run_ffmpeg([
+            "ffmpeg", "-y",
+            "-i", str(muxed_no_sub),
+            "-c", "copy",
+            str(output_path),
+        ])
+        return output_path

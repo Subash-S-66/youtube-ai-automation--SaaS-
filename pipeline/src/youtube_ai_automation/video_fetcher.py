@@ -284,9 +284,8 @@ def download_scene_videos(
     min_per_scene = max(1, int(clips_per_scene_min))
     max_per_scene = max(min_per_scene, int(clips_per_scene_max))
 
-    import os
     from youtube_ai_automation.clip_tracker import ClipTracker
-    clip_tracker = ClipTracker(os.getenv("MONGO_URI"))
+    clip_tracker = ClipTracker()
     mongo_used_clips = clip_tracker.get_used_clips()
 
     from concurrent.futures import ThreadPoolExecutor

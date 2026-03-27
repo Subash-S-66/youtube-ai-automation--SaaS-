@@ -11,6 +11,7 @@ from youtube_ai_automation.main import (
     _run_network_preflight,
     _setup_logging,
     reset_upload_report,
+    run_full_pipeline,
     run_prepared_pipeline,
     update_upload_report_metadata,
     UPLOAD_REPORT_FILE,
@@ -54,7 +55,9 @@ def _normalize_mode(value: str) -> str:
         "manual": "manual",
         "single": "single",
         "prepared": "prepared",
-        "execution": "prepared",
+        "execution": "full",
+        "full": "full",
+        "production": "full",
     }
     return aliases.get(token, token)
 
@@ -63,7 +66,7 @@ def _resolve_mode() -> str:
     explicit = _normalize_mode(os.getenv("RUN_MODE", ""))
     if explicit:
         return explicit
-    return "prepared"
+    return "full"
 
 
 def _safe_write_text(path: Path, content: str) -> None:
@@ -261,9 +264,9 @@ def main() -> None:
 
     run_mode_raw = os.getenv("RUN_MODE", "")
     run_mode = _resolve_mode()
-    if run_mode != "prepared":
+    if run_mode not in {"prepared", "full"}:
         raise SystemExit(
-            f"Pipeline supports only prepared mode "
+            f"Pipeline supports only prepared/full mode "
             f"(RUN_MODE raw={run_mode_raw!r}, normalized={run_mode!r})"
         )
     count = _env_int("RUN_COUNT", 1)
@@ -288,8 +291,11 @@ def main() -> None:
         try:
             payload = json.loads(payload_raw)
         except Exception as exc:
-            raise SystemExit(f"RUN_MODE=prepared received invalid PIPELINE_PAYLOAD JSON: {exc}")
-        run_prepared_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
+            raise SystemExit(f"RUN_MODE={run_mode} received invalid PIPELINE_PAYLOAD JSON: {exc}")
+        if run_mode == "full":
+            run_full_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
+        else:
+            run_prepared_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
         report = load_upload_report(UPLOAD_REPORT_FILE)
         _notify_telegram(build_upload_summary_message(report))
         video_url, youtube_video_id = _extract_video_result(report)

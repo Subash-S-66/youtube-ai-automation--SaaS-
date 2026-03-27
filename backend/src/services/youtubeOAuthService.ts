@@ -1,4 +1,5 @@
 import { google } from 'googleapis';
+import type { OAuth2Client, Credentials } from 'google-auth-library';
 
 const normalizeBaseUrl = (value?: string): string => {
   const raw = (value || '').trim();
@@ -21,7 +22,7 @@ const resolveRedirectUri = (backendBaseUrl?: string): string => {
   return `${base}/api/youtube/callback`;
 };
 
-export const getGoogleOAuthClient = (backendBaseUrl?: string) => {
+export const getGoogleOAuthClient = (backendBaseUrl?: string): OAuth2Client => {
   const clientId = process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
   const redirectUri = resolveRedirectUri(backendBaseUrl);
@@ -51,7 +52,7 @@ export const getGoogleAuthUrl = (state: string, backendBaseUrl?: string): string
   });
 };
 
-export const exchangeCodeForTokens = async (code: string, backendBaseUrl?: string) => {
+export const exchangeCodeForTokens = async (code: string, backendBaseUrl?: string): Promise<Credentials> => {
   const oauth2Client = getGoogleOAuthClient(backendBaseUrl);
   const { tokens } = await oauth2Client.getToken(code);
   return tokens;

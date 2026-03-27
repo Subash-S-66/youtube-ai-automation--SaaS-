@@ -21,7 +21,7 @@ export const triggerLocalPipeline = async (
     env[entry.name] = entry.value;
   }
   env.PYTHONPATH = env.PYTHONPATH ? `${pipelineSrc}${path.delimiter}${env.PYTHONPATH}` : pipelineSrc;
-  env.RUN_MODE = env.RUN_MODE || 'prepared';
+  env.RUN_MODE = env.RUN_MODE || 'full';
   env.FORCE_GOOGLE_AUDIO_ONLY = env.FORCE_GOOGLE_AUDIO_ONLY || 'true';
   env.GEMINI_AUDIO_ENABLED = env.GEMINI_AUDIO_ENABLED || 'true';
   env.GEMINI_AUDIO_ONLY = env.GEMINI_AUDIO_ONLY || 'true';

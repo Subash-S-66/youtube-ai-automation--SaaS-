@@ -3,32 +3,38 @@ import asyncHandler from '../utils/asyncHandler';
 import JobModel from '../models/Job';
 import crypto from 'crypto';
 
-// @desc    Receive job status updates from Python pipeline
-// @route   POST /api/webhook/job-status
-// @access  Private (verified via x-webhook-secret)
-export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Response) => {
-  console.log(`[Webhook] Received webhook payload:`, req.body);
+const verifyWebhookSecret = (req: Request, res: Response): boolean => {
   const secret = req.headers['x-webhook-secret'];
   const expectedSecret = process.env.WEBHOOK_SECRET;
 
   if (!expectedSecret) {
     res.status(500).json({ error: 'WEBHOOK_SECRET environment variable is not configured' });
-    return;
+    return false;
   }
 
   if (!secret || typeof secret !== 'string') {
     res.status(401).json({ error: 'Missing x-webhook-secret header' });
-    return;
+    return false;
   }
 
   const secretBuffer = Buffer.from(secret);
   const expectedBuffer = Buffer.from(expectedSecret);
-
   if (
     secretBuffer.length !== expectedBuffer.length ||
     !crypto.timingSafeEqual(secretBuffer, expectedBuffer)
   ) {
     res.status(401).json({ error: 'Invalid webhook secret' });
+    return false;
+  }
+  return true;
+};
+
+// @desc    Receive job status updates from Python pipeline
+// @route   POST /api/webhook/job-status
+// @access  Private (verified via x-webhook-secret)
+export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Response) => {
+  console.log(`[Webhook] Received webhook payload:`, req.body);
+  if (!verifyWebhookSecret(req, res)) {
     return;
   }
 
@@ -216,6 +222,52 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
   }
 
   await job.save();
+
+  res.status(200).json({ success: true });
+});
+
+// @desc    Receive final pipeline-complete payload and persist on backend
+// @route   POST /api/webhook/pipeline-complete
+// @access  Private (verified via x-webhook-secret)
+export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, res: Response) => {
+  console.log(`[Webhook] Received pipeline-complete payload:`, req.body);
+  if (!verifyWebhookSecret(req, res)) {
+    return;
+  }
+
+  const payload = req.body || {};
+  const jobId = String(payload.jobId || '').trim();
+  if (!jobId) {
+    res.status(400).json({ error: 'Missing jobId' });
+    return;
+  }
+
+  const { connection } = await import('../config/redis.js');
+  if (connection) {
+    const idempotencyKey = `webhook:pipeline-complete:${jobId}`;
+    const setNxResult = await connection.set(idempotencyKey, 'processing', 'EX', 60 * 60, 'NX');
+    if (!setNxResult) {
+      res.status(200).json({ success: true, duplicate: true });
+      return;
+    }
+  }
+
+  const updated = await JobModel.findOneAndUpdate(
+    { _id: jobId },
+    {
+      $set: {
+        status: 'success',
+        completedAt: new Date(),
+        result: payload.result ?? payload,
+      },
+    },
+    { new: true }
+  );
+
+  if (!updated) {
+    res.status(404).json({ error: 'Job not found' });
+    return;
+  }
 
   res.status(200).json({ success: true });
 });
