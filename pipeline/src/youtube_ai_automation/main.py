@@ -1153,6 +1153,42 @@ def _enforce_word_cap(script: str, max_words: int) -> str:
     return trimmed
 
 
+def _assemble_sections_script(sections: dict[str, str]) -> str:
+    return " ".join(
+        p for p in [
+            sections.get("hook", ""),
+            sections.get("main_content", ""),
+            sections.get("recap", ""),
+            sections.get("cta", ""),
+        ] if p
+    ).strip()
+
+
+def _resize_main_content_to_total_words(
+    sections: dict[str, str],
+    target_total_words: int,
+    min_main_words: int = 20,
+) -> str:
+    non_main = " ".join(
+        p for p in [sections.get("hook", ""), sections.get("recap", ""), sections.get("cta", "")]
+        if p
+    ).strip()
+    non_main_words = len(non_main.split()) if non_main else 0
+    target_main_words = max(min_main_words, int(target_total_words) - non_main_words)
+    main_text = str(sections.get("main_content", "")).strip()
+    main_words = main_text.split()
+
+    if len(main_words) > target_main_words:
+        trimmed = " ".join(main_words[:target_main_words]).strip()
+        if trimmed and trimmed[-1] not in ".!?":
+            trimmed += "."
+        sections["main_content"] = trimmed
+    elif len(main_words) < target_main_words:
+        sections["main_content"] = expand_meaningfully(main_text, target_main_words - len(main_words))
+
+    return _assemble_sections_script(sections)
+
+
 def validate_sections(section_budget: dict[str, int], section_scripts: dict[str, str]) -> list[str]:
     errors: list[str] = []
     hook_est = estimate_duration_from_script(section_scripts.get("hook", ""))
@@ -1410,10 +1446,10 @@ def run_prepared_pipeline(
     try:
         for audio_attempt in range(1, 4):
             # Keep script bounded before every expensive TTS attempt.
-            best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
-            best_package["sections"]["main_content"] = _enforce_word_cap(
-                best_package["sections"].get("main_content", ""),
-                max(20, max_words - 40),
+            best_package["script"] = _resize_main_content_to_total_words(
+                best_package["sections"],
+                max_words,
+                min_main_words=20,
             )
             full_audio_path, _ = generate_voice(
                 script=best_package["script"],
@@ -1448,58 +1484,17 @@ def run_prepared_pipeline(
             if audio_attempt >= 3:
                 break
             audio_retry_count += 1
-            current_main_seconds = max(
-                1.0,
-                estimate_duration_from_script(best_package["sections"].get("main_content", "")),
+            current_words = max(1, len(best_package["script"].split()))
+            desired_words = int(round(current_words * (target_duration / max(1.0, actual_audio_seconds))))
+            desired_words = max(min_words, min(max_words, desired_words))
+            if abs(desired_words - current_words) < 5:
+                desired_words = current_words + (8 if drift < 0 else -8)
+                desired_words = max(min_words, min(max_words, desired_words))
+            best_package["script"] = _resize_main_content_to_total_words(
+                best_package["sections"],
+                desired_words,
+                min_main_words=20,
             )
-            # Damped correction to avoid oscillation across retries.
-            correction = max(1.0, abs(drift) * 0.7)
-            if drift > 3:
-                target_main_seconds = max(5, int(round(current_main_seconds - correction)))
-                best_package["sections"]["main_content"] = adjust_script_to_duration(
-                    script=best_package["sections"].get("main_content", ""),
-                    target_seconds=target_main_seconds,
-                    section_name="main",
-                    topic_hint=topic,
-                    story_mode=story_mode,
-                )
-            else:
-                best_package["sections"]["main_content"] = expand_meaningfully(
-                    best_package["sections"].get("main_content", ""),
-                    max(8, int(abs(drift) * 2.5)),
-                )
-                target_main_seconds = max(5, int(round(current_main_seconds + correction)))
-                best_package["sections"]["main_content"] = adjust_script_to_duration(
-                    script=best_package["sections"]["main_content"],
-                    target_seconds=target_main_seconds,
-                    section_name="main",
-                    topic_hint=topic,
-                    story_mode=story_mode,
-                )
-            best_package["script"] = " ".join(
-                p for p in [
-                    best_package["sections"].get("hook", ""),
-                    best_package["sections"].get("main_content", ""),
-                    best_package["sections"].get("recap", ""),
-                    best_package["sections"].get("cta", ""),
-                ] if p
-            ).strip()
-            # Keep in a practical target window before next attempt.
-            word_count_now = len(best_package["script"].split())
-            if word_count_now < min_words:
-                best_package["sections"]["main_content"] = expand_meaningfully(
-                    best_package["sections"].get("main_content", ""),
-                    min_words - word_count_now,
-                )
-                best_package["script"] = " ".join(
-                    p for p in [
-                        best_package["sections"].get("hook", ""),
-                        best_package["sections"].get("main_content", ""),
-                        best_package["sections"].get("recap", ""),
-                        best_package["sections"].get("cta", ""),
-                    ] if p
-                ).strip()
-            best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
     except Exception as exc:
         audio_failed = True
         last_errors.append(f"audio_fallback:{str(exc)[:120]}")
@@ -1540,6 +1535,23 @@ def run_prepared_pipeline(
             ] if p
         ).strip()
         best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
+        estimated_duration = estimate_audio_duration(best_package["script"])
+
+    # Final enforcement: if actual audio still exceeds hard cap, trim and regenerate once.
+    if full_audio_path is not None and actual_audio_seconds > 60:
+        best_package["script"] = _resize_main_content_to_total_words(
+            best_package["sections"],
+            int(60 * 2.5),
+            min_main_words=20,
+        )
+        full_audio_path, _ = generate_voice(
+            script=best_package["script"],
+            voice=voice_name,
+            rate=voice_rate,
+            output_path=(output_dir / "voice_full.wav"),
+            rotate_profile=False,
+        )
+        actual_audio_seconds = get_audio_duration_seconds(full_audio_path) or estimate_audio_duration(best_package["script"])
         estimated_duration = estimate_audio_duration(best_package["script"])
 
     # Final hard guard: never return >60s practical script size.

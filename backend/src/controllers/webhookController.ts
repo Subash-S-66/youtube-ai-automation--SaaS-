@@ -74,9 +74,60 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
 
   // Update status if it's changing
   const { consumeReservedCredits, releaseReservedCredits } = await import('../services/uploadLimitService.js');
+  const requiresUpload = Boolean(
+    (job as any)?.pipelineConfig?.upload === true ||
+    (job as any)?.pipelineConfig?.autoUpload === true ||
+    (job as any)?.pipelineConfig?.autoUploadSchedule === true ||
+    (job as any)?.pipelineConfig?.scheduleEnabled === true ||
+    (job as any)?.pipelineConfig?.publishNow === true ||
+    (typeof (job as any)?.pipelineConfig?.channelId === 'string' && (job as any).pipelineConfig.channelId.trim().length > 0)
+  );
 
   const normalizedStatus = status.toLowerCase();
   if (normalizedStatus === 'success' || normalizedStatus === 'completed') {
+     const resolvedVideoUrl = (
+       (typeof videoUrl === 'string' && videoUrl.trim()) ||
+       (typeof job.videoUrl === 'string' && job.videoUrl.trim()) ||
+       ''
+     ) as string;
+     const resolvedYoutubeVideoId = (
+       (typeof youtubeVideoId === 'string' && youtubeVideoId.trim()) ||
+       (typeof job.youtubeVideoId === 'string' && job.youtubeVideoId.trim()) ||
+       ''
+     ) as string;
+     const uploadConfirmed = !requiresUpload || Boolean(
+       resolvedYoutubeVideoId ||
+       (resolvedVideoUrl && /^https?:\/\//i.test(resolvedVideoUrl))
+     );
+
+     if (!uploadConfirmed) {
+       const updatedJob = await JobModel.findOneAndUpdate(
+         { _id: jobId, status: { $in: ['processing', 'pending'] }, holdConsumed: false, holdReleased: false },
+         {
+           $set: {
+             status: 'failed',
+             completedAt: new Date(),
+             holdReleased: true,
+             error: 'Upload failed or was skipped.',
+             errorMessage: 'Upload failed or was skipped.',
+             errorStage: 'UPLOAD' as any,
+             result: {
+               success: false,
+               videoUrl: resolvedVideoUrl || '',
+               youtubeVideoId: resolvedYoutubeVideoId || '',
+             }
+           }
+         },
+         { new: true }
+       );
+       if (updatedJob) {
+         await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+       }
+       await job.save();
+       res.status(200).json({ success: true });
+       return;
+     }
+
      const updatedJob = await JobModel.findOneAndUpdate(
        { _id: jobId, status: { $in: ['processing', 'pending'] }, holdConsumed: false, holdReleased: false },
        {

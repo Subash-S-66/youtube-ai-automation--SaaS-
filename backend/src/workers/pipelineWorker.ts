@@ -720,6 +720,47 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         await appendLogSafe(jobId, `\nLocal pipeline process finished.\n`);
         await updateProgressSafe(job, 95, 'pipeline_runtime', 'Pipeline runtime finished');
 
+        const outputVideoUrl = String(
+          outputJson?.videoUrl ||
+          outputJson?.result?.videoUrl ||
+          outputJson?.youtube?.videoUrl ||
+          ''
+        ).trim();
+        const outputYoutubeVideoId = String(
+          outputJson?.youtubeVideoId ||
+          outputJson?.result?.youtubeVideoId ||
+          outputJson?.youtube?.youtubeVideoId ||
+          ''
+        ).trim();
+        const uploadConfirmed = !requiresUpload || Boolean(
+          outputYoutubeVideoId ||
+          (outputVideoUrl && /^https?:\/\//i.test(outputVideoUrl))
+        );
+
+        if (!uploadConfirmed) {
+          const failedLocal = await JobModel.findOneAndUpdate(
+            { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+            {
+              $set: {
+                status: 'failed',
+                completedAt: new Date(),
+                holdReleased: true,
+                error: 'Upload failed or was skipped.',
+                errorMessage: 'Upload failed or was skipped.',
+                errorStage: 'UPLOAD',
+                result: outputJson || { success: false },
+                processedVideos: settings.videoCount || 1,
+              },
+            },
+            { returnDocument: 'after' }
+          );
+          if (failedLocal) {
+            await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            await appendLogSafe(jobId, `${JSON.stringify({ event: 'local_completion_failed_upload', output: outputJson || {} })}\n`, 'failed');
+          }
+          return;
+        }
+
         const finalized = await JobModel.findOneAndUpdate(
           { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
           {

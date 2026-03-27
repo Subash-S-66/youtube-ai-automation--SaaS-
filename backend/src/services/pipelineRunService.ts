@@ -102,8 +102,6 @@ export const normalizePipelineSettings = (rawSettings: Record<string, any>): Pip
   }
 
   const unusedFields = [
-    settings.ctaEnabled !== undefined ? 'ctaEnabled' : '',
-    settings.templateConfig !== undefined ? 'templateConfig' : '',
     settings.customVideoIds?.length ? 'customVideoIds' : '',
     settings.customImageIds?.length ? 'customImageIds' : '',
     settings.customThumbnailId ? 'customThumbnailId' : '',
