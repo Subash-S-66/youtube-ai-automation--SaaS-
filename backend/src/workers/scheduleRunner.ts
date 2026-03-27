@@ -1,4 +1,5 @@
 import { Worker, Job as BullJob } from 'bullmq';
+import { acquireLock, releaseLock } from '../utils/redisLock';
 import { connection } from '../config/redis';
 import Schedule from '../models/Schedule';
 import { enqueuePipelineJob } from '../services/pipelineRunService';
@@ -40,12 +41,21 @@ export const startScheduleRunner = async () => {
     'scheduleQueue',
     async (job: BullJob) => {
       const { scheduleId } = job.data;
+
+      const lockKey = `lock:schedule:${scheduleId}`;
+      const acquired = await acquireLock(lockKey, 60); // 1 minute TTL
+      if (!acquired) {
+        console.warn(`[ScheduleRunner] Schedule ${scheduleId} is currently being processed by another worker. Skipping.`);
+        return;
+      }
+
       const now = new Date();
 
-      const schedule = await Schedule.findById(scheduleId);
-      if (!schedule || !schedule.enabled) {
-        return; // Skip if disabled or deleted
-      }
+      try {
+          const schedule = await Schedule.findById(scheduleId);
+          if (!schedule || !schedule.enabled) {
+            return; // Skip if disabled or deleted
+          }
 
       // Claim it to prevent race condition if same job pushed twice
       const claimed = await Schedule.findOneAndUpdate(
@@ -110,23 +120,36 @@ export const startScheduleRunner = async () => {
           update.nextRunAt = nextRunTime;
 
           // Enqueue the next run before updating the DB to prevent race condition stalling
-          try {
-            await scheduleQueue.add(
-              'runSchedule',
-              { scheduleId: claimed._id.toString() },
-              {
-                delay: nextRunTime.getTime() - Date.now(),
-                jobId: `schedule-${claimed._id.toString()}-${nextRunTime.getTime()}`
+          let enqueued = false;
+          let attempts = 0;
+          while (!enqueued && attempts < 3) {
+            attempts++;
+            try {
+              await scheduleQueue.add(
+                'runSchedule',
+                { scheduleId: claimed._id.toString() },
+                {
+                  delay: Math.max(0, nextRunTime.getTime() - Date.now()),
+                  jobId: `schedule-${claimed._id.toString()}-${nextRunTime.getTime()}`
+                }
+              );
+              enqueued = true;
+            } catch (qErr: any) {
+              console.error(`[ScheduleRunner] Attempt ${attempts}: Failed to enqueue next run for ${claimed._id}`, qErr);
+              if (attempts === 3) {
+                update.lastError = `Failed to queue next run after 3 attempts: ${qErr.message}`;
+              } else {
+                await new Promise(res => setTimeout(res, 2000 * attempts)); // exponential backoff
               }
-            );
-          } catch (qErr: any) {
-            console.error(`[ScheduleRunner] Failed to enqueue next run for ${claimed._id}`, qErr);
-            update.lastError = `Failed to queue next run: ${qErr.message}`;
+            }
           }
         }
       }
 
       await Schedule.findByIdAndUpdate(claimed._id, update);
+      } finally {
+        await releaseLock(lockKey).catch((err) => console.error(`[ScheduleRunner] Failed to release lock for ${scheduleId}:`, err));
+      }
     },
     {
       connection: connection as any,
