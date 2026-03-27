@@ -285,12 +285,21 @@ def render_vertical_video(
             seg = tmp / f"seg_{idx:04d}.mp4"
             if _is_image(media):
                 seg_duration = image_duration
+                frames = max(1, int(round(seg_duration * 30)))
+                zoom_speed = random.choice([0.0008, 0.0010, 0.0012])
+                zoom_expr = f"min(1.18,zoom+{zoom_speed:.4f})"
                 _run_ffmpeg([
                     "ffmpeg", "-y",
                     "-loop", "1",
                     "-t", f"{seg_duration:.2f}",
                     "-i", str(media),
-                    "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p",
+                    "-vf",
+                    (
+                        f"scale=1200:2133:force_original_aspect_ratio=increase,"
+                        f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                        f"d={frames}:s=1080x1920:fps=30,"
+                        "format=yuv420p"
+                    ),
                     "-r", "30",
                     "-an",
                     "-c:v", "libx264",
@@ -327,6 +336,7 @@ def render_vertical_video(
         else:
             # Join animation: cross-fade transitions between segments.
             transition = 0.35
+            transition_types = ["fade", "slideleft", "slideright", "wipeleft", "wiperight"]
             cmd = ["ffmpeg", "-y"]
             for seg in segments:
                 cmd.extend(["-i", str(seg)])
@@ -338,8 +348,9 @@ def render_vertical_video(
                 out_label = f"[v{i}]"
                 # Offset is measured on current composed timeline.
                 offset = max(0.0, cumulative - transition)
+                transition_name = random.choice(transition_types)
                 filters.append(
-                    f"{previous_label}[{i}:v]xfade=transition=fade:duration={transition:.2f}:offset={offset:.2f}{out_label}"
+                    f"{previous_label}[{i}:v]xfade=transition={transition_name}:duration={transition:.2f}:offset={offset:.2f}{out_label}"
                 )
                 previous_label = out_label
                 cumulative += float(segment_durations[i]) - transition

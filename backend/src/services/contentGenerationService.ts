@@ -125,28 +125,6 @@ const estimateScriptDuration = (lines: string[]): number => {
   return Number(lines.reduce((sum, line) => sum + estimateLineDuration(line), 0).toFixed(2));
 };
 
-const ensureDurationBounds = (lines: string[], targetDurationSeconds: number): string[] => {
-  const safe = lines.filter(Boolean);
-  if (!safe.length) return safe;
-
-  let current = estimateScriptDuration(safe);
-  const target = Math.max(15, Math.min(60, targetDurationSeconds));
-
-  while (current > target + 0.5 && safe.length > 1) {
-    safe.pop();
-    current = estimateScriptDuration(safe);
-  }
-
-  const filler = 'This is the key detail that completes the explanation.';
-  while (current < target - 0.5) {
-    safe.push(filler);
-    current = estimateScriptDuration(safe);
-    if (safe.length > 20) break;
-  }
-
-  return safe;
-};
-
 const buildLineCaptions = (
   scriptLines: string[],
   targetDurationSeconds: number
@@ -169,9 +147,9 @@ const buildLineCaptions = (
 
 const buildStructuredScript = (
   scriptLines: string[],
-  targetDurationSeconds: number
+  _targetDurationSeconds: number
 ): Array<{ text: string; duration?: number }> => {
-  const lines = ensureDurationBounds(scriptLines.filter(Boolean), targetDurationSeconds);
+  const lines = scriptLines.filter(Boolean);
   if (lines.length === 0) return [];
   return lines.map((line) => ({ text: line, duration: estimateLineDuration(line) }));
 };
@@ -340,7 +318,7 @@ const deterministicFallback = (
 ): PreparedContentItem => {
   const safeTopic = clean(topic) || 'Untitled Topic';
   const safePrompt = clean(generatedPrompt) || safeTopic;
-  const title = `${safeTopic} #${index}`.slice(0, 60);
+  const title = `${safeTopic} Update`.slice(0, 60);
   const lines = [
     `What if this changes everything about ${safeTopic}?`,
     `Here is the setup: ${safePrompt.slice(0, 120)}.`,
@@ -361,8 +339,37 @@ const deterministicFallback = (
   };
 };
 
+const isGenericTopic = (topic: string): boolean => {
+  const value = clean(topic).toLowerCase();
+  return ['tech', 'technology', 'science', 'ai', 'business', 'news'].includes(value);
+};
+
+const refineGenericTopic = async (topic: string): Promise<string> => {
+  const baseTopic = clean(topic);
+  if (!isGenericTopic(baseTopic)) return baseTopic;
+  const prompt = `
+Return exactly 10 latest specific YouTube Shorts topic ideas for "${baseTopic}".
+Rules:
+- One topic per line
+- No numbering
+- No intro/outro text
+- Keep each line under 12 words
+`.trim();
+  try {
+    const result = await generateFromAI(prompt);
+    const lines = String(result.text || '')
+      .split('\n')
+      .map((x) => x.trim().replace(/^[-*0-9.)\s]+/, ''))
+      .filter(Boolean);
+    return clean(lines[0] || baseTopic);
+  } catch {
+    return baseTopic;
+  }
+};
+
 export const generateContent = async (input: ContentGenerationInput): Promise<ContentGenerationResult> => {
-  const topic = extractTopicValue(input.topic);
+  const baseTopic = extractTopicValue(input.topic);
+  const topic = await refineGenericTopic(baseTopic);
   if (!topic) {
     throw new AppError('Topic is required for content generation.', 400);
   }
