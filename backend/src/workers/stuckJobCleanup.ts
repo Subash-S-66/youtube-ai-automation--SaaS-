@@ -5,8 +5,14 @@ import { calculateJobTimeout } from '../utils/timeoutHelper';
 import { pipelineQueue } from '../queues/pipelineQueue';
 
 const MAX_QUEUE_WAIT_TIME = 2 * 60 * 60 * 1000; // 2 hours
+const QUEUE_TIMEOUT_ERROR = 'Queue timeout: job waited more than 2 hours before processing.';
 
 export const safelyFailJob = async (job: any, errorMessage: string) => {
+  const existingLogs = typeof job.logs === 'string' ? job.logs : '';
+  const timeoutLog =
+    errorMessage === QUEUE_TIMEOUT_ERROR
+      ? `[Timeout] Job terminated after waiting in queue for more than 2 hours.\n`
+      : '';
   const result = await JobModel.findOneAndUpdate(
     {
       _id: job._id,
@@ -18,9 +24,10 @@ export const safelyFailJob = async (job: any, errorMessage: string) => {
       error: errorMessage,
       errorMessage: errorMessage,
       errorStage: 'RENDER',
+      logs: `${existingLogs}${timeoutLog}`,
       holdReleased: true, // we will attempt release below if it was atomic
     },
-    { new: true } // Return updated doc
+    { returnDocument: 'after' } // Return updated doc
   );
 
   if (result) {
@@ -95,7 +102,7 @@ export const startStuckJobCleanupInterval = () => {
           if (queueWait > MAX_QUEUE_WAIT_TIME) {
             console.log(`[StuckJobCleanup] Job ${job._id} stuck in queue too long. Wait time: ${queueWait}ms`);
             // Add retry mechanism or fail
-            await safelyFailJob(job, 'Job failed (stuck in queue beyond maximum allowed wait time)');
+            await safelyFailJob(job, QUEUE_TIMEOUT_ERROR);
           }
         }
       }

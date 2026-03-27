@@ -6,7 +6,6 @@ import Job from '../models/Job';
 import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { getUploadLimits, reserveCredits } from './uploadLimitService';
-import { ensureValidYouTubeToken } from './youtubeTokenService';
 import { buildStandardPrompt } from './promptBuilderService';
 
 export interface PipelineInputSettings {
@@ -277,16 +276,8 @@ export const enqueuePipelineJob = async ({
     style: finalSettings.videoStyle,
   });
 
-  let youtubeToken = '';
-  try {
-    youtubeToken = (await ensureValidYouTubeToken(finalSettings.channelId, userId)).accessToken;
-  } catch {
-    throw new AppError('youtube_token_expired', 400);
-  }
-
-  if (!youtubeToken) {
-    throw new AppError('youtube_token_expired', 400);
-  }
+  // Do not block enqueue on token refresh network calls.
+  // Worker validates/refreshes channel token right before execution.
 
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const recentJobs = await Job.find({

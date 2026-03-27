@@ -15,12 +15,16 @@ initializeFirebaseAdmin();
 // Connect to Database
 connectDB().then(async () => {
   if (mongoose.connection.readyState >= 1) {
-    await ensureAdminUser();
-    await ensureSystemConfigSingleton();
-    await ensureDefaultPlans();
-    await recoverCrashedJobs();
-    startStuckJobCleanupInterval();
-    startScheduleRunner();
+    try {
+      await ensureAdminUser();
+      await ensureSystemConfigSingleton();
+      await ensureDefaultPlans();
+      await recoverCrashedJobs();
+      startStuckJobCleanupInterval();
+      await startScheduleRunner();
+    } catch (bootErr) {
+      console.error('[Bootstrap] Startup task failed:', bootErr);
+    }
   } else {
     console.warn('[MongoDB] Skipping admin init and schedule runner (no DB connection).');
   }
@@ -39,9 +43,23 @@ server.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err: Error) => {
-  console.log(`Error: ${err.message}`);
-  // Close server & exit process
+const shouldCrashOnUnhandled =
+  process.env.CRASH_ON_UNHANDLED_REJECTION === 'true' ||
+  process.env.NODE_ENV !== 'production';
+
+const gracefulShutdown = (reason: string, err?: unknown) => {
+  console.error(`[Process] ${reason}`, err);
+  if (!shouldCrashOnUnhandled) {
+    return;
+  }
   server.close(() => process.exit(1));
+  setTimeout(() => process.exit(1), 5000).unref();
+};
+
+process.on('unhandledRejection', (err: unknown) => {
+  gracefulShutdown('Unhandled Promise Rejection', err);
+});
+
+process.on('uncaughtException', (err: Error) => {
+  gracefulShutdown('Uncaught Exception', err);
 });

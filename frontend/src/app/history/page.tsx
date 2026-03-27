@@ -47,6 +47,18 @@ export default function HistoryPage() {
     setExpandedJobId(prev => prev === id ? null : id);
   };
 
+  const isQueueTimeoutJob = (job: any) => {
+    const haystack = `${job?.errorMessage || ''} ${job?.error || ''} ${job?.logs || ''}`.toLowerCase();
+    return haystack.includes('queue timeout') || haystack.includes('waiting in queue for more than 2 hours');
+  };
+
+  const getDisplayStatus = (job: any) => {
+    if (job?.status === 'failed' && isQueueTimeoutJob(job)) {
+      return 'timeout';
+    }
+    return job?.status || 'queued';
+  };
+
   const getStatusBadge = (status: string) => {
     const colors: any = {
       queued: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
@@ -56,6 +68,7 @@ export default function HistoryPage() {
       completed: 'bg-[#7C5CFF]/10 text-[#7C5CFF] border-[#7C5CFF]/20',
       success: 'bg-[#7C5CFF]/10 text-[#7C5CFF] border-[#7C5CFF]/20', // legacy support
       failed: 'bg-[#FF4FD8]/10 text-[#FF4FD8] border-[#FF4FD8]/20',
+      timeout: 'bg-red-500/10 text-red-400 border-red-500/20',
     };
     return (
       <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${colors[status] || colors.queued}`}>
@@ -126,7 +139,7 @@ export default function HistoryPage() {
                         {job._id}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {getStatusBadge(job.status)}
+                        {getStatusBadge(getDisplayStatus(job))}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <button

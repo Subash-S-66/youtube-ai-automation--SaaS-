@@ -85,7 +85,7 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
         lastUploadReset: startOfUTCDay
       }
     },
-    { new: true } // Returns the document AFTER update
+    { returnDocument: 'after' } // Returns the document AFTER update
   );
 
   // If no reset was needed, fetch the user normally
@@ -158,7 +158,7 @@ export const reserveCredits = async (userId: string, count: number = 1): Promise
     {
       $inc: { uploadsOnHold: count }
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   return !!result;
@@ -173,7 +173,7 @@ export const consumeReservedCredits = async (userId: string, count: number = 1):
         uploadsOnHold: -count
       }
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
   return !!result;
 };
@@ -186,7 +186,7 @@ export const releaseReservedCredits = async (userId: string, count: number = 1):
         uploadsOnHold: -count
       }
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
   return !!result;
 };
