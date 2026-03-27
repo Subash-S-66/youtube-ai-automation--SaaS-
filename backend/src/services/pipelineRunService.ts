@@ -145,8 +145,6 @@ export interface EnqueuePipelineResult {
   };
 }
 
-type GeneratedJobContent = null;
-
 export const enqueuePipelineJob = async ({
   userId,
   promptId,
@@ -272,7 +270,6 @@ export const enqueuePipelineJob = async ({
   }
 
   // Queue immediately; content generation runs in background worker.
-  const generatedContent: GeneratedJobContent | null = null;
   const standardizedPrompt = buildStandardPrompt({
     prompt: prompt.gemini_prompt || prompt.user_prompt,
     title: prompt.user_prompt,
@@ -344,14 +341,14 @@ export const enqueuePipelineJob = async ({
     ].filter(Boolean).join('\n') + '\n',
     topic: prompt.user_prompt,
     generatedPrompt: standardizedPrompt || prompt.gemini_prompt,
-    generatedScript: generatedContent?.script || [],
-    captions: generatedContent?.captions || [],
-    title: generatedContent?.title || '',
-    description: generatedContent?.description || '',
-    hashtags: generatedContent?.hashtags || [],
-    generatedScenes: generatedContent?.scenes || [],
-    generatedMetadata: generatedContent?.metadata || [],
-    preparedContent: generatedContent?.preparedContent || [],
+    generatedScript: [],
+    captions: [],
+    title: '',
+    description: '',
+    hashtags: [],
+    generatedScenes: [],
+    generatedMetadata: [],
+    preparedContent: [],
     pipelineConfig: finalSettings,
     youtubeAccountId: finalSettings.channelId,
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
@@ -410,12 +407,12 @@ export const enqueuePipelineJob = async ({
     plan: finalLimitCheck.plan,
     remainingUploads: finalLimitCheck.remainingUploads,
     uploadsOnHold: updatedUser?.uploadsOnHold || 0,
-    standardizedPrompt: generatedContent?.prompt || '',
-    generatedScript: generatedContent?.script || [],
+    standardizedPrompt,
+    generatedScript: [],
     metadata: {
-      title: generatedContent?.title || '',
-      description: generatedContent?.description || '',
-      hashtags: generatedContent?.hashtags || [],
+      title: '',
+      description: '',
+      hashtags: [],
     },
   };
 
