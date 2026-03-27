@@ -5,6 +5,8 @@ import Media from '../models/Media';
 import MediaSequence from '../models/MediaSequence';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 
 // @desc    Upload new media
 // @route   POST /api/media/upload
@@ -378,15 +380,63 @@ export const reorderMixedMedia = asyncHandler(async (req: Request, res: Response
 // @route   GET /api/media/file/:filename
 // @access  Private
 export const getSecureMediaFile = asyncHandler(async (req: Request, res: Response) => {
-  const userId = req.user?.id;
-  if (!userId) throw new AppError('Not authorized', 401);
-
   const { filename } = req.params;
-
-  if (!filename || typeof filename !== 'string') throw new AppError('Filename is required and must be a string', 400);
+  if (!filename || typeof filename !== 'string') {
+    throw new AppError('Filename is required and must be a string', 400);
+  }
 
   // Prevent path traversal
   const safeFilename = path.basename(filename);
+  if (safeFilename !== filename) {
+    throw new AppError('Invalid filename', 400);
+  }
+
+  const webhookSecret = req.headers['x-webhook-secret'];
+  const expectedSecret = process.env.WEBHOOK_SECRET || '';
+  let isWebhookAuthorized = false;
+  if (typeof webhookSecret === 'string' && webhookSecret.length > 0 && expectedSecret.length > 0) {
+    const providedBuffer = Buffer.from(webhookSecret);
+    const expectedBuffer = Buffer.from(expectedSecret);
+    if (providedBuffer.length === expectedBuffer.length) {
+      isWebhookAuthorized = crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+    }
+  }
+
+  let jwtUserId = '';
+  if (!isWebhookAuthorized) {
+    let token = '';
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1] || '';
+    } else if (req.cookies && req.cookies.jwt) {
+      token = req.cookies.jwt;
+    } else if (req.cookies && req.cookies.oauth_state) {
+      token = req.cookies.oauth_state;
+    }
+
+    if (!token) {
+      throw new AppError('Not authorized', 401);
+    }
+
+    try {
+      const secret = process.env.JWT_SECRET || '';
+      if (!secret) {
+        throw new AppError('JWT secret is not configured', 500);
+      }
+      const decoded = jwt.verify(token, secret) as { id?: string };
+      jwtUserId = decoded?.id || '';
+    } catch {
+      throw new AppError('Not authorized', 401);
+    }
+  }
+
+  const mediaDoc = await Media.findOne({ filename: safeFilename }).select('userId filename');
+  if (!mediaDoc) {
+    throw new AppError('File not found', 404);
+  }
+
+  if (!isWebhookAuthorized && String(mediaDoc.userId) !== jwtUserId) {
+    throw new AppError('Not authorized to access this file', 403);
+  }
 
   const filePath = path.join(__dirname, '../../uploads', safeFilename);
 

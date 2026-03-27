@@ -27,6 +27,7 @@ To run the application, you must define environment variables. Example `.env.exa
 - **Payments:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
 - **Queue:** `REDIS_URL`
 - **Notifications:** `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `TELEGRAM_BOT_TOKEN`
+- **Pipeline Runtime:** `PIPELINE_RUNNER=local`, `PIPELINE_PYTHON_CMD=python`, `WEBHOOK_SECRET`, `BACKEND_URL`, `WEBHOOK_URL`
 
 ### Frontend (`/frontend/.env.local`)
 
@@ -52,6 +53,38 @@ cd backend
 npm run worker
 ```
 
+### Run Pipeline Worker In GitHub Codespaces With Local Backend
+If backend is running on your local machine, expose it with a tunnel and set these in `backend/.env` (or Codespaces secrets):
+
+```bash
+PIPELINE_RUNNER=local
+BACKEND_URL=https://<your-public-backend-url>
+WEBHOOK_URL=https://<your-public-backend-url>/api/webhook/job-status
+WEBHOOK_SECRET=<same-secret-in-backend-and-pipeline>
+```
+
+`BACKEND_URL` is used for secure media downloads, and `WEBHOOK_URL` is used by the Python runner to report status.
+
+Codespaces env injection now runs automatically on container start via:
+
+```bash
+bash scripts/bootstrap_codespaces_env.sh
+```
+
+This generates `.codespaces/runtime_env.sh` from available Codespaces secrets and auto-sources it in new shells.
+
+Start backend + worker together in Codespaces:
+
+```bash
+bash scripts/start_codespace_stack.sh
+```
+
+Stop both:
+
+```bash
+bash scripts/stop_codespace_stack.sh
+```
+
 ### Start the Frontend
 ```bash
 cd frontend
@@ -74,7 +107,9 @@ ClipForge's architecture decouples intensive background logic from standard web 
 
 ### CI/CD Pipelines & GitHub Secrets
 
-ClipForge automatically deploys using GitHub Actions (`.github/workflows`). Before pushing to `main`, ensure the following repository **GitHub Secrets** are configured:
+The pipeline runtime no longer depends on a GitHub workflow dispatch. Backend worker now triggers Python locally (`PIPELINE_RUNNER=local`) or Azure (`PIPELINE_RUNNER=azure`).
+
+Before pushing to `main`, ensure the following repository **GitHub Secrets** are configured for your chosen deployment path:
 
 *   `MONGO_URI`
 *   `JWT_SECRET`

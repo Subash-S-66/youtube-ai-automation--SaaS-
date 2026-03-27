@@ -62,7 +62,7 @@ export default function AdminDashboard() {
   const bannerStartRef = useRef<HTMLInputElement | null>(null);
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
   const [betaMode, setBetaMode] = useState(false);
-  const [pipelineRunner, setPipelineRunner] = useState<'github' | 'azure'>('github');
+  const [pipelineRunner, setPipelineRunner] = useState<'local' | 'azure'>('local');
   const [updatingConfig, setUpdatingConfig] = useState(false);
   const [planValueMap, setPlanValueMap] = useState({ free: 0, basic: 1, pro: 2, premium: 4 });
   const [savingProration, setSavingProration] = useState(false);
@@ -252,7 +252,7 @@ export default function AdminDashboard() {
       setModalConfig({
         isOpen: true,
         title: 'Pipeline Runner Updated',
-        description: `Pipeline runner switched to ${pipelineRunner === 'github' ? 'GitHub Workspace' : 'Azure Container Apps'}.`,
+        description: `Pipeline runner switched to ${pipelineRunner === 'local' ? 'Local Worker' : 'Azure Container Apps'}.`,
         type: 'success',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -695,10 +695,10 @@ const handleDeleteUser = () => {
                         id="pipeline-runner-select"
                         aria-label="Pipeline Runner"
                         value={pipelineRunner}
-                        onChange={(e) => setPipelineRunner(e.target.value as 'github' | 'azure')}
+                        onChange={(e) => setPipelineRunner(e.target.value as 'local' | 'azure')}
                         className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
                       >
-                        <option value="github">GitHub Workspace</option>
+                        <option value="local">Local Worker</option>
                         <option value="azure">Azure Container Apps</option>
                       </select>
                     </div>

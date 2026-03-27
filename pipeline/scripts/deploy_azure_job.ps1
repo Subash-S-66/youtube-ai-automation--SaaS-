@@ -162,6 +162,7 @@ Add-KeyValueIfPresent -Target $envArgs -Key "DEFAULT_NICHE" -Value $envMap["DEFA
 Add-KeyValueIfPresent -Target $envArgs -Key "LOG_LEVEL" -Value $envMap["LOG_LEVEL"]
 Add-KeyValueIfPresent -Target $envArgs -Key "RUN_MODE" -Value $envMap["RUN_MODE"]
 Add-KeyValueIfPresent -Target $envArgs -Key "WEBHOOK_URL" -Value $envMap["WEBHOOK_URL"]
+Add-KeyValueIfPresent -Target $envArgs -Key "BACKEND_URL" -Value $envMap["BACKEND_URL"]
 Add-KeyValueIfPresent -Target $envArgs -Key "EDGE_TTS_VOICE" -Value $envMap["EDGE_TTS_VOICE"]
 Add-KeyValueIfPresent -Target $envArgs -Key "CLIPS_DIR" -Value $envMap["CLIPS_DIR"]
 Add-KeyValueIfPresent -Target $envArgs -Key "USED_CLIPS_FILE" -Value $envMap["USED_CLIPS_FILE"]

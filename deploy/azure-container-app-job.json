@@ -21,6 +21,10 @@
         {
           "name": "gemini-api-key",
           "value": "<YOUR_GEMINI_API_KEY>"
+        },
+        {
+          "name": "webhook-secret",
+          "value": "<YOUR_WEBHOOK_SECRET>"
         }
       ]
     },
@@ -37,6 +41,14 @@
             {
               "name": "GEMINI_API_KEY",
               "secretRef": "gemini-api-key"
+            },
+            {
+              "name": "WEBHOOK_SECRET",
+              "secretRef": "webhook-secret"
+            },
+            {
+              "name": "BACKEND_URL",
+              "value": "<YOUR_BACKEND_URL>"
             }
           ]
         }

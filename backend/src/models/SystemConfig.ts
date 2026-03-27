@@ -2,7 +2,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ISystemConfig extends Document {
   betaMode: boolean;
-  pipelineRunner?: 'github' | 'azure';
+  pipelineRunner?: 'local' | 'azure';
   planLimits?: {
     free: number;
     basic: number;
@@ -26,8 +26,8 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     },
     pipelineRunner: {
       type: String,
-      enum: ['github', 'azure'],
-      default: 'github',
+      enum: ['local', 'azure'],
+      default: 'local',
     },
     planLimits: {
       free: { type: Number, default: 2 },

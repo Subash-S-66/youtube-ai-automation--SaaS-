@@ -39,12 +39,12 @@ const upload = multer({
   }
 });
 
-// Protect all routes
+router.get('/file/:filename', getSecureMediaFile);
+// Protect all routes except secure media file fetch (auth handled in controller)
 router.use(protect);
 
 router.post('/upload', upload.single('file'), uploadMedia);
 router.get('/', getMedia);
-router.get('/file/:filename', getSecureMediaFile);
 router.get('/sequence', getSequence);
 router.post('/sequence', addToSequence);
 router.post('/sequence/reorder', reorderSequence);

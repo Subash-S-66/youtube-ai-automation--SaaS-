@@ -8,10 +8,11 @@ import JobModel from '../models/Job';
 import User from '../models/User';
 import StoryProgress from '../models/StoryProgress';
 import SystemConfig from '../models/SystemConfig';
+import Media from '../models/Media';
 import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
-import { triggerGithubWorkflow } from './githubWorkflowTrigger';
+import { triggerLocalPipeline } from './localPipelineTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { normalizePipelineSettings } from '../services/pipelineRunService';
@@ -93,17 +94,126 @@ const appendLogSafe = async (jobId: string, newText: string, status?: string): P
   }
 };
 
-const resolvePipelineRunner = async (): Promise<'github' | 'azure'> => {
+const resolvePipelineRunner = async (): Promise<'local' | 'azure'> => {
   try {
     const config = await SystemConfig.findOne().sort({ updatedAt: -1 });
-    if (config?.pipelineRunner === 'azure' || config?.pipelineRunner === 'github') {
+    if (config?.pipelineRunner === 'azure' || config?.pipelineRunner === 'local') {
       return config.pipelineRunner;
     }
   } catch (error) {
     console.warn('Failed to load SystemConfig for pipeline runner. Falling back to env.', error);
   }
-  const fallback = (process.env.PIPELINE_RUNNER || 'azure').toLowerCase();
-  return fallback === 'github' ? 'github' : 'azure';
+  const fallback = (process.env.PIPELINE_RUNNER || 'local').toLowerCase();
+  return fallback === 'azure' ? 'azure' : 'local';
+};
+
+const parseBaseUrl = (value: string): string => {
+  const cleaned = value.trim();
+  if (!cleaned) return '';
+  try {
+    const parsed = new URL(cleaned);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return cleaned.replace(/\/+$/, '');
+  }
+};
+
+const resolveBackendBaseUrl = (): string => {
+  const explicit = process.env.BACKEND_URL || '';
+  if (explicit.trim()) {
+    return parseBaseUrl(explicit);
+  }
+  const webhookUrl = process.env.WEBHOOK_URL || '';
+  if (webhookUrl.trim()) {
+    return parseBaseUrl(webhookUrl);
+  }
+  return '';
+};
+
+const uniqueStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+};
+
+const sanitizePayloadValue = (value: any): any => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizePayloadValue(item))
+      .filter((item) => item !== undefined);
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, any> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const sanitized = sanitizePayloadValue(entry);
+      if (sanitized !== undefined) {
+        out[key] = sanitized;
+      }
+    }
+    return out;
+  }
+  if (value === undefined || value === null) return undefined;
+  return value;
+};
+
+const buildMediaFileUrl = (baseUrl: string, filename: string): string => {
+  return `${baseUrl}/api/media/file/${encodeURIComponent(filename)}`;
+};
+
+const resolveMediaUrlsByIds = async (
+  params: {
+    userId: string;
+    ids: unknown;
+    expectedType: 'video' | 'image' | 'thumbnail';
+    baseUrl: string;
+  }
+): Promise<{ urls: string[]; requested: number; resolved: number; invalidIds: number; missing: number }> => {
+  const requestedIds = uniqueStringArray(params.ids);
+  if (requestedIds.length === 0 || !params.baseUrl) {
+    return { urls: [], requested: requestedIds.length, resolved: 0, invalidIds: 0, missing: requestedIds.length };
+  }
+
+  const validIds = requestedIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+  const invalidIds = requestedIds.length - validIds.length;
+  if (validIds.length === 0) {
+    return {
+      urls: [],
+      requested: requestedIds.length,
+      resolved: 0,
+      invalidIds,
+      missing: requestedIds.length,
+    };
+  }
+
+  const mediaDocs = await Media.find({
+    _id: { $in: validIds },
+    userId: params.userId,
+    type: params.expectedType,
+  }).select('_id filename');
+
+  const byId = new Map<string, string>();
+  for (const doc of mediaDocs) {
+    const docId = String(doc._id);
+    if (doc.filename) {
+      byId.set(docId, buildMediaFileUrl(params.baseUrl, doc.filename));
+    }
+  }
+
+  const urls = validIds.map((id) => byId.get(id)).filter((url): url is string => Boolean(url));
+  const missing = Math.max(0, requestedIds.length - urls.length);
+  return {
+    urls,
+    requested: requestedIds.length,
+    resolved: urls.length,
+    invalidIds,
+    missing,
+  };
 };
 
 const pipelineWorker = new Worker<PipelineJobPayload>(
@@ -235,10 +345,74 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         throw err;
       }
       const generatedPrompt = dbJobForExecution.generatedPrompt || '';
-      const pipelinePayload = {
+      const backendBaseUrl = resolveBackendBaseUrl();
+      if (!backendBaseUrl) {
+        await appendLogSafe(
+          jobId,
+          `${JSON.stringify({ event: 'media_resolution', level: 'warn', reason: 'backend_url_missing' })}\n`
+        );
+      } else if (process.env.NODE_ENV === 'production' && /localhost|127\.0\.0\.1/i.test(backendBaseUrl)) {
+        await appendLogSafe(
+          jobId,
+          `${JSON.stringify({ event: 'media_resolution', level: 'warn', reason: 'backend_url_localhost_in_production', backendBaseUrl })}\n`
+        );
+      }
+
+      const resolvedCustomVideos = await resolveMediaUrlsByIds({
+        userId,
+        ids: dbJobForExecution.customVideoIds || settings.customVideoIds || [],
+        expectedType: 'video',
+        baseUrl: backendBaseUrl,
+      });
+      const resolvedCustomImages = await resolveMediaUrlsByIds({
+        userId,
+        ids: dbJobForExecution.customImageIds || settings.customImageIds || [],
+        expectedType: 'image',
+        baseUrl: backendBaseUrl,
+      });
+      const resolvedCustomThumbnail = await resolveMediaUrlsByIds({
+        userId,
+        ids: dbJobForExecution.customThumbnailId ? [dbJobForExecution.customThumbnailId] : (settings.customThumbnailId ? [settings.customThumbnailId] : []),
+        expectedType: 'thumbnail',
+        baseUrl: backendBaseUrl,
+      });
+
+      await appendLogSafe(
+        jobId,
+        `${JSON.stringify({
+          event: 'media_resolution',
+          customVideos: {
+            requested: resolvedCustomVideos.requested,
+            resolved: resolvedCustomVideos.resolved,
+            invalidIds: resolvedCustomVideos.invalidIds,
+            missing: resolvedCustomVideos.missing,
+          },
+          customImages: {
+            requested: resolvedCustomImages.requested,
+            resolved: resolvedCustomImages.resolved,
+            invalidIds: resolvedCustomImages.invalidIds,
+            missing: resolvedCustomImages.missing,
+          },
+          customThumbnail: {
+            requested: resolvedCustomThumbnail.requested,
+            resolved: resolvedCustomThumbnail.resolved,
+            invalidIds: resolvedCustomThumbnail.invalidIds,
+            missing: resolvedCustomThumbnail.missing,
+          },
+        })}\n`
+      );
+
+      const payloadVideoConfig = sanitizePayloadValue({
+        ...(dbJobForExecution.pipelineConfig || settings || {}),
+        customVideoUrls: resolvedCustomVideos.urls,
+        customImageUrls: resolvedCustomImages.urls,
+        customThumbnailUrl: resolvedCustomThumbnail.urls[0] || '',
+      });
+
+      const pipelinePayload = sanitizePayloadValue({
         script: payloadScript,
         captions: payloadCaptions.length > 0 ? payloadCaptions : fallbackCaptions,
-        videoConfig: dbJobForExecution.pipelineConfig || settings,
+        videoConfig: payloadVideoConfig,
         youtube: {
           title: dbJobForExecution.title || String(firstPreparedItem.title || ''),
           description: dbJobForExecution.description || String(firstPreparedItem.description || ''),
@@ -247,7 +421,28 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
             : (Array.isArray(firstPreparedItem.hashtags) ? firstPreparedItem.hashtags : []),
           accountId: dbJobForExecution.youtubeAccountId || settings.channelId,
         },
-      };
+      });
+      if (!Array.isArray(pipelinePayload?.script) || pipelinePayload.script.length === 0) {
+        const err: any = new Error('pipelinePayload.script is required and must be a non-empty array.');
+        err.stage = 'CONTENT_GENERATION';
+        throw err;
+      }
+      if (!pipelinePayload?.youtube || typeof pipelinePayload.youtube !== 'object') {
+        const err: any = new Error('pipelinePayload.youtube is required.');
+        err.stage = 'CONTENT_GENERATION';
+        throw err;
+      }
+      await appendLogSafe(
+        jobId,
+        `${JSON.stringify({
+          event: 'payload_creation',
+          scriptLines: pipelinePayload.script.length,
+          captionLines: Array.isArray(pipelinePayload.captions) ? pipelinePayload.captions.length : 0,
+          hasCustomVideoUrls: Array.isArray(pipelinePayload.videoConfig?.customVideoUrls) && pipelinePayload.videoConfig.customVideoUrls.length > 0,
+          hasCustomImageUrls: Array.isArray(pipelinePayload.videoConfig?.customImageUrls) && pipelinePayload.videoConfig.customImageUrls.length > 0,
+          hasCustomThumbnailUrl: Boolean(pipelinePayload.videoConfig?.customThumbnailUrl),
+        })}\n`
+      );
 
       // 2b. Safely compute Story Mode state exactly before passing to container
       if (settings.storyMode && settings.storyId) {
@@ -301,6 +496,17 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
       const pipelineRunner = await resolvePipelineRunner();
 
+      const dispatchLockKey = `pipeline:dispatch:${jobId}`;
+      const dispatchLock = await (connection as any).set(dispatchLockKey, String(Date.now()), 'NX', 'EX', 24 * 60 * 60);
+      if (dispatchLock !== 'OK') {
+        await appendLogSafe(
+          jobId,
+          `${JSON.stringify({ event: 'dispatch_skip', reason: 'idempotency_lock_exists', jobId })}\n`,
+          'processing'
+        );
+        return;
+      }
+
       await JobModel.findByIdAndUpdate(jobId, { status: 'processing' });
       await appendLogSafe(jobId, 'Job is running in pipeline...\n', 'processing');
 
@@ -319,20 +525,29 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "JOB_ID", value: jobId },
         { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
         { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
-        { name: "MONGO_URI", value: process.env.MONGO_URI || "" }
+        { name: "MONGO_URI", value: process.env.MONGO_URI || "" },
+        { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },
+        { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
       ];
 
-      if (pipelineRunner === 'github') {
-         await appendLogSafe(jobId, `\nDispatching GitHub Actions workflow for job ${jobId}...\n`);
-         await triggerGithubWorkflow({
-           jobId,
-           userId,
-           runMode: 'prepared',
-           pipelinePayload: JSON.stringify(pipelinePayload),
-           youtubeTokenEncrypted: encryptedYoutubeToken,
-         });
-         await appendLogSafe(jobId, `\nGitHub Actions workflow dispatched. Awaiting webhook updates.\n`);
-         return;
+      if (pipelineRunner === 'local') {
+        await appendLogSafe(jobId, `\nDispatching local pipeline process for job ${jobId}...\n`);
+        const result = await triggerLocalPipeline(envVars);
+        const stdoutTail = (result.stdout || '').slice(-2000);
+        const stderrTail = (result.stderr || '').slice(-2000);
+        if (stdoutTail) {
+          await appendLogSafe(jobId, `\n[LocalPipeline][stdout-tail]\n${stdoutTail}\n`);
+        }
+        if (stderrTail) {
+          await appendLogSafe(jobId, `\n[LocalPipeline][stderr-tail]\n${stderrTail}\n`);
+        }
+        if (!result.success) {
+          const err: any = new Error(`Local pipeline process failed with exit code ${result.exitCode ?? 'unknown'}`);
+          err.stage = 'RENDER';
+          throw err;
+        }
+        await appendLogSafe(jobId, `\nLocal pipeline process finished. Awaiting webhook updates.\n`);
+        return;
       }
 
       // Azure runner

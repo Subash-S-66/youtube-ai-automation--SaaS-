@@ -82,6 +82,7 @@ Thumbs.db
 tools/ffmpeg/
 backend/node_modules
 backend/uploads
+.codespaces/
 backend.log
 *.log
 backend/*.log

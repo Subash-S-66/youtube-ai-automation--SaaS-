@@ -15,6 +15,7 @@ from pathlib import Path
 import random
 import socket
 import time
+from urllib.parse import unquote, urlparse
 
 from googleapiclient.errors import HttpError
 
@@ -251,6 +252,57 @@ def _run_network_preflight(check_trend_sources: bool, upload: bool) -> None:
     LOGGER.warning(
         "Test command: Test-NetConnection generativelanguage.googleapis.com -Port 443"
     )
+
+
+def _download_custom_media(urls: list[str], output_dir: Path) -> list[Path]:
+    downloaded: list[Path] = []
+    if not isinstance(urls, list) or not urls:
+        return downloaded
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    webhook_secret = (os.getenv("WEBHOOK_SECRET", "") or "").strip()
+    headers = {}
+    if webhook_secret:
+        headers["x-webhook-secret"] = webhook_secret
+
+    for idx, raw_url in enumerate(urls, start=1):
+        media_url = str(raw_url or "").strip()
+        if not media_url:
+            continue
+        try:
+            parsed = urlparse(media_url)
+            base_name = Path(unquote(parsed.path)).name or f"custom_media_{idx}"
+            target = output_dir / f"custom_{idx}_{base_name}"
+            with requests.get(media_url, stream=True, headers=headers, timeout=30) as response:
+                response.raise_for_status()
+                with target.open("wb") as file_handle:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            file_handle.write(chunk)
+            if not target.exists() or target.stat().st_size == 0:
+                try:
+                    target.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                LOGGER.warning(
+                    "custom_media_download_failed empty_file url=%s",
+                    media_url,
+                )
+                continue
+            downloaded.append(target)
+            LOGGER.info(
+                "custom_media_download_success url=%s path=%s bytes=%s",
+                media_url,
+                str(target),
+                target.stat().st_size,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "custom_media_download_failed url=%s reason=%s",
+                media_url,
+                str(exc)[:240],
+            )
+    return downloaded
 
 
 def _extract_highlight_words(topic: str, hook: str) -> list[str]:
@@ -549,6 +601,8 @@ def _build_short_from_optimized_idea(
     )
 
     content_type = settings.get("contentType", "clips").lower()
+    custom_video_urls = settings.get("customVideoUrls", [])
+    custom_image_urls = settings.get("customImageUrls", [])
     user_media_paths = settings.get("userMediaPaths", [])
 
     scene_duration = _choose_scene_duration()
@@ -574,13 +628,29 @@ def _build_short_from_optimized_idea(
 
     videos = []
 
-    # Pre-fill videos with user uploaded media if available
+    downloaded_custom_videos = _download_custom_media(
+        urls=[str(url).strip() for url in custom_video_urls if str(url).strip()],
+        output_dir=CLIPS_DIR,
+    ) if isinstance(custom_video_urls, list) else []
+    downloaded_custom_images = _download_custom_media(
+        urls=[str(url).strip() for url in custom_image_urls if str(url).strip()],
+        output_dir=CLIPS_DIR,
+    ) if isinstance(custom_image_urls, list) else []
+    videos.extend(downloaded_custom_videos)
+    videos.extend(downloaded_custom_images)
+    LOGGER.info(
+        "custom_media_download_summary videos=%s images=%s",
+        len(downloaded_custom_videos),
+        len(downloaded_custom_images),
+    )
+
+    # Legacy local media path support for local/dev runs.
     if user_media_paths and isinstance(user_media_paths, list):
         for media_path in user_media_paths:
             path_obj = Path(media_path)
             if path_obj.exists():
                 videos.append(path_obj)
-        LOGGER.info(f"Loaded {len(videos)} user uploaded media clips")
+        LOGGER.info("Loaded %s legacy local user media clips", len(videos))
 
     # If we need more videos than the user provided, fetch the rest
     needed_clips = len(scene_queries) - len(videos)
@@ -977,6 +1047,8 @@ def _build_video_from_content(
         preferred_voice = random.choice(voices)
 
     content_type = settings.get("contentType", "clips").lower()
+    custom_video_urls = settings.get("customVideoUrls", [])
+    custom_image_urls = settings.get("customImageUrls", [])
     user_media_paths = settings.get("userMediaPaths", [])
 
     LOGGER.info("Generating voice narration via VoiceService")
@@ -1007,13 +1079,30 @@ def _build_video_from_content(
 
     videos = []
 
-    # Pre-fill videos with user uploaded media if available
+    # Load custom media from backend-provided secure URLs.
+    downloaded_custom_videos = _download_custom_media(
+        urls=[str(url).strip() for url in custom_video_urls if str(url).strip()],
+        output_dir=CLIPS_DIR,
+    ) if isinstance(custom_video_urls, list) else []
+    downloaded_custom_images = _download_custom_media(
+        urls=[str(url).strip() for url in custom_image_urls if str(url).strip()],
+        output_dir=CLIPS_DIR,
+    ) if isinstance(custom_image_urls, list) else []
+    videos.extend(downloaded_custom_videos)
+    videos.extend(downloaded_custom_images)
+    LOGGER.info(
+        "custom_media_download_summary videos=%s images=%s",
+        len(downloaded_custom_videos),
+        len(downloaded_custom_images),
+    )
+
+    # Legacy local media path support for local/dev runs.
     if user_media_paths and isinstance(user_media_paths, list):
         for media_path in user_media_paths:
             path_obj = Path(media_path)
             if path_obj.exists():
                 videos.append(path_obj)
-        LOGGER.info(f"Loaded {len(videos)} user uploaded media clips")
+        LOGGER.info("Loaded %s legacy local user media clips", len(videos))
 
     # If we need more videos than the user provided, fetch the rest
     needed_clips = len(scene_queries) - len(videos)
@@ -1367,6 +1456,12 @@ def run_prepared_pipeline(
         raise ValueError("PIPELINE_PAYLOAD.youtube and videoConfig must be objects.")
 
     script_text = _normalize_script_from_payload(script_items)
+    if not isinstance(video_config.get("customVideoUrls", []), list):
+        raise ValueError("videoConfig.customVideoUrls must be an array when provided.")
+    if not isinstance(video_config.get("customImageUrls", []), list):
+        raise ValueError("videoConfig.customImageUrls must be an array when provided.")
+
+    os.environ["SETTINGS"] = json.dumps(video_config)
     normalized = {
         "topic": str(youtube.get("title", "Prepared Topic") or "Prepared Topic"),
         "title": str(youtube.get("title", "Prepared Title") or "Prepared Title"),
