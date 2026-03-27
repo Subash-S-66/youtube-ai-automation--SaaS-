@@ -21,9 +21,63 @@ ABSOLUTE RULES:
 3. CTA: The final line MUST be an engaging CTA (dynamic based on the topic, or "Follow for more" / "Stay tuned" if fallback).
 4. OUTPUT: Provide ONLY the final optimized script prompt text. Do not output JSON, do not include the confidence score, do not include the classification name, and do not include unnecessary explanations. Make it directly usable for the video generation pipeline.`;
 
-export const generateGeminiPrompt = async (user_prompt: string): Promise<string> => {
+export interface PromptGenerationOptions {
+  targetDuration?: number;
+  ctaEnabled?: boolean;
+  recapEnabled?: boolean;
+  storyMode?: boolean;
+  currentPart?: number;
+  storyId?: string;
+  videoCount?: number;
+  videoStyle?: string;
+  tone?: string;
+  templateConfig?: {
+    fontStyle?: string;
+    subtitleColor?: string;
+  };
+}
+
+const buildPromptWithOptions = (user_prompt: string, options: PromptGenerationOptions = {}): string => {
+  const targetDuration = Math.max(15, Math.min(60, Number(options.targetDuration || 40)));
+  const ctaEnabled = !!options.ctaEnabled;
+  const recapEnabled = !!options.recapEnabled;
+  const storyMode = !!options.storyMode;
+  const currentPart = Math.max(1, Number(options.currentPart || 1));
+  const storyId = String(options.storyId || '').trim() || 'none';
+  const videoCount = Math.max(1, Math.min(10, Number(options.videoCount || 1)));
+  const videoStyle = String(options.videoStyle || '').trim() || 'default';
+  const tone = String(options.tone || '').trim() || 'neutral';
+  const fontStyle = String(options.templateConfig?.fontStyle || 'Anton').trim() || 'Anton';
+  const subtitleColor = String(options.templateConfig?.subtitleColor || '#FFFFFF').trim() || '#FFFFFF';
+  return `${SYSTEM_PROMPT}
+
+PIPELINE PARAMETERS:
+- targetDuration: ${targetDuration} seconds
+- ctaEnabled: ${ctaEnabled}
+- recapEnabled: ${recapEnabled}
+- storyMode: ${storyMode}
+- currentPart: ${currentPart}
+- storyId: ${storyId}
+- videoCount: ${videoCount}
+- videoStyle: ${videoStyle}
+- tone: ${tone}
+- templateConfig.fontStyle: ${fontStyle}
+- templateConfig.subtitleColor: ${subtitleColor}
+
+Return ONLY the optimised narration prompt. Do NOT return JSON.
+The prompt must contain a natural-language instruction specifying:
+total video duration = ${targetDuration}s,
+CTA required = ${ctaEnabled},
+recap required = ${recapEnabled},
+story mode = ${storyMode} part ${currentPart}.
+
+USER INPUT: ${user_prompt}`;
+};
+
+export const generateGeminiPrompt = async (user_prompt: string, options: PromptGenerationOptions = {}): Promise<string> => {
   const julesUrl = process.env.JULES_API_URL;
   const julesKey = process.env.JULES_API_KEY;
+  const fullPrompt = buildPromptWithOptions(user_prompt, options);
 
   if (julesUrl && julesKey) {
     try {
@@ -33,7 +87,7 @@ export const generateGeminiPrompt = async (user_prompt: string): Promise<string>
           'Content-Type': 'application/json',
           Authorization: `Bearer ${julesKey}`,
         },
-        body: JSON.stringify({ prompt: `${SYSTEM_PROMPT}\n\nUSER INPUT: ${user_prompt}` }),
+        body: JSON.stringify({ prompt: fullPrompt }),
       });
       if (response.ok) {
         const data = await response.json();
@@ -47,7 +101,7 @@ export const generateGeminiPrompt = async (user_prompt: string): Promise<string>
     }
   }
 
-  return generateGeminiPromptDirect(user_prompt);
+  return generateGeminiPromptDirect(fullPrompt);
 };
 
 export const generateGeminiPromptDirect = async (user_prompt: string): Promise<string> => {
@@ -62,7 +116,7 @@ export const generateGeminiPromptDirect = async (user_prompt: string): Promise<s
     const genAI = new GoogleGenerativeAI(apiKey);
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-3.1-flash-lite',
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       systemInstruction: SYSTEM_PROMPT,
     });
 

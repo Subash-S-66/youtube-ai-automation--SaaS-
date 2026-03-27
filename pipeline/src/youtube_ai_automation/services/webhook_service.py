@@ -12,7 +12,10 @@ def _normalize_webhook_candidates(webhook_url: str) -> list[str]:
         return []
     if base.endswith(_JOB_STATUS_PATH):
         return [base]
-    return [base, f"{base}{_JOB_STATUS_PATH}"]
+    from urllib.parse import urlparse
+    parsed = urlparse(base)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return [origin + _JOB_STATUS_PATH]
 
 def send_job_status(
     job_id: str,

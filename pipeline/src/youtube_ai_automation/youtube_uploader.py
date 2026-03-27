@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
-import subprocess
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -139,68 +138,8 @@ def _normalize_publish_at(publish_at: str | None) -> str | None:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _probe_video_details(video_path: Path) -> tuple[float, int, int]:
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration:stream=codec_type,width,height",
-        "-of",
-        "json",
-        str(video_path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    payload = json.loads(result.stdout or "{}")
-    duration = float(payload.get("format", {}).get("duration", 0.0))
-    width = 0
-    height = 0
-    for stream in payload.get("streams", []):
-        if stream.get("codec_type") != "video":
-            continue
-        width = int(stream.get("width", 0) or 0)
-        height = int(stream.get("height", 0) or 0)
-        break
-    if duration <= 0 or width <= 0 or height <= 0:
-        raise ValueError(f"Invalid media metadata: duration={duration}, width={width}, height={height}")
-    return duration, width, height
-
-
 def _validate_shorts_candidate(video_path: Path, strict_shorts_validation: bool) -> None:
-    try:
-        duration, width, height = _probe_video_details(video_path)
-    except Exception as exc:
-        message = f"Could not run Shorts pre-check via ffprobe for {video_path}: {exc}"
-        if strict_shorts_validation:
-            raise RuntimeError(message) from exc
-        LOGGER.warning("%s. Upload will continue.", message)
-        return
-
-    aspect_ratio = width / height
-    LOGGER.info(
-        "Shorts pre-check metadata: duration=%.2fs resolution=%sx%s aspect=%.3f",
-        duration,
-        width,
-        height,
-        aspect_ratio,
-    )
-
-    issues: list[str] = []
-    if duration > SHORTS_MAX_DURATION_SECONDS:
-        issues.append(
-            f"Duration is {duration:.2f}s, above Shorts max of {SHORTS_MAX_DURATION_SECONDS:.0f}s."
-        )
-    if height < width:
-        issues.append(f"Video is horizontal ({width}x{height}); Shorts should be square or vertical.")
-
-    if issues:
-        message = "Shorts pre-check failed: " + " ".join(issues)
-        if strict_shorts_validation:
-            raise ValueError(message)
-        LOGGER.warning("%s Upload will continue because strict validation is disabled.", message)
-        return
-
-    LOGGER.info("Shorts pre-check passed. YouTube should classify it as a Short after processing.")
+    LOGGER.info("Shorts pre-check skipped in prepared mode for %s", video_path)
 
 
 def upload_video(

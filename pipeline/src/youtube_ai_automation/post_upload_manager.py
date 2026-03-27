@@ -73,7 +73,7 @@ def _download_with_yt_dlp_cli(video_id: str, output_dir: Path) -> Path | None:
         url,
     ]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
     except Exception:
         return None
 

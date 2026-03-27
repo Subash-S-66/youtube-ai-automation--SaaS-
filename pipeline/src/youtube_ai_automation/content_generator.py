@@ -9,8 +9,6 @@ import json
 import logging
 import math
 import os
-import random
-import re
 import time
 from textwrap import dedent
 from typing import Any
@@ -18,13 +16,11 @@ from typing import Any
 import requests
 
 LOGGER = logging.getLogger(__name__)
-GEMINI_FALLBACK_MODEL = "gemini-3.1-flash-lite"
 GEMINI_FALLBACK_MODELS_DEFAULT = (
-    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
     "gemini-1.5-pro",
-    "gemini-1.0-pro",
 )
 GEMINI_RETRY_STATUS_CODES = {429, 503}
 GEMINI_MAX_RETRIES_PER_MODEL = 2
@@ -33,11 +29,6 @@ GEMINI_REQUEST_TIMEOUT_SECONDS = 35
 GEMINI_MODEL_LIST_TIMEOUT_SECONDS = 8
 GEMINI_MODEL_LIST_CACHE_SECONDS = 120
 _GEMINI_AVAILABLE_MODELS_CACHE: dict[str, Any] = {"fetched_at": 0.0, "models": None}
-
-BASE_WPS = 2.4
-# Voice rate rotates between +5% and +15%, so plan word counts for that faster delivery window.
-SPEECH_RATE_MIN = 1.05
-SPEECH_RATE_MAX = 1.15
 
 
 @dataclass
@@ -65,11 +56,10 @@ def _clean_text(value: str) -> str:
 
 
 def _word_bounds(target_duration: int) -> tuple[int, int]:
-    # Use 2.5 words/sec and allow target ± 5 seconds
-    min_seconds = max(15, target_duration - 5)
-    max_seconds = min(60, target_duration + 5)
+    min_seconds = max(15, int(target_duration) - 5)
+    max_seconds = min(60, int(target_duration) + 5)
     min_words = math.floor(min_seconds * 2.5)
-    max_words = math.ceil(max_seconds * 2.5)
+    max_words = math.floor(max_seconds * 2.5)
     return min_words, max_words
 
 
@@ -123,7 +113,6 @@ def _validate_content_quality(payload: dict[str, Any]) -> list[str]:
 
 
 def _sanitize_output(payload: dict[str, Any], target_duration: int, gemini_api_key: str = "") -> GeneratedContent:
-
     topic = _clean_text(str(payload.get("topic", "")))
     if not topic:
         raise ValueError("Topic is missing or empty.")
@@ -139,13 +128,32 @@ def _sanitize_output(payload: dict[str, Any], target_duration: int, gemini_api_k
 
     raw_script = str(payload.get("script", ""))
     lines = _split_script_lines(raw_script)
-    if len(lines) != 5:
-        raise ValueError("Script must contain exactly 5 non-empty lines for structured Shorts output.")
-    lines = [_clean_text(line) for line in lines if _clean_text(line)]
-    if len(lines) != 5:
-        raise ValueError("Script must contain 5 non-empty lines for structured Shorts output.")
+    lines = [line for line in lines if line.strip()]
+    if not lines:
+        raise ValueError("Script is empty after cleaning.")
 
-    script = "\n".join(lines)
+    full_text = " ".join(lines)
+    word_count = len(full_text.split())
+    min_words, max_words = _word_bounds(target_duration)
+    if word_count < min_words:
+        raise ValueError(
+            f"Script too short: {word_count} words, need {min_words}-{max_words} for {target_duration}s video."
+        )
+
+    if word_count > max_words:
+        sentences = [s.strip() for s in full_text.split(".") if s.strip()]
+        trimmed = ""
+        for sentence in sentences:
+            candidate = (trimmed + ". " + sentence).strip()
+            if len(candidate.split()) <= max_words:
+                trimmed = candidate
+            else:
+                break
+        if trimmed:
+            full_text = trimmed.rstrip(".") + "."
+        lines = [full_text]
+
+    script = full_text
 
     raw_hashtags = payload.get("hashtags")
     if not isinstance(raw_hashtags, list):
@@ -156,22 +164,22 @@ def _sanitize_output(payload: dict[str, Any], target_duration: int, gemini_api_k
 
     raw_scenes = payload.get("scenes")
     if not isinstance(raw_scenes, list):
-        raise ValueError("Scenes must be a list of 5 strings.")
+        raise ValueError("Scenes must be a list of strings.")
     scenes = [_clean_text(str(item)) for item in raw_scenes if _clean_text(str(item))]
-    if len(scenes) != 5:
-        raise ValueError("Scenes must contain exactly 5 non-empty items.")
+    if len(scenes) < 5 or len(scenes) > 12:
+        raise ValueError("Scenes must contain 5 to 12 non-empty items.")
 
     raw_queries = payload.get("search_queries")
     if not isinstance(raw_queries, list):
-        raise ValueError("Search queries must be a list of 5 strings.")
+        raise ValueError("Search queries must be a list of strings.")
     search_queries = [_clean_text(str(item)) for item in raw_queries if _clean_text(str(item))]
-    if len(search_queries) != 5:
-        raise ValueError("Search queries must contain exactly 5 non-empty items.")
+    if len(search_queries) != len(scenes):
+        raise ValueError("Search queries must contain exactly one item per scene.")
 
     return GeneratedContent(
         topic=topic,
         title=title,
-        hook=lines[0],
+        hook=lines[0] if lines else "",
         description=description,
         hashtags=hashtags,
         script=script,
@@ -209,12 +217,12 @@ def _call_openai(prompt: str, api_key: str, model: str) -> str:
 def _normalize_gemini_model_name(model: str) -> str:
     model_name = " ".join(str(model).split()).strip()
     if model_name.startswith("models/"):
-        model_name = model_name[len("models/") :]
+        model_name = model_name[len("models/"):]
     return model_name
 
 
 def _gemini_model_candidates(primary_model: str) -> list[str]:
-    primary = _normalize_gemini_model_name(primary_model) or GEMINI_FALLBACK_MODEL
+    primary = _normalize_gemini_model_name(primary_model) or GEMINI_FALLBACK_MODELS_DEFAULT[0]
     env_fallbacks_raw = os.getenv("GEMINI_FALLBACK_MODELS", "")
     env_fallbacks = [
         _normalize_gemini_model_name(item)
@@ -223,11 +231,9 @@ def _gemini_model_candidates(primary_model: str) -> list[str]:
     ]
     out: list[str] = [
         primary,
-        GEMINI_FALLBACK_MODEL,
         *env_fallbacks,
         *GEMINI_FALLBACK_MODELS_DEFAULT,
     ]
-
     deduped: list[str] = []
     seen: set[str] = set()
     for item in out:
@@ -273,6 +279,7 @@ def _fetch_available_gemini_models(api_key: str) -> set[str] | None:
 
 from .gemini_utils import execute_with_gemini_fallback
 
+
 def _call_gemini_single_key(prompt: str, api_key: str, model: str) -> str:
     errors: list[str] = []
     model_candidates = _gemini_model_candidates(model)
@@ -281,18 +288,7 @@ def _call_gemini_single_key(prompt: str, api_key: str, model: str) -> str:
         primary = model_candidates[0] if model_candidates else ""
         filtered = [item for item in model_candidates[1:] if item in available_models]
         if primary:
-            if primary not in available_models:
-                LOGGER.warning(
-                    "Primary Gemini model '%s' not in models list; will still try it first.",
-                    primary,
-                )
             model_candidates = [primary, *filtered]
-        elif filtered:
-            model_candidates = filtered
-        else:
-            LOGGER.warning(
-                "No Gemini model candidates matched the models API list. Falling back to configured list."
-            )
 
     for index, model_name in enumerate(model_candidates):
         for attempt in range(1, GEMINI_MAX_RETRIES_PER_MODEL + 1):
@@ -335,30 +331,19 @@ def _call_gemini_single_key(prompt: str, api_key: str, model: str) -> str:
                     )
                     time.sleep(delay)
                     continue
-                if status_code == 404:
-                    LOGGER.warning("Gemini model not found: %s", model_name)
-                    error_str = f"Model not found ({model_name})"
-                elif status_code == 400:
-                    error_str = f"Bad request ({model_name}): {response_text}"
-                elif status_code == 429:
-                    error_str = "Quota exceeded / Rate limited"
-                    raise hexc # Bubble up to switch key
-                elif status_code == 503:
-                    error_str = "Service unavailable"
-                else:
-                    error_str = f"HTTP {status_code}: {response_text or str(hexc)[:80]}"
-                errors.append(f"{model_name}: {error_str}")
+                errors.append(f"{model_name}: HTTP {status_code}: {response_text or str(hexc)[:80]}")
                 break
             except Exception as exc:
                 errors.append(f"{model_name}: {str(exc)[:100]}")
                 break
-
     raise RuntimeError("Gemini request failed for all models: " + " | ".join(errors))
+
 
 def _call_gemini(prompt: str, api_key: str, model: str) -> str:
     def operation(key: str) -> str:
         return _call_gemini_single_key(prompt, key, model)
     return execute_with_gemini_fallback(operation)
+
 
 def _call_anthropic(prompt: str, api_key: str, model: str) -> str:
     response = requests.post(
@@ -390,7 +375,6 @@ def _call_anthropic(prompt: str, api_key: str, model: str) -> str:
 
 def _call_jules(prompt: str, api_url: str, api_key: str) -> str | None:
     try:
-        LOGGER.info("Calling Jules API for content generation...")
         response = requests.post(
             api_url,
             headers={
@@ -406,8 +390,9 @@ def _call_jules(prompt: str, api_url: str, api_key: str) -> str | None:
         if result:
             return str(result).strip()
     except Exception as exc:
-        LOGGER.warning(f"Jules API failed: {exc}")
+        LOGGER.warning("Jules API failed: %s", exc)
     return None
+
 
 def _call_model(
     prompt: str,
@@ -419,44 +404,12 @@ def _call_model(
     anthropic_api_key: str,
     anthropic_model: str,
 ) -> str:
-    # Try Jules API First
     jules_url = os.getenv("JULES_API_URL")
     jules_key = os.getenv("JULES_API_KEY")
-    jules_content_only = os.getenv("JULES_CONTENT_ONLY", "false").strip().lower() in {"1", "true", "yes"}
-    jules_local_fallback_url = os.getenv(
-        "JULES_LOCAL_FALLBACK_URL",
-        "http://localhost:5000/api/jules/generate",
-    ).strip()
-    jules_fallback_to_gemini_live = os.getenv("JULES_FALLBACK_TO_GEMINI_LIVE", "false").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    gemini_live_fallback_model = os.getenv("GEMINI_LIVE_FALLBACK_MODEL", "gemini-2.5-flash").strip()
     if jules_url and jules_key:
         jules_result = _call_jules(prompt, jules_url, jules_key)
         if jules_result:
             return jules_result
-        if jules_local_fallback_url and jules_local_fallback_url != jules_url:
-            LOGGER.warning(
-                "Primary Jules failed; trying local Jules fallback '%s'.",
-                jules_local_fallback_url,
-            )
-            local_result = _call_jules(prompt, jules_local_fallback_url, jules_key)
-            if local_result:
-                return local_result
-        if jules_fallback_to_gemini_live:
-            if not gemini_api_key:
-                raise ValueError("Jules failed and GEMINI_API_KEY is missing for Gemini live fallback.")
-            LOGGER.warning(
-                "Jules content generation failed; falling back to Gemini model '%s'.",
-                gemini_live_fallback_model,
-            )
-            return _call_gemini(prompt, gemini_api_key, gemini_live_fallback_model)
-        if jules_content_only:
-            raise ValueError("JULES_CONTENT_ONLY=true but Jules content generation failed.")
-    elif jules_content_only:
-        raise ValueError("JULES_CONTENT_ONLY=true but JULES_API_URL/JULES_API_KEY are missing.")
 
     normalized = provider.strip().lower()
     if normalized in {"gemini", "google"}:
@@ -478,7 +431,7 @@ def generate_content(
     topic: str,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-3.1-flash-lite",
+    gemini_model: str = "gemini-2.5-flash",
     openai_api_key: str = "",
     openai_model: str = "gpt-4.1-mini",
     anthropic_api_key: str = "",
@@ -488,11 +441,9 @@ def generate_content(
     story_mode: bool = False,
     current_part: int = 1,
     recap_enabled: bool = False,
+    cta_enabled: bool = False,
     last_prompt: str = "",
 ) -> GeneratedContent:
-    """
-    Generate content for a single short video.
-    """
     topic = _clean_text(topic)
     if not topic:
         raise ValueError("Topic is required for content generation.")
@@ -501,23 +452,21 @@ def generate_content(
         raise ValueError("AI provider is required; template/default content is disabled.")
 
     min_words, max_words = _word_bounds(target_duration)
-
     story_instruction = ""
     if story_mode:
         if current_part > 1:
-            if recap_enabled:
-                story_instruction = f"\nThis is PART {current_part} of an ongoing story. Here is the AI prompt from the previous part for context:\n{last_prompt}\n\nInclude a brief 1-sentence recap of previous events for continuity, continue the narrative, and ALWAYS end on a massive cliffhanger for the next part."
-            else:
-                story_instruction = f"\nThis is PART {current_part} of an ongoing story. Here is the AI prompt from the previous part for context:\n{last_prompt}\n\nDive straight into continuing the narrative without recapping, and ALWAYS end on a massive cliffhanger for the next part."
+            story_instruction = (
+                f"\nThis is PART {current_part} of an ongoing story."
+                f"\nPrevious prompt context:\n{last_prompt}\n"
+                "\nContinue the narrative naturally."
+            )
         else:
-            story_instruction = "\nThis is PART 1 of a new multi-part story series. Introduce the story and characters, and ALWAYS end on a massive cliffhanger for the next part."
+            story_instruction = "\nThis is PART 1 of a new multi-part story series."
 
     prompt = dedent(
         f"""
         You are an expert YouTube Shorts content creator focused on virality, retention, and performance.
         Create a vertical video script (under 60 seconds) that is highly engaging.
-        Tone: Match tone to content type (e.g. suspenseful for true crime, energetic for tech, factual yet gripping for news).
-        Use simple, punchy language. Use ellipses (...) and em-dashes (—) to force natural pauses for impact.
 
         TOPIC: {topic}
         {story_instruction}
@@ -525,54 +474,37 @@ def generate_content(
         --------------------------------
         ABSOLUTE RULES - VIRAL OPTIMIZATION
         --------------------------------
-        1. Ensure the first 3 seconds (Line 1) are a massive hook. Use curiosity, shock, or a direct question.
-           Examples: "You won’t believe this...", "This happened in real life...", "What if I told you..."
-        2. Extract key keywords from the topic and weave them naturally into the title, description, and hashtags.
-        3. Keep the storytelling fast-paced with an unexpected twist or insight before the end.
+        1. Ensure the first 3 seconds (Line 1) are a massive hook.
+        2. Keep the storytelling fast-paced with an unexpected twist or insight before the end.
+        3. CTA_RULE: if ctaEnabled is true, the LAST 1-2 lines MUST be a call-to-action.
+           RECAP_RULE: if recapEnabled is true, lines 2-3 from the end (before CTA) MUST briefly recap the key point.
+           IMPORTANT: CTA and recap count toward the total word budget.
+           Do NOT add them on top of the script; include them within the min/max word range.
 
         --------------------------------
-        SCRIPT STRUCTURE (exactly 5 newline-separated lines)
+        SCRIPT STRUCTURE ({min_words}-{max_words} total words, separated into natural sentence-level lines, NO line labels)
         --------------------------------
-        Write 5 clean narration lines with no labels or headings.
-        The lines must flow seamlessly for narration:
-        - Line 1: The Hook (Curiosity, shock, or question).
-        - Line 2: Build curiosity (context/setup).
-        - Line 3: Main content / details.
-        - Line 4: Twist / unexpected insight.
-        - Line 5: The Call to Action (CTA).
-
-        Total script word count MUST BE exactly between {min_words} and {max_words} words to perfectly match the target video duration of {target_duration} seconds.
-        If too long: trim intelligently (remove low-impact words).
-        If too short: expand slightly (add insight or explanation).
-        NEVER cut the script mid-sentence. Ensure full content delivery and a smooth ending.
+        Write natural narration lines with no labels/headings.
+        Keep line count between 5 and 12.
+        Total script word count must be between {min_words} and {max_words}.
 
         --------------------------------
         SCENE DESCRIPTIONS (for stock video search)
         --------------------------------
-        Generate exactly 5 scenes, one per script line. Each scene must be a strictly 1-2 word noun phrase
-        that will be used to search for stock footage. To avoid random or irrelevant clips, ensure the words precisely match the scene meaning.
-
-        GOOD search queries:
-            "politician podium"
-            "rescue workers"
-            "street protest"
-            "stock market"
-
-        BAD search queries (too vague or long):
-            "news" / "world" / "important event" / "a man walking down the street"
+        Generate exactly one scene description per script line (minimum 5, maximum 12).
 
         --------------------------------
         OUTPUT FORMAT - strict JSON, no markdown, no commentary
         --------------------------------
         {{
-          "topic": "<the news headline>",
-          "title": "<under 60 chars, highly emotional/curiosity-driven, injected with keywords>",
-          "hook": "<same as script line 1>",
-          "description": "<2-3 SEO sentences injected with topic keywords>",
-          "hashtags": ["#shorts", "#news", "#breakingnews", ... 10-15 total],
-          "script": "<all 5 lines separated by newlines>",
-          "scenes": ["<scene 1>", "<scene 2>", "<scene 3>", "<scene 4>", "<scene 5>"],
-          "search_queries": ["<query 1>", "<query 2>", "<query 3>", "<query 4>", "<query 5>"]
+          "topic": "string",
+          "title": "string",
+          "hook": "string",
+          "description": "string",
+          "hashtags": ["#shorts", "..."],
+          "script": "newline-separated lines",
+          "scenes": ["<scene 1>", "...", "<scene N>"],
+          "search_queries": ["<query 1>", "...", "<query N>"]
         }}
         """
     ).strip()
@@ -591,16 +523,12 @@ def generate_content(
         payload = _extract_json_payload(raw)
         if not isinstance(payload, dict):
             raise ValueError("Model output was not a JSON object.")
-
-        # Content quality validation
         quality_warnings = _validate_content_quality(payload)
         if quality_warnings:
             for warning in quality_warnings:
                 LOGGER.warning("Content quality issue: %s", warning)
-
         return _sanitize_output(payload, target_duration=target_duration, gemini_api_key=gemini_api_key)
     except Exception as exc:
         if normalized_provider in {"gemini", "google"}:
             raise RuntimeError(f"Gemini content generation failed: {exc}") from exc
         raise RuntimeError(f"AI content generation failed: {exc}") from exc
-

@@ -87,33 +87,6 @@ const estimateScriptDuration = (lines: string[]): number => {
   return Number(lines.reduce((sum, line) => sum + estimateLineDuration(line), 0).toFixed(2));
 };
 
-const allocateSections = (targetDuration: number, hasCTA: boolean, hasRecap: boolean) => {
-  const target = Math.max(15, Math.min(60, Math.floor(targetDuration)));
-  const hook = target >= 25 ? 5 : Math.max(3, Math.floor(target * 0.15));
-  let cta = 0;
-  let recap = 0;
-
-  if (hasCTA && hasRecap) {
-    cta = Math.max(6, Math.floor(target * 0.12));
-    recap = Math.max(5, Math.floor(target * 0.1));
-  } else if (hasCTA) {
-    cta = Math.max(5, Math.floor(target * 0.13));
-  } else if (hasRecap) {
-    recap = Math.max(5, Math.floor(target * 0.12));
-  }
-
-  let mainContent = Math.max(6, target - hook - cta - recap);
-  const drift = target - (hook + mainContent + cta + recap);
-  if (drift !== 0) mainContent += drift;
-
-  return {
-    hook,
-    main_content: mainContent,
-    recap,
-    cta,
-  };
-};
-
 const ensureDurationBounds = (lines: string[], targetDurationSeconds: number): string[] => {
   const safe = lines.filter(Boolean);
   if (!safe.length) return safe;
@@ -143,10 +116,15 @@ const buildLineCaptions = (
   const lines = scriptLines.filter(Boolean);
   if (lines.length === 0) return [];
   const totalMs = Math.max(15000, Math.min(60000, Math.floor(targetDurationSeconds * 1000)));
-  const slot = Math.floor(totalMs / lines.length);
+  const totalWords = lines.reduce((sum, line) => sum + line.split(/\s+/).filter(Boolean).length, 0);
+  let cursor = 0;
   return lines.map((line, idx) => {
-    const startMs = idx * slot;
-    const endMs = idx === lines.length - 1 ? totalMs : (idx + 1) * slot;
+    const lineWords = line.split(/\s+/).filter(Boolean).length;
+    const lineFrac = lineWords / Math.max(1, totalWords);
+    const lineDurMs = Math.round(lineFrac * totalMs);
+    const startMs = cursor;
+    const endMs = idx === lines.length - 1 ? totalMs : cursor + lineDurMs;
+    cursor = endMs;
     return { startMs, endMs, text: line };
   });
 };
@@ -167,8 +145,17 @@ const normalizePreparedItem = (raw: any, fallbackTopic: string, targetDurationSe
   const script = clean(raw?.script);
 
   const scriptLines = splitScriptLines(script);
-  if (!topic || !title || !description || scriptLines.length < 5) {
+  const minLines = 3;
+  if (!topic || !title || !description || scriptLines.length < minLines) {
     throw new AppError('AI content generation returned invalid structure.', 502);
+  }
+  const minWords = Math.floor((targetDurationSeconds - 5) * 2.5);
+  const wordCount = script.split(/\s+/).filter(Boolean).length;
+  if (wordCount < minWords) {
+    throw new AppError(
+      `Script too short: ${wordCount} words for ${targetDurationSeconds}s target.`,
+      502
+    );
   }
 
   const hook = clean(raw?.hook) || scriptLines[0] || '';
@@ -190,8 +177,8 @@ const normalizePreparedItem = (raw: any, fallbackTopic: string, targetDurationSe
     hook,
     description,
     hashtags,
-    script: scriptLines.slice(0, 5).join('\n'),
-    captions: buildLineCaptions(scriptLines.slice(0, 5), targetDurationSeconds),
+    script: scriptLines.join('\n'),
+    captions: buildLineCaptions(scriptLines, targetDurationSeconds),
     scenes,
     searchQueries,
   };
@@ -210,7 +197,6 @@ const buildStructuredPrompt = (
   ctaEnabled?: boolean,
   templateConfig?: { fontStyle?: string; subtitleColor?: string }
 ): string => {
-  const sectionBudget = allocateSections(durationSeconds, !!ctaEnabled, !!recapEnabled);
   const partNote =
     total > 1
       ? `This is video ${index} of ${total} for the same pipeline job. Keep variation high and avoid duplicate hooks.`
@@ -218,40 +204,44 @@ const buildStructuredPrompt = (
   const storyNote = storyMode
     ? `Story mode is enabled. Current part: ${currentPart || 1}. Recap enabled: ${!!recapEnabled}. Previous prompt context: ${clean(lastPrompt)}`
     : '';
-
+  const ctaNote = ctaEnabled
+    ? `CTA: Include a 1-2 sentence call-to-action at the END of the script. CTA counts toward word budget.`
+    : `CTA: Do NOT include a call-to-action.`;
+  const recapNote = recapEnabled
+    ? `RECAP: Include a 1 sentence recap of the main point BEFORE the CTA. Recap counts toward word budget.`
+    : `RECAP: Do NOT include a recap section.`;
+  const minWords = Math.floor((durationSeconds - 5) * 2.5);
+  const maxWords = Math.floor(Math.min(60, durationSeconds + 5) * 2.5);
   return `
-You create structured Shorts content as strict JSON only.
-Base topic: ${topic}
-Prompt context: ${generatedPrompt}
-Target duration in seconds: ${durationSeconds}
-${partNote}
-${storyNote}
+Create a YouTube Shorts script for the topic below.
 
-Return ONLY JSON with this exact structure:
+Topic / Prompt: ${generatedPrompt}
+Target duration: ${durationSeconds} seconds
+Word count: ${minWords}-${maxWords} words TOTAL (including CTA and recap if present)
+
+${ctaNote}
+${recapNote}
+${storyNote}
+${partNote}
+
+RULES:
+- The script must be ${minWords}-${maxWords} words. Count every word.
+- Write in clear, punchy sentences. No filler.
+- First sentence must be a strong hook (curiosity/surprise/question).
+- Use natural line breaks between sentences.
+- Do NOT add section labels like "Hook:", "CTA:", "Main:".
+- Return ONLY JSON matching this exact schema:
 {
   "topic": "string",
-  "target_duration": ${durationSeconds},
-  "sections": {
-    "hook": ${sectionBudget.hook},
-    "main_content": ${sectionBudget.main_content},
-    "recap": ${sectionBudget.recap},
-    "cta": ${sectionBudget.cta}
-  },
-  "title": "string, max 60 chars preferred",
-  "hook": "string",
-  "description": "string",
+  "title": "string (max 60 chars)",
+  "hook": "string (first sentence)",
+  "description": "string (2-3 SEO sentences)",
   "hashtags": ["#shorts", "..."],
-  "script": "timed narrative matching section durations",
-  "recap_text": "string (required when recap > 0)",
-  "cta_text": "string (required when cta > 0)",
-  "caption_style": {
-    "font": "${clean(templateConfig?.fontStyle || 'Anton')}",
-    "color": "${clean(templateConfig?.subtitleColor || '#FFFFFF')}"
-  },
-  "scenes": ["5 scene phrases"],
-  "search_queries": ["5 stock search phrases"]
+  "script": "full script as newline-separated lines",
+  "scenes": ["5 stock video search phrases"],
+  "search_queries": ["5 stock video search queries"]
 }
-  `.trim();
+`.trim();
 };
 
 const extractFirstJsonObject = (value: string): any => {

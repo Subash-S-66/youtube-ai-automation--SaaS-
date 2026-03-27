@@ -16,6 +16,7 @@ import random
 import requests
 import socket
 import time
+import wave
 from urllib.parse import unquote, urlparse
 
 from googleapiclient.errors import HttpError
@@ -99,11 +100,7 @@ from youtube_ai_automation.topic_selector import choose_topic
 from youtube_ai_automation.topic_filter import mark_topic_as_used, select_best_unused_topic, filter_unused_topics
 from youtube_ai_automation.trend_engine import get_trending_topics
 from youtube_ai_automation.news_fetcher import get_latest_news
-from youtube_ai_automation.video_creator import (
-    create_scene_based_video,
-    create_subtitles_from_script,
-    probe_media_duration,
-)
+from youtube_ai_automation.video_creator import create_subtitles_from_script
 from youtube_ai_automation.video_fetcher import download_scene_videos
 from youtube_ai_automation.viral_pattern_engine import ViralPatternScore, estimate_viral_probability
 from youtube_ai_automation.voice_generator import generate_voice, pick_voice_profile
@@ -112,8 +109,12 @@ from youtube_ai_automation.duration_controller import (
     allocate_section_budget,
     adjust_script_to_duration,
     build_timed_lines,
+    estimate_duration_from_script,
     estimate_script_duration_seconds,
+    repair_section_ending,
+    validate_ending as validate_section_ending,
     validate_output,
+    validate_section_limits,
 )
 
 LOGGER = logging.getLogger("youtube_ai_automation")
@@ -584,454 +585,7 @@ def _build_short_from_optimized_idea(
     upload: bool,
     publish_at: str | None,
 ) -> Path:
-    import os, json, random
-    settings_env = os.getenv("SETTINGS", "{}")
-    try:
-        settings = json.loads(settings_env)
-    except Exception:
-        settings = {}
-
-    target_duration = _script_duration_bounds(settings)
-    LOGGER.info("Selected best topic: %s", idea.topic)
-    LOGGER.info("Selected best hook: %s", idea.best_hook)
-    LOGGER.info("Selected viral score: %.2f", idea.viral_score)
-
-    voices = settings.get("voices", [])
-    preferred_voice = ""
-    if voices and isinstance(voices, list):
-        preferred_voice = random.choice(voices)
-
-    LOGGER.info("Generating voice narration")
-    audio_file = _generate_narration_with_retries(
-        script=idea.script,
-        output_path=AUDIO_PATH,
-        preferred_voice=preferred_voice,
-    )
-
-    content_type = settings.get("contentType", "clips").lower()
-    custom_video_urls = settings.get("customVideoUrls", [])
-    custom_image_urls = settings.get("customImageUrls", [])
-    user_media_paths = settings.get("userMediaPaths", [])
-
-    scene_duration = _choose_scene_duration()
-    try:
-        audio_seconds = probe_media_duration(audio_file)
-    except Exception as exc:
-        audio_seconds = 0.0
-        LOGGER.warning("Could not probe audio duration: %s", str(exc)[:160])
-    target_scenes = _compute_target_scene_count(audio_seconds, scene_duration)
-
-    scene_plan = extract_scenes(
-        script=idea.script,
-        topic=idea.topic,
-        seed_queries=idea.search_queries,
-        max_scenes=target_scenes,
-    )
-    scene_queries = scene_plan.search_queries[:]
-    scene_queries = _extend_scene_queries(scene_queries, target_scenes)
-    if len(scene_queries) > 2:
-        body = scene_queries[1:]
-        random.shuffle(body)
-        scene_queries = [scene_queries[0], *body]
-
-    videos = []
-
-    downloaded_custom_videos = _download_custom_media(
-        urls=[str(url).strip() for url in custom_video_urls if str(url).strip()],
-        output_dir=CLIPS_DIR,
-    ) if isinstance(custom_video_urls, list) else []
-    downloaded_custom_images = _download_custom_media(
-        urls=[str(url).strip() for url in custom_image_urls if str(url).strip()],
-        output_dir=CLIPS_DIR,
-    ) if isinstance(custom_image_urls, list) else []
-    videos.extend(downloaded_custom_videos)
-    videos.extend(downloaded_custom_images)
-    LOGGER.info(
-        "custom_media_download_summary videos=%s images=%s",
-        len(downloaded_custom_videos),
-        len(downloaded_custom_images),
-    )
-
-    # Legacy local media path support for local/dev runs.
-    if user_media_paths and isinstance(user_media_paths, list):
-        for media_path in user_media_paths:
-            path_obj = Path(media_path)
-            if path_obj.exists():
-                videos.append(path_obj)
-        LOGGER.info("Loaded %s legacy local user media clips", len(videos))
-
-    # If we need more videos than the user provided, fetch the rest
-    needed_clips = len(scene_queries) - len(videos)
-
-    if needed_clips > 0:
-        remaining_queries = scene_queries[len(videos):]
-        from youtube_ai_automation.services.media_service import fetch_media
-
-        if content_type == "images":
-            LOGGER.info("Media mode 'images': Downloading stock images via MediaService")
-            videos.extend(fetch_media(remaining_queries, CLIPS_DIR, PEXELS_API_KEY, PIXABAY_API_KEY, use_images=True))
-        elif content_type == "mixed":
-            LOGGER.info("Media mode 'mixed': Downloading video and image clips via MediaService")
-            for idx, query in enumerate(remaining_queries, start=1):
-                try:
-                    is_image = idx != 1 and idx != len(remaining_queries)
-                    clips = fetch_media([query], CLIPS_DIR, PEXELS_API_KEY, PIXABAY_API_KEY, use_images=is_image)
-                    videos.extend(clips)
-                except Exception as e:
-                    LOGGER.warning(f"Failed to fetch media for mixed scene '{query}': {e}")
-        else:
-            LOGGER.info("Media mode 'clips': Downloading stock videos via MediaService")
-            videos.extend(fetch_media(remaining_queries, CLIPS_DIR, PEXELS_API_KEY, PIXABAY_API_KEY, use_images=False))
-
-    LOGGER.info("Prepared %s media clips", len(videos))
-
-    caption_chunk = _pick_caption_chunk_size()
-    subtitle_file = create_subtitles_from_script(
-        script=idea.script,
-        audio_path=audio_file,
-        subtitle_path=SUBTITLE_PATH,
-        max_words=3,
-        highlight_words=_extract_highlight_words(idea.topic, idea.best_hook),
-        line_mode=True,
-    )
-
-    music_path = Path(BACKGROUND_MUSIC_PATH) if BACKGROUND_MUSIC_PATH else None
-    video_file = create_scene_based_video(
-        videos=videos,
-        audio_path=audio_file,
-        subtitle_path=subtitle_file,
-        output_path=VIDEO_PATH,
-        width=1080,
-        height=1920,
-        fps=30,
-        scene_duration=scene_duration,
-        min_video_length=max(15, target_duration - 5),
-        max_video_length=min(60, _compute_max_video_length(audio_seconds)),
-        background_music_path=music_path,
-        bg_music_volume=BACKGROUND_MUSIC_VOLUME,
-        shuffle_scenes=True,
-    )
-
-    metadata = optimize_metadata(
-        topic=idea.topic,
-        hook=idea.best_hook,
-        script=idea.script,
-        selected_title=idea.title,
-        viral_keywords=viral_keywords,
-        used_titles_file=USED_TITLES_FILE,
-    )
-    upload_description = f"{metadata.description}\n\n{' '.join(metadata.hashtags)}".strip()
-    LOGGER.info("Selected optimized title: %s", metadata.title)
-
-    upload_result: dict | None = None
-    if upload:
-        LOGGER.info("Uploading optimized short to YouTube")
-        LOGGER.info("Upload description preview: %s", upload_description[:220])
-        LOGGER.info("Upload hashtags: %s", " ".join(metadata.hashtags))
-        upload_result = upload_video(
-            video_path=video_file,
-            title=metadata.title,
-            description=upload_description,
-            tags=metadata.tags,
-            privacy_status="public",
-            client_secret_file=YOUTUBE_CLIENT_SECRET_FILE,
-            scopes=YOUTUBE_SCOPES,
-            token_path=TOKEN_PATH,
-            publish_at=publish_at,
-            validate_shorts=VALIDATE_SHORTS_BEFORE_UPLOAD,
-            strict_shorts_validation=STRICT_SHORTS_VALIDATION,
-        )
-        LOGGER.info("Upload complete. Video ID: %s", upload_result.get("id"))
-    else:
-        LOGGER.info("Upload skipped (--upload not set)")
-
-    if upload_result and upload_result.get("id"):
-        uploaded_video_id = str(upload_result.get("id"))
-        _record_successful_upload(
-            title=metadata.title,
-            topic=idea.topic,
-            video_id=uploaded_video_id,
-            keywords=metadata.tags,
-        )
-        _notify_progress_update(title=metadata.title, keywords=metadata.tags)
-        handle_post_upload(
-            video_id=uploaded_video_id,
-            output_dir=VIDEO_PATH.parent,
-            clips_dir=CLIPS_DIR,
-            audio_path=AUDIO_PATH,
-            subtitle_path=SUBTITLE_PATH,
-            video_path=VIDEO_PATH,
-            downloaded_output_dir=UPLOADED_DOWNLOAD_DIR,
-            download_uploaded_video_enabled=DOWNLOAD_UPLOADED_VIDEO,
-            cleanup_local_files_enabled=CLEANUP_LOCAL_FILES_AFTER_UPLOAD,
-        )
-        LOGGER.info("Collecting analytics feedback")
-        feedback_record = store_analytics_feedback(
-            video_id=uploaded_video_id,
-            topic=idea.topic,
-            hook=idea.best_hook,
-            title=metadata.title,
-            hashtags=metadata.hashtags,
-            score_breakdown=idea.score_breakdown or {},
-            history_file=ANALYTICS_HISTORY_FILE,
-            token_path=TOKEN_PATH,
-            scopes=YOUTUBE_SCOPES,
-        )
-        LOGGER.info(
-            "Analytics snapshot stored (views=%s, score=%s)",
-            feedback_record.get("statistics", {}).get("views", 0),
-            feedback_record.get("performance_score", 0.0),
-        )
-        strategy = update_strategy_from_feedback(
-            history_file=ANALYTICS_HISTORY_FILE,
-            state_file=IMPROVEMENT_STATE_FILE,
-        )
-        LOGGER.info(
-            "Updated self-improvement weights: base=%.3f pattern=%.3f (samples=%s)",
-            strategy.base_weight,
-            strategy.pattern_weight,
-            strategy.sample_count,
-        )
-
-    mark_topic_as_used(idea.topic)
-    mark_hook_as_used(idea.best_hook)
-    mark_generated_idea(
-        topic=idea.topic,
-        hook=idea.best_hook,
-        generated_ideas_file=GENERATED_IDEAS_FILE,
-        upload_date=publish_at,
-    )
-    return video_file
-
-
-def _select_optimized_idea(topic: str, niche: str) -> AutoSelection:
-    min_script_seconds, max_script_seconds = _script_duration_bounds()
-    trend_candidates = get_trending_topics(limit=TREND_TOPIC_LIMIT)
-    if topic.strip():
-        trend_candidates = [topic.strip(), *trend_candidates]
-    trend_candidates = _dedupe_preserve_order(trend_candidates)
-    previous_topics = _load_previous_topics()
-    base_memory = refresh_topic_generation_memory(
-        trending_topics=trend_candidates,
-        excluded_topics=previous_topics,
-        selected_topic="",
-        provider=AI_PROVIDER,
-        gemini_api_key=GEMINI_API_KEY,
-        gemini_model=GEMINI_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-        openai_model=OPENAI_MODEL,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-        anthropic_model=ANTHROPIC_MODEL,
-    )
-    memory_seed_queries = _dedupe_preserve_order(
-        [*base_memory.get("search_queries", []), *base_memory.get("keywords", [])]
-    )
-
-    LOGGER.info("Analyzing trending Shorts competitors")
-    insights = analyze_competitor_shorts(
-        youtube_api_key=YOUTUBE_DATA_API_KEY,
-        seed_queries=[*trend_candidates[:6], *memory_seed_queries[:6]],
-        limit=50,
-    )
-    LOGGER.info(
-        "Competitor insights: %s keywords, %s topics",
-        len(insights.viral_keywords),
-        len(insights.viral_topics),
-    )
-
-    topic_signals = _dedupe_preserve_order(
-        [
-            *trend_candidates,
-            *insights.viral_topics,
-            *base_memory.get("topic_directions", []),
-            *base_memory.get("keywords", []),
-            *base_memory.get("search_queries", []),
-        ]
-    )
-    topic_memory = refresh_topic_generation_memory(
-        trending_topics=topic_signals,
-        excluded_topics=previous_topics,
-        selected_topic="",
-        provider=AI_PROVIDER,
-        gemini_api_key=GEMINI_API_KEY,
-        gemini_model=GEMINI_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-        openai_model=OPENAI_MODEL,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-        anthropic_model=ANTHROPIC_MODEL,
-    )
-
-    target_candidate_count = 10
-    LOGGER.info("Generating %s idea candidates", target_candidate_count)
-    idea_candidates = generate_idea_candidates(
-        trending_topics=topic_signals,
-        niche=niche,
-        count=target_candidate_count,
-        hook_count=HOOKS_PER_TOPIC,
-        provider=AI_PROVIDER,
-        gemini_api_key=GEMINI_API_KEY,
-        gemini_model=GEMINI_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-        openai_model=OPENAI_MODEL,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-        anthropic_model=ANTHROPIC_MODEL,
-        excluded_topics=previous_topics,
-        memory=topic_memory,
-    )
-    LOGGER.info("Generated %s candidate ideas", len(idea_candidates))
-
-    strategy = load_strategy(IMPROVEMENT_STATE_FILE)
-    LOGGER.info(
-        "Using strategy weights: base=%.3f pattern=%.3f",
-        strategy.base_weight,
-        strategy.pattern_weight,
-    )
-    growth_ranked = _build_growth_ranked_candidates(
-        idea_candidates=idea_candidates,
-        topic_signals=topic_signals,
-        viral_keywords=insights.viral_keywords,
-        viral_topics=insights.viral_topics,
-        previous_topics=previous_topics,
-        strategy=strategy,
-    )
-
-    try:
-        selected_ranked = _pick_optimized_ranked_selection(growth_ranked)
-    except ValueError:
-        raise
-    except Exception:
-        raise
-
-    try:
-        select_best_unused_topic([item.ranked_idea.topic for item in growth_ranked])
-    except ValueError as exc:
-        LOGGER.warning(
-            "Strict used-topic filter rejected initial optimized candidates. "
-            "Regenerating with novelty prompt. Reason: %s",
-            exc,
-        )
-        novelty_candidates = generate_idea_candidates(
-            trending_topics=topic_signals,
-            niche=niche,
-            count=target_candidate_count,
-            hook_count=HOOKS_PER_TOPIC,
-            provider=AI_PROVIDER,
-            gemini_api_key=GEMINI_API_KEY,
-            gemini_model=GEMINI_MODEL,
-            openai_api_key=OPENAI_API_KEY,
-            openai_model=OPENAI_MODEL,
-            anthropic_api_key=ANTHROPIC_API_KEY,
-            anthropic_model=ANTHROPIC_MODEL,
-            prompt_mode="novelty",
-            excluded_topics=previous_topics,
-            memory=topic_memory,
-        )
-        novelty_growth_ranked = _build_growth_ranked_candidates(
-            idea_candidates=novelty_candidates,
-            topic_signals=topic_signals,
-            viral_keywords=insights.viral_keywords,
-            viral_topics=insights.viral_topics,
-            previous_topics=previous_topics,
-            strategy=strategy,
-        )
-        selected_ranked = _pick_optimized_ranked_selection(novelty_growth_ranked)
-
-    selected_candidate = IdeaCandidate(
-        topic=selected_ranked.ranked_idea.topic,
-        hooks=selected_ranked.ranked_idea.hook_options,
-        script_outline=selected_ranked.ranked_idea.script_outline,
-    )
-    selected_hook = select_best_unused_hook(selected_candidate.hooks)
-    score_breakdown = selected_ranked.ranked_idea.score_breakdown.as_dict()
-    score_breakdown.update(selected_ranked.pattern_score.as_dict())
-    score_breakdown["base_viral_score"] = round(selected_ranked.ranked_idea.viral_score, 2)
-    score_breakdown["pattern_viral_score"] = round(
-        selected_ranked.pattern_score.viral_probability_score,
-        2,
-    )
-    score_breakdown["strategy_base_weight"] = round(strategy.base_weight, 4)
-    score_breakdown["strategy_pattern_weight"] = round(strategy.pattern_weight, 4)
-    score_breakdown["combined_viral_score"] = round(selected_ranked.combined_score, 2)
-
-    # To properly set duration here, we fetch it from settings
-    import os, json
-    settings_env = os.getenv("SETTINGS", "{}")
-    try:
-        settings = json.loads(settings_env)
-    except Exception:
-        settings = {}
-    target_duration = _script_duration_bounds(settings)
-
-    optimized = build_optimized_idea(
-        candidate=selected_candidate,
-        best_hook=selected_hook,
-        viral_score=selected_ranked.combined_score,
-        score_breakdown=score_breakdown,
-        provider=AI_PROVIDER,
-        gemini_api_key=GEMINI_API_KEY,
-        gemini_model=GEMINI_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-        openai_model=OPENAI_MODEL,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-        anthropic_model=ANTHROPIC_MODEL,
-        target_duration=target_duration,
-    )
-    topic_memory = refresh_topic_generation_memory(
-        trending_topics=topic_signals,
-        excluded_topics=previous_topics,
-        selected_topic=selected_candidate.topic,
-        provider=AI_PROVIDER,
-        gemini_api_key=GEMINI_API_KEY,
-        gemini_model=GEMINI_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-        openai_model=OPENAI_MODEL,
-        anthropic_api_key=ANTHROPIC_API_KEY,
-        anthropic_model=ANTHROPIC_MODEL,
-    )
-    optimized.title = selected_ranked.title_result.best_title[:59]
-    try:
-        payload = json.loads(UPLOAD_REPORT_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        payload = {}
-    selected_topics = payload.get("selected_topics", [])
-    if not isinstance(selected_topics, list):
-        selected_topics = []
-    selected_topics.append(selected_candidate.topic)
-    update_upload_report_metadata(
-        UPLOAD_REPORT_FILE,
-        gemini_keywords=topic_memory.get("keywords", []),
-        gemini_topics=topic_memory.get("topic_directions", []),
-        selected_topics=selected_topics[:20],
-    )
-    return AutoSelection(idea=optimized, viral_keywords=insights.viral_keywords, topic_memory=topic_memory)
-
-
-def _resolve_topic(auto: bool, topic: str, niche: str, mark_used: bool = True) -> str:
-    provided = " ".join((topic or "").split()).strip()
-    if not auto:
-        if not provided:
-            raise ValueError("Topic is required when auto mode is off.")
-        return provided
-
-    LOGGER.info("Fetching trending candidates...")
-    candidates = get_trending_topics(limit=TREND_TOPIC_LIMIT)
-    niche_tokens = {token for token in niche.lower().split() if len(token) > 2}
-    if niche_tokens:
-        candidates.sort(
-            key=lambda item: sum(1 for token in niche_tokens if token in item.lower()),
-            reverse=True,
-        )
-    LOGGER.info("Found %s trend candidates", len(candidates))
-    if provided:
-        # Ensure explicit topic still wins in auto mode.
-        selected = provided
-    else:
-        selected = select_best_unused_topic(candidates)
-        if mark_used:
-            mark_topic_as_used(selected)
-    LOGGER.info("Selected topic: %s", selected)
-    return selected
-
+    raise RuntimeError("Legacy AI generation mode is disabled. Pipeline supports only prepared mode.")
 
 def _build_video_from_content(
     content: GeneratedContent,
@@ -1069,11 +623,7 @@ def _build_video_from_content(
     )
 
     scene_duration = _choose_scene_duration()
-    try:
-        audio_seconds = probe_media_duration(audio_file)
-    except Exception as exc:
-        audio_seconds = 0.0
-        LOGGER.warning("Could not probe audio duration: %s", str(exc)[:160])
+    audio_seconds = estimate_duration_from_script(content.script)
     target_scenes = _compute_target_scene_count(audio_seconds, scene_duration)
 
     scene_plan = extract_scenes(
@@ -1178,11 +728,13 @@ def _build_video_from_content(
     LOGGER.info("Building advanced captions")
     subtitle_file = create_subtitles_from_script(
         script=content.script,
-        audio_path=audio_file,
+        estimated_duration_seconds=audio_seconds,
         subtitle_path=SUBTITLE_PATH,
         max_words=3,
         highlight_words=_extract_highlight_words(content.topic, content.hook),
         line_mode=True,
+        font_style="Anton",
+        subtitle_color="#FFFFFF",
     )
 
     music_path = Path(BACKGROUND_MUSIC_PATH) if BACKGROUND_MUSIC_PATH else None
@@ -1459,36 +1011,44 @@ def _build_section_scripts(
     target_duration: int,
     cta_enabled: bool,
     recap_enabled: bool,
+    story_mode: bool,
+    current_part: int = 1,
+    last_prompt: str = "",
 ) -> tuple[dict[str, str], dict[str, int]]:
-    budget = allocate_section_budget(
+    budget_obj = allocate_section_budget(
         target_seconds=target_duration,
         has_cta=cta_enabled,
         has_recap=recap_enabled,
     )
     section_budget = {
-        "hook": budget.hook,
-        "main_content": budget.main_content,
-        "recap": budget.recap,
-        "cta": budget.cta,
+        "hook": budget_obj.hook,
+        "main_content": budget_obj.main_content,
+        "recap": budget_obj.recap,
+        "cta": budget_obj.cta,
     }
 
     sentences = [part.strip() for part in base_script.split(".") if part.strip()]
     hook_seed = f"{sentences[0]}." if sentences else f"{topic} in one short."
     main_seed = " ".join(sentences[1:]) if len(sentences) > 1 else base_script
-    recap_seed = f"In short, {topic} matters now."
-    cta_seed = "Follow for more and share this short."
+    if story_mode and current_part > 1 and last_prompt.strip():
+        recap_seed = f"Previously, {last_prompt.strip()[:140]}. In short, {topic} matters now."
+    else:
+        recap_seed = f"In short, {topic} matters now."
+    cta_seed = "Follow for more and subscribe now."
 
     hook_text = adjust_script_to_duration(
         script=hook_seed,
         target_seconds=section_budget["hook"],
         section_name="hook",
         topic_hint=topic,
+        story_mode=story_mode,
     )
     main_text = adjust_script_to_duration(
         script=main_seed,
         target_seconds=section_budget["main_content"],
         section_name="main",
         topic_hint=topic,
+        story_mode=story_mode,
     )
     recap_text = ""
     if recap_enabled and section_budget["recap"] > 0:
@@ -1497,6 +1057,7 @@ def _build_section_scripts(
             target_seconds=section_budget["recap"],
             section_name="recap",
             topic_hint=topic,
+            story_mode=story_mode,
         )
     cta_text = ""
     if cta_enabled and section_budget["cta"] > 0:
@@ -1505,14 +1066,122 @@ def _build_section_scripts(
             target_seconds=section_budget["cta"],
             section_name="cta",
             topic_hint=topic,
+            story_mode=story_mode,
         )
 
-    return {
+    section_scripts = {
         "hook": hook_text,
         "main_content": main_text,
         "recap": recap_text,
         "cta": cta_text,
-    }, section_budget
+    }
+
+    expand_tries = 0
+    while expand_tries < 3:
+        ordered = [
+            section_scripts["hook"],
+            section_scripts["main_content"],
+            section_scripts["recap"],
+            section_scripts["cta"],
+        ]
+        full_script = " ".join(p for p in ordered if p).strip()
+        estimated = estimate_script_duration_seconds(full_script)
+        lower_bound = max(10, target_duration - 5)
+        if estimated >= lower_bound:
+            break
+        deficit_seconds = lower_bound - estimated
+        section_scripts["main_content"] = adjust_script_to_duration(
+            script=section_scripts["main_content"],
+            target_seconds=int(section_budget["main_content"] + deficit_seconds),
+            section_name="main",
+            topic_hint=topic,
+            story_mode=story_mode,
+        )
+        expand_tries += 1
+
+    return section_scripts, section_budget
+
+
+def estimate_audio_duration(script: str) -> float:
+    """Estimate TTS audio length from word count at 2.5 WPS."""
+    words = max(1, len(str(script or "").split()))
+    return round(words / 2.5, 2)
+
+
+def get_audio_duration_seconds(audio_path: Path) -> float:
+    try:
+        with wave.open(str(audio_path), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if rate <= 0:
+                return 0.0
+            return frames / float(rate)
+    except Exception:
+        return 0.0
+
+
+def get_audio_duration(file_path: Path) -> float:
+    return get_audio_duration_seconds(file_path)
+
+
+def expand_meaningfully(text: str, extra_words: int) -> str:
+    base = str(text or "").strip()
+    if extra_words <= 0:
+        return base
+    additions = [
+        "For example, imagine this playing out in a real day where one small choice changes the result.",
+        "The consequence is practical: once this pattern starts, people either gain momentum or lose time fast.",
+        "To clarify, this does not require a huge change, just one deliberate action repeated consistently.",
+    ]
+    out = base
+    idx = 0
+    while len(out.split()) < len(base.split()) + extra_words:
+        out = (out + " " + additions[idx % len(additions)]).strip()
+        idx += 1
+        if idx > 6:
+            break
+    return out
+
+
+def validate_sections(section_budget: dict[str, int], section_scripts: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    hook_est = estimate_duration_from_script(section_scripts.get("hook", ""))
+    cta_est = estimate_duration_from_script(section_scripts.get("cta", ""))
+    recap_est = estimate_duration_from_script(section_scripts.get("recap", ""))
+    if hook_est > float(section_budget.get("hook", 0)) + 1:
+        errors.append("hook_over_budget")
+    if section_scripts.get("cta", "").strip() and cta_est > float(section_budget.get("cta", 0)) + 1:
+        errors.append("cta_over_budget")
+    if section_scripts.get("recap", "").strip() and recap_est > float(section_budget.get("recap", 0)) + 1:
+        errors.append("recap_over_budget")
+    return errors
+
+
+def validate_ending(script: str) -> bool:
+    text = str(script or "").strip()
+    if not text:
+        return False
+    if not text.endswith((".", "!", "?")):
+        return False
+    last_sentence = [s.strip() for s in text.replace("!", ".").replace("?", ".").split(".") if s.strip()]
+    if not last_sentence:
+        return False
+    tail = last_sentence[-1].lower()
+    if len(tail.split()) < 3:
+        return False
+    bad_tail = ("and", "but", "so", "because", "if", "when", "then")
+    if tail.split()[-1] in bad_tail:
+        return False
+    return True
+    try:
+        with wave.open(str(file_path), "rb") as wav_file:
+            frames = wav_file.getnframes()
+            frame_rate = wav_file.getframerate()
+            if frame_rate <= 0:
+                return 0.0
+            return float(frames) / float(frame_rate)
+    except Exception:
+        return 0.0
 
 
 def run_prepared_pipeline(
@@ -1544,20 +1213,37 @@ def run_prepared_pipeline(
     target_duration = _extract_target_duration(video_config)
     cta_enabled = bool(video_config.get("ctaEnabled", video_config.get("enableCTA", False)))
     recap_enabled = bool(video_config.get("recapEnabled", False))
+    story_mode = bool(video_config.get("storyMode", False))
+    current_part = int(video_config.get("currentPart", 1) or 1)
+    last_prompt = str(video_config.get("lastPrompt", ""))
+    if story_mode and current_part <= 1:
+        recap_enabled = False
     topic = str(youtube.get("title", "Prepared Topic") or "Prepared Topic").strip()
-    voice_name = str(video_config.get("voice", DEFAULT_VOICE) or DEFAULT_VOICE).strip()
+    voice_name = str(video_config.get("voice", "") or (video_config.get("voices") or [""])[0]).strip()
+    if not voice_name:
+        voice_name = DEFAULT_VOICE
     voice_rate = str(video_config.get("voiceRate", "") or "").strip()
+    font_style = str(video_config.get("templateConfig", {}).get("fontStyle", "Anton")).strip() or "Anton"
+    subtitle_color = str(video_config.get("templateConfig", {}).get("subtitleColor", "#FFFFFF")).strip() or "#FFFFFF"
 
-    # Auto-regenerate loop for strict timing validation.
-    best_package: dict | None = None
+    best_script = ""
+    best_sections: dict[str, str] = {"hook": "", "main_content": "", "recap": "", "cta": ""}
+    best_section_budget: dict[str, int] = {"hook": 0, "main_content": 0, "recap": 0, "cta": 0}
     last_errors: list[str] = []
-    for _attempt in range(1, 4):
+    output_dir = AUDIO_PATH.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    MAX_ATTEMPTS = 4
+    for attempt in range(1, MAX_ATTEMPTS + 1):
         section_scripts, section_budget = _build_section_scripts(
             base_script=script_text,
             topic=topic,
             target_duration=target_duration,
             cta_enabled=cta_enabled,
             recap_enabled=recap_enabled,
+            story_mode=story_mode,
+            current_part=current_part,
+            last_prompt=last_prompt,
         )
         ordered_parts = [
             section_scripts["hook"],
@@ -1565,64 +1251,247 @@ def run_prepared_pipeline(
             section_scripts["recap"],
             section_scripts["cta"],
         ]
-        final_script = " ".join(part for part in ordered_parts if part).strip()
-        estimated_duration = estimate_script_duration_seconds(final_script)
-        valid, errors = validate_output(
-            target_seconds=target_duration,
-            actual_seconds=estimated_duration,
-            has_cta=cta_enabled,
-            has_recap=recap_enabled,
-            cta_text=section_scripts["cta"],
-            recap_text=section_scripts["recap"],
-            full_script=final_script,
-        )
-        best_package = {
-            "script": final_script,
-            "sections": section_scripts,
-            "sections_budget": section_budget,
-            "estimated_duration": round(estimated_duration, 2),
-        }
-        last_errors = errors
-        if valid:
+        full_script = " ".join(p for p in ordered_parts if p).strip()
+        estimated = estimate_script_duration_seconds(full_script)
+        lower_bound = max(10, target_duration - 5)
+        upper_bound = min(60, target_duration + 5)
+
+        if lower_bound <= estimated <= upper_bound:
+            best_script = full_script
+            best_sections = section_scripts
+            best_section_budget = section_budget
             break
-        # Re-adjust in next loop with the latest output as seed.
-        script_text = final_script
 
-    if not best_package:
-        raise RuntimeError("Failed to build deterministic script package.")
-    if last_errors:
-        raise RuntimeError(f"Validation failed after regeneration attempts: {', '.join(last_errors)}")
+        if estimated < lower_bound:
+            deficit = lower_bound - estimated
+            extra_words = int(deficit * 2.5)
+            section_scripts["main_content"] = expand_meaningfully(
+                section_scripts["main_content"],
+                max(8, extra_words),
+            )
+            full_script = " ".join(
+                p for p in [
+                    section_scripts["hook"],
+                    section_scripts["main_content"],
+                    section_scripts["recap"],
+                    section_scripts["cta"],
+                ] if p
+            ).strip()
+            estimated = estimate_script_duration_seconds(full_script)
 
-    # Generate section-level and full narration audio via Google path.
-    output_dir = AUDIO_PATH.parent
-    output_dir.mkdir(parents=True, exist_ok=True)
-    section_audio_paths: dict[str, str] = {}
-    for section_name in ("hook", "main_content", "recap", "cta"):
-        section_text = best_package["sections"].get(section_name, "")
-        if not section_text:
-            continue
-        section_path = output_dir / f"voice_{section_name}.wav"
-        audio_path, _ = generate_voice(
-            script=section_text,
+        if estimated > upper_bound:
+            excess = estimated - upper_bound
+            sentences = [s.strip() for s in full_script.split(".") if s.strip()]
+            while excess > 0 and len(sentences) > 3:
+                removed = sentences.pop(-2)
+                excess -= estimate_script_duration_seconds(removed + ".")
+            full_script = ". ".join(sentences).strip()
+            if full_script and not full_script.endswith("."):
+                full_script += "."
+
+        best_script = full_script
+        best_sections = section_scripts
+        best_section_budget = section_budget
+
+    if not best_script:
+        raise RuntimeError("Failed to build script within duration bounds")
+
+    section_validation_errors = validate_sections(best_section_budget, best_sections)
+    if section_validation_errors:
+        for err in section_validation_errors:
+            if err == "hook_over_budget":
+                best_sections["hook"] = adjust_script_to_duration(
+                    script=best_sections.get("hook", ""),
+                    target_seconds=max(1, int(best_section_budget.get("hook", 1))),
+                    section_name="hook",
+                    topic_hint=topic,
+                    story_mode=story_mode,
+                )
+            elif err == "cta_over_budget":
+                best_sections["cta"] = adjust_script_to_duration(
+                    script=best_sections.get("cta", ""),
+                    target_seconds=max(1, int(best_section_budget.get("cta", 1))),
+                    section_name="cta",
+                    topic_hint=topic,
+                    story_mode=story_mode,
+                )
+            elif err == "recap_over_budget":
+                best_sections["recap"] = adjust_script_to_duration(
+                    script=best_sections.get("recap", ""),
+                    target_seconds=max(1, int(best_section_budget.get("recap", 1))),
+                    section_name="recap",
+                    topic_hint=topic,
+                    story_mode=story_mode,
+                )
+        best_script = " ".join(
+            p for p in [
+                best_sections.get("hook", ""),
+                best_sections.get("main_content", ""),
+                best_sections.get("recap", ""),
+                best_sections.get("cta", ""),
+            ] if p
+        ).strip()
+
+    hard_cap_words = int(60 * 2.5)
+    words = best_script.split()
+    if len(words) > hard_cap_words:
+        best_script = " ".join(words[:hard_cap_words])
+
+    best_package = {
+        "script": best_script,
+        "sections": best_sections,
+        "sections_budget": best_section_budget,
+        "estimated_duration": round(estimate_script_duration_seconds(best_script), 2),
+    }
+
+    MAX_SECONDS = 60
+    if best_package["estimated_duration"] > MAX_SECONDS:
+        words = best_package["script"].split()
+        max_words = int(MAX_SECONDS * 2.5)
+        if len(words) > max_words:
+            best_package["script"] = " ".join(words[:max_words])
+            best_package["estimated_duration"] = estimate_audio_duration(best_package["script"])
+        LOGGER.warning(
+            "Script trimmed to hard 60s cap. estimated=%.1fs",
+            best_package["estimated_duration"]
+        )
+
+    full_audio_path: Path | None = None
+    actual_audio_seconds = 0.0
+    for audio_attempt in range(1, 4):
+        full_audio_path, _ = generate_voice(
+            script=best_package["script"],
             voice=voice_name,
             rate=voice_rate,
-            output_path=section_path,
+            output_path=(output_dir / "voice_full.wav"),
             rotate_profile=False,
         )
-        section_audio_paths[section_name] = str(audio_path)
+        actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
+        if actual_audio_seconds <= 0:
+            raise RuntimeError("Unable to measure generated audio duration.")
+        drift = actual_audio_seconds - target_duration
+        if abs(drift) <= 3 or audio_attempt >= 3:
+            break
+        if drift > 0:
+            best_package["sections"]["main_content"] = adjust_script_to_duration(
+                script=best_package["sections"].get("main_content", ""),
+                target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) - drift)),
+                section_name="main",
+                topic_hint=topic,
+                story_mode=story_mode,
+            )
+        else:
+            best_package["sections"]["main_content"] = expand_meaningfully(
+                best_package["sections"].get("main_content", ""),
+                max(8, int(abs(drift) * 2.5)),
+            )
+            best_package["sections"]["main_content"] = adjust_script_to_duration(
+                script=best_package["sections"]["main_content"],
+                target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) + abs(drift))),
+                section_name="main",
+                topic_hint=topic,
+                story_mode=story_mode,
+            )
+        best_package["script"] = " ".join(
+            p for p in [
+                best_package["sections"].get("hook", ""),
+                best_package["sections"].get("main_content", ""),
+                best_package["sections"].get("recap", ""),
+                best_package["sections"].get("cta", ""),
+            ] if p
+        ).strip()
 
-    full_audio_path, _ = generate_voice(
-        script=best_package["script"],
-        voice=voice_name,
-        rate=voice_rate,
-        output_path=(output_dir / "voice_full.wav"),
-        rotate_profile=False,
-    )
+    if full_audio_path is None:
+        raise RuntimeError("Audio generation failed in prepared pipeline.")
     created.append(full_audio_path)
 
+    estimated_duration = estimate_audio_duration(best_package["script"])
+    actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
+    if abs(actual_audio_seconds - estimated_duration) > 2:
+        LOGGER.warning(
+            "Audio/script sync drift detected. actual=%.2fs estimated=%.2fs",
+            actual_audio_seconds,
+            estimated_duration,
+        )
+        delta = actual_audio_seconds - estimated_duration
+        if delta > 0:
+            best_package["sections"]["main_content"] = adjust_script_to_duration(
+                script=best_package["sections"].get("main_content", ""),
+                target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) - delta)),
+                section_name="main",
+                topic_hint=topic,
+                story_mode=story_mode,
+            )
+        else:
+            best_package["sections"]["main_content"] = expand_meaningfully(
+                best_package["sections"].get("main_content", ""),
+                max(6, int(abs(delta) * 2.5)),
+            )
+        best_package["script"] = " ".join(
+            p for p in [
+                best_package["sections"].get("hook", ""),
+                best_package["sections"].get("main_content", ""),
+                best_package["sections"].get("recap", ""),
+                best_package["sections"].get("cta", ""),
+            ] if p
+        ).strip()
+        estimated_duration = estimate_audio_duration(best_package["script"])
     timed_lines = build_timed_lines(best_package["script"])
-    caption_font = str(video_config.get("templateConfig", {}).get("fontStyle", "Anton")).strip() or "Anton"
-    caption_color = str(video_config.get("templateConfig", {}).get("subtitleColor", "#FFFFFF")).strip() or "#FFFFFF"
+    subtitle_file = create_subtitles_from_script(
+        script=best_package["script"],
+        estimated_duration_seconds=estimated_duration,
+        subtitle_path=SUBTITLE_PATH,
+        max_words=4,
+        highlight_words=_extract_highlight_words(topic, best_package["sections"].get("hook", "")),
+        line_mode=True,
+        font_style=font_style,
+        subtitle_color=subtitle_color,
+    )
+
+    valid, errors = validate_output(
+        target_seconds=target_duration,
+        actual_seconds=actual_audio_seconds or estimated_duration,
+        has_cta=cta_enabled,
+        has_recap=recap_enabled,
+        cta_text=best_package["sections"].get("cta", ""),
+        recap_text=best_package["sections"].get("recap", ""),
+        full_script=best_package["script"],
+    )
+    ending_ok, ending_error = validate_section_ending(
+        best_package["script"],
+        has_cta=cta_enabled,
+        has_recap=recap_enabled,
+    )
+    if not validate_ending(best_package["script"]):
+        if best_package["sections"].get("cta", "").strip():
+            best_package["sections"]["cta"] = repair_section_ending(best_package["sections"]["cta"], "cta")
+        elif best_package["sections"].get("recap", "").strip():
+            best_package["sections"]["recap"] = repair_section_ending(best_package["sections"]["recap"], "recap")
+        else:
+            best_package["sections"]["main_content"] = repair_section_ending(
+                best_package["sections"].get("main_content", ""),
+                "main",
+            )
+        best_package["script"] = " ".join(
+            p for p in [
+                best_package["sections"].get("hook", ""),
+                best_package["sections"].get("main_content", ""),
+                best_package["sections"].get("recap", ""),
+                best_package["sections"].get("cta", ""),
+            ] if p
+        ).strip()
+        ending_ok = True
+    if ending_error:
+        errors.append(f"ending:{ending_error}")
+
+    sectionAudio = {
+        "full": str(full_audio_path),
+        "hook": round(estimate_duration_from_script(best_package["sections"].get("hook", "")), 2),
+        "main_content": round(estimate_duration_from_script(best_package["sections"].get("main_content", "")), 2),
+        "recap": round(estimate_duration_from_script(best_package["sections"].get("recap", "")), 2),
+        "cta": round(estimate_duration_from_script(best_package["sections"].get("cta", "")), 2),
+    }
+
     hashtags = youtube.get("hashtags", ["#shorts"])
     if not isinstance(hashtags, list):
         hashtags = ["#shorts"]
@@ -1630,21 +1499,36 @@ def run_prepared_pipeline(
     result_payload = {
         "script": best_package["script"],
         "duration": best_package["estimated_duration"],
-        "audio_url": str(full_audio_path),
+        "duration_target": target_duration,
+        "duration_estimated": estimated_duration,
+        "duration_actual": round(actual_audio_seconds or estimated_duration, 2),
+        "validation_passed": bool(valid and ending_ok),
+        "audio_path": str(full_audio_path),
+        "subtitle_path": str(subtitle_file),
         "captions": {
-            "text": [row.get("text", "") for row in timed_lines],
+            "text": "\n".join([str(row.get("text", "")).strip() for row in timed_lines if str(row.get("text", "")).strip()]),
             "timed": timed_lines,
-            "font": caption_font,
-            "color": caption_color,
+            "font": font_style,
+            "color": subtitle_color,
         },
         "hashtags": [str(tag).strip() for tag in hashtags if str(tag).strip()],
         "cta": best_package["sections"].get("cta", ""),
         "recap": best_package["sections"].get("recap", ""),
-        "sections": best_package["sections"],
-        "sectionBudgets": best_package["sections_budget"],
-        "sectionAudio": section_audio_paths,
+        "sections": {
+            "hook": best_package["sections"].get("hook", ""),
+            "main": best_package["sections"].get("main_content", ""),
+            "recap": best_package["sections"].get("recap", ""),
+            "cta": best_package["sections"].get("cta", ""),
+        },
+        "sectionBudgets": {
+            "hook": best_package["sections_budget"].get("hook", 0),
+            "main": best_package["sections_budget"].get("main_content", 0),
+            "recap": best_package["sections_budget"].get("recap", 0),
+            "cta": best_package["sections_budget"].get("cta", 0),
+        },
+        "sectionAudio": sectionAudio,
         "uploadSkipped": True,
-        "validationErrors": last_errors,
+        "validationErrors": errors,
     }
     result_file = output_dir / "prepared_result.json"
     result_file.write_text(json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1663,77 +1547,6 @@ def run_news_pipeline(
     news_fetcher -> gemini_content_generator -> video pipeline
     """
     raise RuntimeError("Legacy AI generation mode is disabled. Pipeline supports only prepared mode.")
-    created: list[Path] = []
-    target_duration = 40 # Default if settings not available here
-    LOGGER.info("Starting news generation")
-    try:
-        fetch_limit = max(count * NEWS_FETCH_MULTIPLIER, count)
-        articles = get_latest_news(
-            query=NEWS_QUERY,
-            language=NEWS_LANGUAGE,
-            lookback_hours=NEWS_LOOKBACK_HOURS,
-            limit=fetch_limit,
-        )
-    except ValueError as e:
-        LOGGER.error(f"Could not fetch news: {e}")
-        return created
-
-    if not articles:
-        LOGGER.warning("No news articles found.")
-        return created
-
-    headlines: list[str] = []
-    seen = set()
-    for article in articles:
-        title = str(article.get("title", "")).strip()
-        if not title:
-            continue
-        key = title.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        headlines.append(title)
-
-    if not headlines:
-        LOGGER.warning("No usable headlines found in news articles.")
-        return created
-
-    filtered_headlines = filter_unused_topics(headlines)
-    if not filtered_headlines:
-        LOGGER.warning("All fetched headlines are already used. Try again later.")
-        return created
-
-    if len(filtered_headlines) < count:
-        LOGGER.warning(
-            "Only %s fresh headlines available (requested %s). Proceeding with available.",
-            len(filtered_headlines),
-            count,
-        )
-
-    effective_count = min(count, len(filtered_headlines))
-
-    for index, headline in enumerate(filtered_headlines[:effective_count]):
-        LOGGER.info("Starting news video generation %s/%s", index + 1, effective_count)
-        LOGGER.info("news_fetcher: selected headline: %s", headline)
-
-        LOGGER.info("gemini_content_generator: generating structured content via Gemini Flash")
-        content = generate_gemini_content(
-            topic=headline,
-            gemini_api_key=GEMINI_API_KEY,
-            gemini_model=GEMINI_MODEL,
-            target_duration=target_duration,
-            content_type="news",
-        )
-        try:
-            video_path = _build_video_from_content(
-                content=content,
-                upload=upload,
-                publish_at=None,
-            )
-            created.append(video_path)
-        except NarrationUnavailableError as exc:
-            LOGGER.error("Skipping news video %s/%s: %s", index + 1, effective_count, exc)
-    return created
 
 
 def run_auto_pipeline(
@@ -1750,40 +1563,6 @@ def run_auto_pipeline(
     -> video_creator -> youtube_uploader
     """
     raise RuntimeError("Legacy AI generation mode is disabled. Pipeline supports only prepared mode.")
-    created: list[Path] = []
-    target_duration = 40
-    for index in range(max(1, count)):
-        LOGGER.info("Starting auto generation %s/%s", index + 1, count)
-        LOGGER.info("trend_engine: collecting trend candidates")
-        trend_candidates = get_trending_topics(limit=TREND_TOPIC_LIMIT)
-        try:
-            selected_topic = choose_topic(
-                candidates=trend_candidates,
-                preferred_topic=topic if index == 0 else "",
-                niche=niche,
-            )
-        except ValueError as exc:
-            LOGGER.error("Skipping auto video %s/%s: %s", index + 1, count, exc)
-            continue
-        LOGGER.info("topic_selector: selected topic: %s", selected_topic)
-
-        LOGGER.info("gemini_content_generator: generating structured content via Gemini Flash")
-        content = generate_gemini_content(
-            topic=selected_topic,
-            gemini_api_key=GEMINI_API_KEY,
-            gemini_model=GEMINI_MODEL,
-            target_duration=target_duration,
-        )
-        try:
-            video_path = _build_video_from_content(
-                content=content,
-                upload=upload,
-                publish_at=publish_at if index == 0 else None,
-            )
-            created.append(video_path)
-        except NarrationUnavailableError as exc:
-            LOGGER.error("Skipping auto video %s/%s: %s", index + 1, count, exc)
-    return created
 
 
 def run_optimized_pipeline(
@@ -1799,72 +1578,6 @@ def run_optimized_pipeline(
     -> ranking/dedup -> optimized script build -> video pipeline
     """
     raise RuntimeError("Legacy AI generation mode is disabled. Pipeline supports only prepared mode.")
-    created: list[Path] = []
-    for index in range(max(1, count)):
-        LOGGER.info("Starting optimized generation %s/%s", index + 1, count)
-        selection: AutoSelection | None = None
-        for attempt in range(1, TOPIC_SELECTION_RETRY_ATTEMPTS + 1):
-            try:
-                selection = _select_optimized_idea(
-                    topic=topic if index == 0 else "",
-                    niche=niche,
-                )
-                break
-            except ValueError as exc:
-                message = str(exc)
-                if "already been used" in message.lower() or "no candidate topics" in message.lower():
-                    if attempt < TOPIC_SELECTION_RETRY_ATTEMPTS:
-                        wait_seconds = 2 * attempt
-                        LOGGER.warning(
-                            "Topic pool exhausted for optimized video %s/%s (attempt %s/%s). "
-                            "Retrying with fresh trends in %ss.",
-                            index + 1,
-                            count,
-                            attempt,
-                            TOPIC_SELECTION_RETRY_ATTEMPTS,
-                            wait_seconds,
-                        )
-                        time.sleep(wait_seconds)
-                        continue
-                    LOGGER.error(
-                        "Skipping optimized video %s/%s: %s",
-                        index + 1,
-                        count,
-                        message,
-                    )
-                    break
-                raise
-            except RuntimeError as exc:
-                if attempt < TOPIC_SELECTION_RETRY_ATTEMPTS:
-                    wait_seconds = 2 * attempt
-                    LOGGER.warning(
-                        "Optimized idea selection failed for video %s/%s (attempt %s/%s): %s. Retrying in %ss.",
-                        index + 1,
-                        count,
-                        attempt,
-                        TOPIC_SELECTION_RETRY_ATTEMPTS,
-                        str(exc),
-                        wait_seconds,
-                    )
-                    time.sleep(wait_seconds)
-                    continue
-                LOGGER.error("Skipping optimized video %s/%s: %s", index + 1, count, exc)
-                break
-
-        if selection is None:
-            continue
-
-        try:
-            video_path = _build_short_from_optimized_idea(
-                idea=selection.idea,
-                viral_keywords=selection.viral_keywords,
-                upload=upload,
-                publish_at=publish_at if index == 0 else None,
-            )
-            created.append(video_path)
-        except NarrationUnavailableError as exc:
-            LOGGER.error("Skipping optimized video %s/%s: %s", index + 1, count, exc)
-    return created
 
 
 def parse_args() -> argparse.Namespace:
@@ -1909,4 +1622,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
 

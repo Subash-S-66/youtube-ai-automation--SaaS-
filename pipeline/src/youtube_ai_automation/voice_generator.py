@@ -1,376 +1,54 @@
-﻿"""
-Convert text to speech using Edge TTS only.
-Falls back to silent audio as last resort.
-"""
-
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
-import math
 import os
 from pathlib import Path
 import random
-import re
-import subprocess
 
-import base64
 import requests
-
-try:
-    import edge_tts
-except Exception:  # pragma: no cover - optional dependency behavior
-    edge_tts = None
-
-LOGGER = logging.getLogger(__name__)
-
-# Gemini Audio API constants
-GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash").strip()
-GEMINI_AUDIO_MODELS = [
-    m.strip() for m in os.getenv(
-        "GEMINI_AUDIO_MODELS",
-        f"{GEMINI_AUDIO_MODEL},gemini-2.5-flash-preview-tts,gemini-2.5-flash",
-    ).split(",") if m.strip()
-]
-
-ROTATION_VOICES = [
-    "en-US-GuyNeural",
-    "en-US-JennyNeural",
-    "en-US-DavisNeural",
-    "en-US-AriaNeural",
-    "en-US-JasonNeural",
-    "en-US-SaraNeural",
-    "en-US-TonyNeural",
-    "en-US-NancyNeural",
-]
-RATE_OPTIONS = ["+5%", "+7%", "+8%", "+10%", "+12%", "+14%"]
-
-# Edge TTS can silently fail on long texts. Split at this threshold.
-_EDGE_TTS_CHUNK_LIMIT = 280
-
-# Support for proxy configuration
-EDGE_TTS_PROXY = os.getenv("EDGE_TTS_PROXY", "")  # e.g., "http://proxy:8080"
-_EDGE_TTS_DISABLED_REASON = ""
-EDGE_TTS_SINGLE_CHUNK_RETRIES = int(os.getenv("EDGE_TTS_SINGLE_CHUNK_RETRIES", "4"))
-EDGE_TTS_MULTI_CHUNK_RETRIES = int(os.getenv("EDGE_TTS_MULTI_CHUNK_RETRIES", "4"))
-EDGE_TTS_SINGLE_RETRY_DELAY_SECONDS = float(os.getenv("EDGE_TTS_SINGLE_RETRY_DELAY_SECONDS", "5"))
-EDGE_TTS_CHUNK_RETRY_DELAY_SECONDS = float(os.getenv("EDGE_TTS_CHUNK_RETRY_DELAY_SECONDS", "4"))
-EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS = float(os.getenv("EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS", "6"))
-EDGE_TTS_INTER_CHUNK_DELAY_SECONDS = float(os.getenv("EDGE_TTS_INTER_CHUNK_DELAY_SECONDS", "1.2"))
-ALLOW_SILENT_AUDIO_FALLBACK = os.getenv("ALLOW_SILENT_AUDIO_FALLBACK", "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
-GEMINI_AUDIO_ENABLED = os.getenv("GEMINI_AUDIO_ENABLED", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
-GEMINI_AUDIO_ONLY = os.getenv("GEMINI_AUDIO_ONLY", "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
-FORCE_GOOGLE_AUDIO_ONLY = os.getenv("FORCE_GOOGLE_AUDIO_ONLY", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-}
-
-
-def _probe_media_duration(output_path: Path) -> float:
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        str(output_path),
-    ]
-    try:
-        import subprocess
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        return float(result.stdout.strip())
-    except Exception:
-        return 0.0
-
-
-def _normalize_audio_to_mp3(output_path: Path) -> None:
-    """
-    Legacy compatibility hook.
-    In production prepared mode we avoid ffmpeg conversions and only ensure the file exists.
-    """
-    if not output_path.exists() or output_path.stat().st_size <= 0:
-        raise RuntimeError(f"Generated audio file is missing or empty: {output_path}")
-    return
-
-def _is_nonrecoverable_edge_error(message: str) -> bool:
-    """
-    Detect Edge TTS failures that are unlikely to recover by retrying voices/chunks.
-    """
-    low = str(message).lower()
-    patterns = (
-        "cannot connect to host",
-        "access is denied",
-        "clientconnectorerror",
-        "proxy",
-        "403",
-        "401",
-        "forbidden",
-    )
-    return any(pattern in low for pattern in patterns)
-
-
-def _sanitize_tts_text(text: str) -> str:
-    """
-    Clean script text for TTS engines.
-
-    Strips non-ASCII characters, normalizes whitespace, and removes
-    symbols that can cause Edge TTS to silently return no audio.
-    """
-    # Replace common unicode quotes/dashes with ASCII equivalents
-    replacements = {
-        "\u2018": "'", "\u2019": "'",   # smart single quotes
-        "\u201c": '"', "\u201d": '"',   # smart double quotes
-        "\u2013": "-", "\u2014": "-",   # en/em dash
-        "\u2026": "...",                 # ellipsis
-        "\u00a0": " ",                   # non-breaking space
-    }
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-
-    # Strip any remaining non-ASCII
-    text = text.encode("ascii", errors="ignore").decode("ascii")
-
-    # Collapse multiple whitespace but preserve newlines
-    lines = text.splitlines()
-    cleaned_lines = [" ".join(line.split()) for line in lines]
-    text = "\n".join(line for line in cleaned_lines if line.strip())
-
-    return text.strip()
-
-
-def pick_voice_profile(voice: str = "", rate: str = "") -> tuple[str, str]:
-    """
-    Choose a high-quality voice and slight speaking-rate variation.
-    """
-    pool = ROTATION_VOICES[:]
-    clean_voice = " ".join(str(voice).split()).strip()
-    if clean_voice and clean_voice not in pool:
-        pool.append(clean_voice)
-    selected_voice = random.choice(pool)
-    selected_rate = " ".join(str(rate).split()).strip() or random.choice(RATE_OPTIONS)
-    return selected_voice, selected_rate
-
-
-def _split_into_chunks(text: str, limit: int) -> list[str]:
-    """Split text at sentence boundaries so each chunk stays under *limit* chars."""
-    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-    chunks: list[str] = []
-    current = ""
-    for sentence in sentences:
-        candidate = f"{current} {sentence}".strip() if current else sentence
-        if len(candidate) <= limit:
-            current = candidate
-        else:
-            if current:
-                chunks.append(current)
-            if len(sentence) > limit:
-                # Split long sentence at commas/semicolons
-                sub_parts = re.split(r"(?<=[,;:])\s+", sentence)
-                for part in sub_parts:
-                    if current and len(f"{current} {part}") <= limit:
-                        current = f"{current} {part}"
-                    else:
-                        if current:
-                            chunks.append(current)
-                        current = part
-            else:
-                current = sentence
-    if current:
-        chunks.append(current)
-    return chunks or [text]
-
-
-def _concat_audio_files(parts: list[Path], output: Path) -> Path:
-    """Concatenate multiple mp3 files into one using ffmpeg."""
-    if len(parts) == 1:
-        import shutil
-        shutil.move(str(parts[0]), str(output))
-        return output
-
-    concat_list = output.parent / "tts_concat.txt"
-    concat_list.write_text(
-        "\n".join(f"file '{p.as_posix()}'" for p in parts),
-        encoding="utf-8",
-    )
-    cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", str(concat_list),
-        "-c", "copy",
-        str(output),
-    ]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-    for p in parts:
-        if p.exists() and p != output:
-            p.unlink()
-    if concat_list.exists():
-        concat_list.unlink()
-    return output
-
-
-async def _save_voice_async(script: str, voice: str, rate: str, output_path: Path) -> Path:
-    """Generate voice via Edge TTS, splitting long scripts into sentence chunks."""
-    if edge_tts is None:
-        raise RuntimeError("edge-tts is not installed.")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    proxy = EDGE_TTS_PROXY if EDGE_TTS_PROXY else None
-
-    chunks = _split_into_chunks(script, _EDGE_TTS_CHUNK_LIMIT)
-    LOGGER.info("Edge TTS: script split into %d chunk(s) (%d chars total)", len(chunks), len(script))
-
-    if len(chunks) == 1:
-        # Short script - retry several times before switching voice.
-        for attempt in range(max(1, EDGE_TTS_SINGLE_CHUNK_RETRIES)):
-            try:
-                communicator = edge_tts.Communicate(text=chunks[0], voice=voice, rate=rate, proxy=proxy)
-                await communicator.save(str(output_path))
-                if output_path.exists() and output_path.stat().st_size > 1000:
-                    duration = _probe_media_duration(output_path)
-                    if duration < 1.0: # Less than 1 second is suspicious for a whole chunk
-                        raise RuntimeError(f"Generated audio too short: {duration}s")
-                    return output_path
-                raise RuntimeError("Empty or too-small audio file")
-            except Exception as e:
-                err = str(e)
-                if _is_nonrecoverable_edge_error(err):
-                    raise RuntimeError(err)
-                if attempt < max(1, EDGE_TTS_SINGLE_CHUNK_RETRIES) - 1:
-                    LOGGER.warning(
-                        "Edge TTS single-chunk attempt %d/%d failed: %s. Retrying in %.1fs...",
-                        attempt + 1,
-                        max(1, EDGE_TTS_SINGLE_CHUNK_RETRIES),
-                        err[:80],
-                        EDGE_TTS_SINGLE_RETRY_DELAY_SECONDS,
-                    )
-                    await asyncio.sleep(max(0.0, EDGE_TTS_SINGLE_RETRY_DELAY_SECONDS))
-                    continue
-                raise
-        return output_path
-
-    # Multiple chunks - generate each separately, then concatenate
-    tmp_dir = output_path.parent / "tts_chunks"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    part_files: list[Path] = []
-
-    for idx, chunk in enumerate(chunks):
-        part_path = tmp_dir / f"chunk_{idx:03d}.mp3"
-        for attempt in range(max(1, EDGE_TTS_MULTI_CHUNK_RETRIES)):
-            try:
-                communicator = edge_tts.Communicate(text=chunk, voice=voice, rate=rate, proxy=proxy)
-                await communicator.save(str(part_path))
-                if part_path.exists() and part_path.stat().st_size > 500:
-                    duration = _probe_media_duration(part_path)
-                    if duration < 0.5:
-                        raise RuntimeError(f"Generated chunk too short: {duration}s")
-                    part_files.append(part_path)
-                    break
-                raise RuntimeError("Empty audio chunk")
-            except Exception as e:
-                err = str(e)
-                if _is_nonrecoverable_edge_error(err):
-                    LOGGER.warning("Edge TTS chunk %d/%d hard-failed: %s", idx + 1, len(chunks), err[:80])
-                    for p in part_files:
-                        if p.exists():
-                            p.unlink()
-                    raise RuntimeError(err)
-                if attempt < max(1, EDGE_TTS_MULTI_CHUNK_RETRIES) - 1:
-                    LOGGER.warning(
-                        "Edge TTS chunk %d/%d attempt %d/%d failed: %s. Retrying in %.1fs...",
-                        idx + 1,
-                        len(chunks),
-                        attempt + 1,
-                        max(1, EDGE_TTS_MULTI_CHUNK_RETRIES),
-                        err[:80],
-                        EDGE_TTS_CHUNK_RETRY_DELAY_SECONDS,
-                    )
-                    await asyncio.sleep(max(0.0, EDGE_TTS_CHUNK_RETRY_DELAY_SECONDS))
-                    continue
-                LOGGER.warning("Edge TTS chunk %d/%d failed: %s", idx + 1, len(chunks), err[:80])
-                for p in part_files:
-                    if p.exists():
-                        p.unlink()
-                raise
-        # Small pause between chunks to avoid rate limits
-        if idx < len(chunks) - 1:
-            await asyncio.sleep(max(0.0, EDGE_TTS_INTER_CHUNK_DELAY_SECONDS))
-
-    if len(part_files) != len(chunks):
-        for p in part_files:
-            if p.exists():
-                p.unlink()
-        raise RuntimeError("Edge TTS chunk mismatch: missing audio chunks.")
-
-    result = _concat_audio_files(part_files, output_path)
-
-    # Cleanup temp dir
-    if tmp_dir.exists():
-        for leftover in tmp_dir.iterdir():
-            leftover.unlink()
-        tmp_dir.rmdir()
-
-    return result
-
-
-
-def _estimate_duration_seconds(script: str) -> float:
-    words = max(1, len(str(script).split()))
-    estimated = words / 2.4
-    return max(10.0, min(45.0, estimated))
-
-
-def _write_silent_audio(output_path: Path, duration_seconds: float) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        "anullsrc=r=24000:cl=mono",
-        "-t",
-        f"{duration_seconds:.2f}",
-        "-c:a",
-        "libmp3lame",
-        "-q:a",
-        "5",
-        str(output_path),
-    ]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
-    return output_path
-
-
-def _map_edge_voice_to_gemini(edge_voice: str) -> str:
-    """Map Edge TTS voice names to Gemini Native Audio voice names."""
-    low = str(edge_voice).lower()
-    # Gemini voices: Puck, Charon, Kore, Fenrir, Aoede
-    if "guy" in low or "jason" in low or "tony" in low or "davis" in low:
-        return random.choice(["Puck", "Charon", "Fenrir"])
-    else:
-        return random.choice(["Kore", "Aoede"])
 
 from .gemini_utils import execute_with_gemini_fallback
 from .gemini_utils import get_gemini_api_keys
+
+LOGGER = logging.getLogger(__name__)
+
+DEFAULT_GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Puck")
+GEMINI_VOICE_OPTIONS = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
+GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash-preview-tts").strip()
+GEMINI_AUDIO_MODELS = [
+    item.strip()
+    for item in os.getenv(
+        "GEMINI_AUDIO_MODELS",
+        f"{GEMINI_AUDIO_MODEL},gemini-2.5-flash-preview-tts,gemini-2.5-flash",
+    ).split(",")
+    if item.strip()
+]
+
+
+def pick_voice_profile(voice: str = "", rate: str = "") -> tuple[str, str]:
+    clean = voice.strip()
+    if clean and clean in GEMINI_VOICE_OPTIONS:
+        return clean, ""
+    return random.choice(GEMINI_VOICE_OPTIONS), ""
+
+
+def _validate_audio_file(path: Path) -> None:
+    if not path.exists() or path.stat().st_size < 500:
+        raise RuntimeError(f"Audio file missing or too small: {path}")
 
 
 def _uses_live_native_audio(model_name: str) -> bool:
     low = model_name.lower()
     return "native-audio" in low or "dialog" in low
+
+
+def _resolve_gemini_voice(voice: str) -> str:
+    clean = (voice or "").strip()
+    if clean in GEMINI_VOICE_OPTIONS:
+        return clean
+    return DEFAULT_GEMINI_VOICE if DEFAULT_GEMINI_VOICE in GEMINI_VOICE_OPTIONS else random.choice(GEMINI_VOICE_OPTIONS)
 
 
 async def _save_gemini_voice_live_async(
@@ -439,10 +117,12 @@ async def _save_gemini_voice_live_async(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "wb") as fh:
         fh.write(b"".join(chunks))
+    _validate_audio_file(output_path)
     return output_path
 
+
 def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
-    gemini_voice = _map_edge_voice_to_gemini(voice)
+    gemini_voice = _resolve_gemini_voice(voice)
     payload = {
         "contents": [{"parts": [{"text": script}]}],
         "generationConfig": {
@@ -464,18 +144,10 @@ def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
                 keys = get_gemini_api_keys()
                 if not keys:
                     raise RuntimeError("No Gemini API keys found for Live API call.")
-                live_last_error: Exception | None = None
-                for i, key in enumerate(keys):
-                    masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
-                    if i > 0:
-                        LOGGER.info("Trying Gemini Live fallback key %s (%s)", i, masked_key)
+                last_error: Exception | None = None
+                for key in keys:
                     try:
-                        LOGGER.info(
-                            "Calling Gemini Live native audio model '%s' (Voice: %s)...",
-                            model_name,
-                            gemini_voice,
-                        )
-                        return asyncio.run(
+                        output = asyncio.run(
                             _save_gemini_voice_live_async(
                                 script=script,
                                 gemini_voice=gemini_voice,
@@ -484,18 +156,16 @@ def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
                                 api_key=key,
                             )
                         )
+                        _validate_audio_file(output)
+                        return output
                     except Exception as exc:
-                        live_last_error = exc
-                        LOGGER.warning("Gemini Live key %s (%s) failed: %s", i, masked_key, str(exc)[:180])
+                        last_error = exc
                         continue
-                raise RuntimeError(
-                    f"All {len(keys)} Gemini Live API keys failed. Last error: {live_last_error}"
-                )
+                raise RuntimeError(f"All Gemini Live keys failed. Last error: {last_error}")
 
             gemini_tts_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
             def operation(key: str) -> requests.Response:
-                LOGGER.info(f"Calling Gemini Native Audio model '{model_name}' (Voice: {gemini_voice})...")
                 response = requests.post(
                     gemini_tts_url,
                     params={"key": key},
@@ -507,19 +177,16 @@ def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
 
             response = execute_with_gemini_fallback(operation)
             data = response.json()
-
             candidates = data.get("candidates", [])
             if not candidates:
                 raise RuntimeError("No candidates returned from Gemini")
 
             parts = candidates[0].get("content", {}).get("parts", [])
-            if not parts:
-                raise RuntimeError("No parts returned from Gemini")
-
             audio_part = None
-            for p in parts:
-                if "inlineData" in p and p["inlineData"].get("mimeType", "").startswith("audio/"):
-                    audio_part = p["inlineData"]["data"]
+            for part in parts:
+                inline = part.get("inlineData", {})
+                if inline.get("mimeType", "").startswith("audio/"):
+                    audio_part = inline.get("data")
                     break
 
             if not audio_part:
@@ -527,16 +194,16 @@ def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
 
             audio_bytes = base64.b64decode(audio_part)
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "wb") as f:
-                f.write(audio_bytes)
-
+            with open(output_path, "wb") as file_handle:
+                file_handle.write(audio_bytes)
+            _validate_audio_file(output_path)
             return output_path
-        except Exception as e:
-            errors.append(f"{model_name}: {str(e)[:180]}")
-            LOGGER.warning("Gemini audio model '%s' failed: %s", model_name, str(e)[:180])
+        except Exception as exc:
+            errors.append(f"{model_name}: {str(exc)[:180]}")
             continue
 
     raise RuntimeError("All configured Gemini audio models failed: " + " | ".join(errors))
+
 
 def generate_voice(
     script: str,
@@ -545,28 +212,11 @@ def generate_voice(
     rate: str = "",
     rotate_profile: bool = True,
 ) -> tuple[Path, bool]:
-    """Generate voice audio with Google/Gemini only (non-Google fallback disabled)."""
-    if rotate_profile:
-        selected_voice, selected_rate = pick_voice_profile(voice=voice, rate=rate)
-    else:
-        selected_voice = " ".join(str(voice).split()).strip() or ROTATION_VOICES[0]
-        selected_rate = " ".join(str(rate).split()).strip() or random.choice(RATE_OPTIONS)
-
-    clean_script = _sanitize_tts_text(script)
+    clean_script = " ".join(str(script or "").split()).strip()
     if not clean_script:
         raise RuntimeError("Script is empty after sanitization, unable to generate voice.")
 
-    if not GEMINI_AUDIO_ENABLED:
-        raise RuntimeError("Gemini Audio is disabled. Set GEMINI_AUDIO_ENABLED=true.")
-
-    try:
-        LOGGER.info("Attempting voice generation via Gemini Audio only...")
-        audio_file = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
-        if audio_file.exists() and audio_file.stat().st_size > 1000:
-            LOGGER.info("Successfully generated Gemini audio (%s bytes)", audio_file.stat().st_size)
-            return audio_file, True
-        raise RuntimeError("Gemini returned empty/too-small audio file.")
-    except Exception as gemini_err:
-        raise RuntimeError(
-            f"Google/Gemini audio failed (non-Google fallback disabled): {gemini_err}"
-        ) from gemini_err
+    selected_voice = _resolve_gemini_voice(voice)
+    audio_path = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
+    _validate_audio_file(audio_path)
+    return audio_path, True

@@ -22,6 +22,10 @@ export const triggerLocalPipeline = async (
   }
   env.PYTHONPATH = env.PYTHONPATH ? `${pipelineSrc}${path.delimiter}${env.PYTHONPATH}` : pipelineSrc;
   env.RUN_MODE = env.RUN_MODE || 'prepared';
+  env.FORCE_GOOGLE_AUDIO_ONLY = env.FORCE_GOOGLE_AUDIO_ONLY || 'true';
+  env.GEMINI_AUDIO_ENABLED = env.GEMINI_AUDIO_ENABLED || 'true';
+  env.GEMINI_AUDIO_ONLY = env.GEMINI_AUDIO_ONLY || 'true';
+  env.ALLOW_SILENT_AUDIO_FALLBACK = env.ALLOW_SILENT_AUDIO_FALLBACK || 'false';
 
   return await new Promise<LocalPipelineResult>((resolve, reject) => {
     const child = spawn(

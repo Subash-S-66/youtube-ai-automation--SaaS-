@@ -6,7 +6,7 @@ export interface AIGenerationResult {
   provider: 'jules' | 'fallback';
 }
 
-const callJules = async (prompt: string, timeoutMs = 20000): Promise<string> => {
+const callJules = async (prompt: string, timeoutMs = 45000): Promise<string> => {
   const julesUrl = process.env.JULES_API_URL || '';
   const julesKey = process.env.JULES_API_KEY || '';
   if (!julesUrl || !julesKey) {
@@ -42,7 +42,7 @@ const callJules = async (prompt: string, timeoutMs = 20000): Promise<string> => 
   }
 };
 
-const callFallbackModel = async (prompt: string, timeoutMs = 20000): Promise<string> => {
+const callFallbackModel = async (prompt: string, timeoutMs = 45000): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
     throw new Error('Fallback model key is not configured');
@@ -92,4 +92,3 @@ export const generateFromAI = async (prompt: string): Promise<AIGenerationResult
     }
   }
 };
-

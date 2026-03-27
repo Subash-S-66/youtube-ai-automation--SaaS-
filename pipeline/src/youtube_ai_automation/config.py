@@ -76,7 +76,7 @@ IDEA_CANDIDATE_COUNT = int(os.getenv("IDEA_CANDIDATE_COUNT", "10"))
 HOOKS_PER_TOPIC = int(os.getenv("HOOKS_PER_TOPIC", "3"))
 VIDEOS_PER_DAY = int(os.getenv("VIDEOS_PER_DAY", "1"))
 SCENE_DURATION = float(os.getenv("SCENE_DURATION", "4"))
-MIN_VIDEO_LENGTH = int(os.getenv("MIN_VIDEO_LENGTH", "30"))
+MIN_VIDEO_LENGTH = int(os.getenv("MIN_VIDEO_LENGTH", "15"))
 MAX_VIDEO_LENGTH = int(os.getenv("MAX_VIDEO_LENGTH", "60"))
 MIN_SCRIPT_SECONDS = int(os.getenv("MIN_SCRIPT_SECONDS", "20"))
 MAX_SCRIPT_SECONDS = int(os.getenv("MAX_SCRIPT_SECONDS", "35"))
@@ -109,5 +109,6 @@ TELEGRAM_ALLOWED_CHAT_ID = os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "").strip()
 # Content defaults.
 DEFAULT_TOPIC = os.getenv("DEFAULT_TOPIC", "")
 DEFAULT_NICHE = os.getenv("DEFAULT_NICHE", "")
-DEFAULT_VOICE = os.getenv("EDGE_TTS_VOICE", "en-US-AriaNeural")
+GEMINI_AUDIO_ENABLED = True
+DEFAULT_VOICE = os.getenv("GEMINI_VOICE", "Puck")
 

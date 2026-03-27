@@ -9,7 +9,6 @@ import logging
 from pathlib import Path
 import random
 import shutil
-import subprocess
 from typing import Any
 
 import requests
@@ -38,28 +37,6 @@ def _download_file(url: str, out_file: Path) -> None:
                 f.write(chunk)
 
 
-def _generate_placeholder_clip(out_file: Path, duration_seconds: float) -> None:
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-    color_choices = ["0x111827", "0x1f2937", "0x0f172a", "0x1e293b", "0x172554"]
-    color = random.choice(color_choices)
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        f"color=c={color}:s=1080x1920:r=30",
-        "-t",
-        f"{duration_seconds:.2f}",
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        str(out_file),
-    ]
-    subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-
 def _build_fallback_scene_clips(
     scenes: list[str],
     output_dir: Path,
@@ -84,23 +61,9 @@ def _build_fallback_scene_clips(
             shutil.copy2(src, dst)
             reused.append(dst)
 
-        remaining = needed - len(reused)
-        if remaining > 0:
-            for idx in range(remaining):
-                out_path = output_dir / f"fallback_scene{len(reused) + idx + 1}_placeholder.mp4"
-                _generate_placeholder_clip(out_file=out_path, duration_seconds=max(2.8, scene_duration))
-                reused.append(out_path)
-
         LOGGER.info("Using %s fallback clips from %s", len(reused), output_dir)
         return reused
-
-    generated: list[Path] = []
-    for idx in range(needed):
-        out_path = output_dir / f"scene{idx + 1}_placeholder.mp4"
-        _generate_placeholder_clip(out_file=out_path, duration_seconds=max(2.8, scene_duration))
-        generated.append(out_path)
-    LOGGER.info("Generated %s placeholder clips in %s", len(generated), output_dir)
-    return generated
+    return []
 
 
 def _url_key(url: str) -> str:
@@ -438,11 +401,7 @@ def download_scene_videos(
     all_paths.sort()
 
     if not all_paths:
-        return _build_fallback_scene_clips(
-            scenes=scenes,
-            output_dir=output_dir,
-            scene_duration=scene_duration,
-        )
+        return []
     return all_paths
 
 

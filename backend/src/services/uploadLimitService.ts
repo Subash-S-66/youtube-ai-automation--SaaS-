@@ -81,7 +81,6 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
     {
       $set: {
         uploadsUsedToday: 0,
-        uploadsOnHold: 0,
         lastUploadReset: startOfUTCDay
       }
     },
@@ -137,7 +136,6 @@ export const reserveCredits = async (userId: string, count: number = 1): Promise
     {
       $set: {
         uploadsUsedToday: 0,
-        uploadsOnHold: 0,
         lastUploadReset: startOfUTCDay
       }
     }
@@ -204,7 +202,6 @@ export const incrementUploadCount = async (userId: string, count: number = 1): P
     {
       $set: {
         uploadsUsedToday: count,
-        uploadsOnHold: 0,
         lastUploadReset: startOfUTCDay
       }
     }

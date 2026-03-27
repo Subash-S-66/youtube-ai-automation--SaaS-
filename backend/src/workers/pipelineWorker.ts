@@ -13,7 +13,6 @@ import SystemConfig from '../models/SystemConfig';
 import Media from '../models/Media';
 import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { generateContent } from '../services/contentGenerationService';
-import { buildStandardPrompt } from '../services/promptBuilderService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
 import { triggerLocalPipeline } from './localPipelineTrigger';
@@ -141,6 +140,30 @@ const updateProgressSafe = async (
     });
   } catch {
     // Best-effort only
+  }
+};
+
+const shouldRequireYouTubeUpload = (settings: Record<string, any>): boolean => {
+  if (!settings || typeof settings !== 'object') return false;
+  return Boolean(
+    settings.upload === true ||
+    settings.autoUpload === true ||
+    settings.autoUploadSchedule === true ||
+    settings.scheduleEnabled === true ||
+    settings.publishNow === true
+  );
+};
+
+const extractPipelineOutputJson = (stdout: string): Record<string, any> | null => {
+  const marker = 'PIPELINE_OUTPUT_JSON:';
+  const index = stdout.lastIndexOf(marker);
+  if (index === -1) return null;
+  const payload = stdout.slice(index + marker.length).trim();
+  if (!payload) return null;
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
   }
 };
 
@@ -379,16 +402,9 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           throw err;
         }
 
-        const standardizedPrompt = buildStandardPrompt({
-          prompt: promptDoc.gemini_prompt || promptDoc.user_prompt,
-          title: promptDoc.user_prompt,
-          duration: settings.targetDuration || settings.duration,
-          style: settings.videoStyle,
-        });
-
         const generationInput: any = {
           topic: promptDoc.user_prompt,
-          prompt: standardizedPrompt,
+          prompt: promptDoc.gemini_prompt || promptDoc.user_prompt,
           videoCount: settings.videoCount || 1,
         };
         if (typeof settings.targetDuration === 'number') generationInput.targetDuration = settings.targetDuration;
@@ -512,6 +528,17 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         customVideoUrls: resolvedCustomVideos.urls,
         customImageUrls: resolvedCustomImages.urls,
         customThumbnailUrl: resolvedCustomThumbnail.urls[0] || '',
+        templateConfig: {
+          fontStyle: settings.templateConfig?.fontStyle || 'Anton',
+          subtitleColor: settings.templateConfig?.subtitleColor || '#FFFFFF',
+          captionPosition: (settings.templateConfig as any)?.captionPosition || 'bottom',
+        },
+        targetDuration: settings.targetDuration || settings.duration || 40,
+        ctaEnabled: !!settings.ctaEnabled,
+        recapEnabled: !!settings.recapEnabled,
+        storyMode: !!settings.storyMode,
+        currentPart: settings.currentPart || 1,
+        voiceName: (settings.voices && settings.voices[0]) || '',
       });
 
       const pipelinePayload = sanitizePayloadValue({
@@ -584,19 +611,25 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 `, 'processing');
       }
 
-      // 3. Ensure valid YouTube token before upload execution
-      await updateProgressSafe(job, 60, 'token_validation', 'Validating YouTube token');
+      // 3. Ensure valid YouTube token only if this run requires upload.
+      const requiresUpload = shouldRequireYouTubeUpload(settings as Record<string, any>);
       let youtubeToken = '';
-      try {
-        youtubeToken = (await ensureValidYouTubeToken(settings.channelId, userId)).accessToken;
-      } catch (error: any) {
-        error.stage = 'TOKEN';
-        throw error;
-      }
-      if (!youtubeToken) {
-        const err: any = new Error('Failed to obtain a valid YouTube token');
-        err.stage = 'TOKEN';
-        throw err;
+      if (requiresUpload) {
+        await updateProgressSafe(job, 60, 'token_validation', 'Validating YouTube token');
+        try {
+          youtubeToken = (await ensureValidYouTubeToken(settings.channelId, userId)).accessToken;
+        } catch (error: any) {
+          error.stage = 'TOKEN';
+          throw error;
+        }
+        if (!youtubeToken) {
+          const err: any = new Error('Failed to obtain a valid YouTube token');
+          err.stage = 'TOKEN';
+          throw err;
+        }
+      } else {
+        await appendLogSafe(jobId, 'Upload not requested for this job. Skipping YouTube token validation.\n');
+        await updateProgressSafe(job, 60, 'token_validation', 'Upload disabled, token validation skipped');
       }
 
       // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
@@ -621,7 +654,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.
       // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
       // We will encrypt the token using the same ENCRYPTION_KEY used for DB storage.
-      const encryptedYoutubeToken = encrypt(youtubeToken);
+      const encryptedYoutubeToken = youtubeToken ? encrypt(youtubeToken) : '';
 
       // Setup payload configuring environment variables for the container run
       const envVars = [
@@ -630,9 +663,16 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "RUN_MODE", value: "prepared" },
         { name: "YOUTUBE_TOKEN_ENCRYPTED", value: encryptedYoutubeToken },
         { name: "ENCRYPTION_KEY", value: process.env.ENCRYPTION_KEY || "" },
+        { name: "UPLOAD", value: requiresUpload ? "true" : "false" },
         { name: "JOB_ID", value: jobId },
         { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
         { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
+        { name: "GEMINI_API_KEY", value: process.env.GEMINI_API_KEY || "" },
+        { name: "GEMINI_AUDIO_ENABLED", value: "true" },
+        { name: "GEMINI_AUDIO_ONLY", value: "true" },
+        { name: "FORCE_GOOGLE_AUDIO_ONLY", value: "true" },
+        { name: "GEMINI_AUDIO_MODEL", value: process.env.GEMINI_AUDIO_MODEL || "gemini-2.5-flash-preview-tts" },
+        { name: "ALLOW_SILENT_AUDIO_FALLBACK", value: "false" },
         { name: "MONGO_URI", value: process.env.MONGO_URI || "" },
         { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },
         { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
@@ -654,6 +694,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         const result = await triggerLocalPipeline(envVars);
         const stdoutTail = (result.stdout || '').slice(-2000);
         const stderrTail = (result.stderr || '').slice(-2000);
+        const outputJson = extractPipelineOutputJson(result.stdout || '');
         if (stdoutTail) {
           await appendLogSafe(jobId, `\n[LocalPipeline][stdout-tail]\n${stdoutTail}\n`);
         }
@@ -667,8 +708,29 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           err.stage = 'RENDER';
           throw err;
         }
-        await appendLogSafe(jobId, `\nLocal pipeline process finished. Awaiting webhook updates.\n`);
-        await updateProgressSafe(job, 95, 'pipeline_runtime', 'Pipeline runtime finished, awaiting final status');
+        await appendLogSafe(jobId, `\nLocal pipeline process finished.\n`);
+        await updateProgressSafe(job, 95, 'pipeline_runtime', 'Pipeline runtime finished');
+
+        const finalized = await JobModel.findOneAndUpdate(
+          { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+          {
+            $set: {
+              status: 'success',
+              completedAt: new Date(),
+              holdConsumed: true,
+              errorMessage: '',
+              errorStage: undefined as any,
+              result: outputJson || { success: true },
+              processedVideos: settings.videoCount || 1,
+            },
+          },
+          { returnDocument: 'after' }
+        );
+        if (finalized) {
+          await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+          await updateProgressSafe(job, 100, 'completed', 'Job completed successfully');
+          await appendLogSafe(jobId, `${JSON.stringify({ event: 'local_completion', output: outputJson || {} })}\n`, 'success');
+        }
         return;
       }
 
