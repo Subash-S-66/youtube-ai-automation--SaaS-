@@ -15,6 +15,8 @@ export interface ISystemConfig extends Document {
     pro: number;
     premium: number;
   };
+  perVideoTimeoutMs: number;
+  baseTimeoutMs: number;
   updatedAt: Date;
 }
 
@@ -40,6 +42,14 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       basic: { type: Number, default: 1 },
       pro: { type: Number, default: 2 },
       premium: { type: Number, default: 4 },
+    },
+    perVideoTimeoutMs: {
+      type: Number,
+      default: 6 * 60 * 1000, // 6 minutes
+    },
+    baseTimeoutMs: {
+      type: Number,
+      default: 2 * 60 * 1000, // 2 minutes
     },
   },
   {

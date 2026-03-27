@@ -292,6 +292,7 @@ export const enqueuePipelineJob = async ({
       pipelineConfig: finalSettings,
       topic: prompt.user_prompt,
       generatedPrompt: prompt.gemini_prompt,
+      queuedAt: new Date(),
     });
     throw new AppError(generationError, 502);
   }
@@ -380,6 +381,8 @@ export const enqueuePipelineJob = async ({
   if (finalSettings.customThumbnailId) {
     jobData.customThumbnailId = finalSettings.customThumbnailId;
   }
+
+  jobData.queuedAt = new Date();
 
   const job = await Job.create(jobData);
 

@@ -24,12 +24,14 @@ export interface IJob extends Document {
   logs: string;
   error?: string;
   result?: any;
+  queuedAt?: Date;
   startedAt?: Date;
   completedAt?: Date;
   holdConsumed: boolean;
   holdReleased: boolean;
   acceptedYouTubeLimitWarning: boolean;
   videoCount: number;
+  processedVideos: number;
   channelId: string;
   customVideoIds?: string[];
   customImageIds?: string[];
@@ -126,6 +128,9 @@ const JobSchema = new Schema<IJob>(
     result: {
       type: Schema.Types.Mixed,
     },
+    queuedAt: {
+      type: Date,
+    },
     startedAt: {
       type: Date,
     },
@@ -147,6 +152,10 @@ const JobSchema = new Schema<IJob>(
     videoCount: {
       type: Number,
       default: 1,
+    },
+    processedVideos: {
+      type: Number,
+      default: 0,
     },
     channelId: {
       type: String,
