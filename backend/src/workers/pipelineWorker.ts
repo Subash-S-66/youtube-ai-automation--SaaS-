@@ -145,12 +145,15 @@ const updateProgressSafe = async (
 
 const shouldRequireYouTubeUpload = (settings: Record<string, any>): boolean => {
   if (!settings || typeof settings !== 'object') return false;
+  if (settings.upload === false) return false;
   return Boolean(
     settings.upload === true ||
     settings.autoUpload === true ||
     settings.autoUploadSchedule === true ||
     settings.scheduleEnabled === true ||
-    settings.publishNow === true
+    settings.publishNow === true ||
+    // Immediate dashboard runs usually provide a channelId without explicit upload flags.
+    (typeof settings.channelId === 'string' && settings.channelId.trim().length > 0)
   );
 };
 

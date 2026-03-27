@@ -1143,6 +1143,16 @@ def expand_meaningfully(text: str, extra_words: int) -> str:
     return out
 
 
+def _enforce_word_cap(script: str, max_words: int) -> str:
+    words = str(script or "").split()
+    if len(words) <= max_words:
+        return str(script or "").strip()
+    trimmed = " ".join(words[:max_words]).strip()
+    if trimmed and trimmed[-1] not in ".!?":
+        trimmed += "."
+    return trimmed
+
+
 def validate_sections(section_budget: dict[str, int], section_scripts: dict[str, str]) -> list[str]:
     errors: list[str] = []
     hook_est = estimate_duration_from_script(section_scripts.get("hook", ""))
@@ -1395,8 +1405,16 @@ def run_prepared_pipeline(
     actual_audio_seconds = 0.0
     audio_retry_count = 0
     audio_failed = False
+    min_words = max(30, int(max(10, target_duration - 5) * 2.5))
+    max_words = int(min(60, target_duration) * 2.5)
     try:
         for audio_attempt in range(1, 4):
+            # Keep script bounded before every expensive TTS attempt.
+            best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
+            best_package["sections"]["main_content"] = _enforce_word_cap(
+                best_package["sections"].get("main_content", ""),
+                max(20, max_words - 40),
+            )
             full_audio_path, _ = generate_voice(
                 script=best_package["script"],
                 voice=voice_name,
@@ -1430,10 +1448,17 @@ def run_prepared_pipeline(
             if audio_attempt >= 3:
                 break
             audio_retry_count += 1
+            current_main_seconds = max(
+                1.0,
+                estimate_duration_from_script(best_package["sections"].get("main_content", "")),
+            )
+            # Damped correction to avoid oscillation across retries.
+            correction = max(1.0, abs(drift) * 0.7)
             if drift > 3:
+                target_main_seconds = max(5, int(round(current_main_seconds - correction)))
                 best_package["sections"]["main_content"] = adjust_script_to_duration(
                     script=best_package["sections"].get("main_content", ""),
-                    target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) - drift)),
+                    target_seconds=target_main_seconds,
                     section_name="main",
                     topic_hint=topic,
                     story_mode=story_mode,
@@ -1443,9 +1468,10 @@ def run_prepared_pipeline(
                     best_package["sections"].get("main_content", ""),
                     max(8, int(abs(drift) * 2.5)),
                 )
+                target_main_seconds = max(5, int(round(current_main_seconds + correction)))
                 best_package["sections"]["main_content"] = adjust_script_to_duration(
                     script=best_package["sections"]["main_content"],
-                    target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) + abs(drift))),
+                    target_seconds=target_main_seconds,
                     section_name="main",
                     topic_hint=topic,
                     story_mode=story_mode,
@@ -1458,6 +1484,22 @@ def run_prepared_pipeline(
                     best_package["sections"].get("cta", ""),
                 ] if p
             ).strip()
+            # Keep in a practical target window before next attempt.
+            word_count_now = len(best_package["script"].split())
+            if word_count_now < min_words:
+                best_package["sections"]["main_content"] = expand_meaningfully(
+                    best_package["sections"].get("main_content", ""),
+                    min_words - word_count_now,
+                )
+                best_package["script"] = " ".join(
+                    p for p in [
+                        best_package["sections"].get("hook", ""),
+                        best_package["sections"].get("main_content", ""),
+                        best_package["sections"].get("recap", ""),
+                        best_package["sections"].get("cta", ""),
+                    ] if p
+                ).strip()
+            best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
     except Exception as exc:
         audio_failed = True
         last_errors.append(f"audio_fallback:{str(exc)[:120]}")
@@ -1497,7 +1539,11 @@ def run_prepared_pipeline(
                 best_package["sections"].get("cta", ""),
             ] if p
         ).strip()
+        best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
         estimated_duration = estimate_audio_duration(best_package["script"])
+
+    # Final hard guard: never return >60s practical script size.
+    best_package["script"] = _enforce_word_cap(best_package["script"], int(60 * 2.5))
     timed_lines = build_timed_lines(best_package["script"])
     subtitle_file = create_subtitles_from_script(
         script=best_package["script"],
@@ -1592,7 +1638,9 @@ def run_prepared_pipeline(
             "cta": best_package["sections_budget"].get("cta", 0),
         },
         "sectionAudio": sectionAudio,
+        "uploadRequested": bool(upload),
         "uploadSkipped": True,
+        "uploadSkipReason": "prepared_mode_no_video_render_or_upload",
         "retry_count": audio_retry_count,
         "validationErrors": errors,
     }

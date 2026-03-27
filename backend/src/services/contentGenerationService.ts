@@ -72,6 +72,43 @@ const splitScriptLines = (script: string): string[] => {
     .filter(Boolean);
 };
 
+const splitSentences = (text: string): string[] => {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  return normalized
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+};
+
+const trimScriptToMaxWords = (script: string, maxWords: number): string => {
+  const sentences = splitSentences(script);
+  if (!sentences.length) return String(script || '').trim();
+
+  const selected: string[] = [];
+  let words = 0;
+  for (const sentence of sentences) {
+    const count = sentence.split(/\s+/).filter(Boolean).length;
+    if (words + count > maxWords) break;
+    selected.push(sentence);
+    words += count;
+  }
+
+  if (!selected.length) {
+    const clipped = String(script || '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, Math.max(1, maxWords))
+      .join(' ')
+      .trim();
+    return clipped.endsWith('.') || clipped.endsWith('!') || clipped.endsWith('?')
+      ? clipped
+      : `${clipped}.`;
+  }
+
+  return selected.join('\n').trim();
+};
+
 const WORDS_PER_SECOND = 2.5;
 
 const estimateLineDuration = (line: string): number => {
@@ -142,15 +179,16 @@ const normalizePreparedItem = (raw: any, fallbackTopic: string, targetDurationSe
   const topic = clean(raw?.topic) || fallbackTopic;
   const title = clean(raw?.title).slice(0, 100);
   const description = clean(raw?.description);
-  const script = clean(raw?.script);
-
-  const scriptLines = splitScriptLines(script);
+  const rawScript = clean(raw?.script);
+  const minWords = Math.floor((targetDurationSeconds - 5) * 2.5);
+  const maxWords = Math.floor(Math.min(60, targetDurationSeconds + 5) * 2.5);
+  const cappedScript = trimScriptToMaxWords(rawScript, maxWords);
+  const scriptLines = splitScriptLines(cappedScript);
   const minLines = 3;
   if (!topic || !title || !description || scriptLines.length < minLines) {
     throw new AppError('AI content generation returned invalid structure.', 502);
   }
-  const minWords = Math.floor((targetDurationSeconds - 5) * 2.5);
-  const wordCount = script.split(/\s+/).filter(Boolean).length;
+  const wordCount = scriptLines.join(' ').split(/\s+/).filter(Boolean).length;
   if (wordCount < minWords) {
     throw new AppError(
       `Script too short: ${wordCount} words for ${targetDurationSeconds}s target.`,
@@ -270,6 +308,7 @@ const generateWithRetry = async (
 ): Promise<PreparedContentItem> => {
   const MAX_RETRIES = 3;
   const minWords = Math.floor((targetDurationSeconds - 5) * 2.5);
+  const maxWords = Math.floor(Math.min(60, targetDurationSeconds + 5) * 2.5);
   let lastError: unknown = null;
   for (let i = 0; i < MAX_RETRIES; i += 1) {
     try {
@@ -278,6 +317,9 @@ const generateWithRetry = async (
       const words = result.script.split(/\s+/).filter(Boolean).length;
       if (words < minWords) {
         throw new Error(`Script too short: ${words} < ${minWords}`);
+      }
+      if (words > maxWords) {
+        throw new Error(`Script too long: ${words} > ${maxWords}`);
       }
       return result;
     } catch (err) {
