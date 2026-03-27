@@ -33,6 +33,29 @@ def _validate_audio_file(path: Path) -> None:
         raise RuntimeError("Invalid audio output")
 
 
+def _ensure_wav_container(path: Path) -> None:
+    """
+    Gemini audio responses may arrive as raw PCM bytes.
+    If the file is not a WAV container, wrap bytes as PCM16 mono @24kHz WAV.
+    """
+    try:
+        with wave.open(str(path), "rb") as wf:
+            if wf.getnframes() > 0 and wf.getframerate() > 0:
+                return
+    except Exception:
+        pass
+
+    raw = path.read_bytes()
+    if not raw:
+        raise RuntimeError(f"Audio file is empty: {path}")
+
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)  # PCM16
+        wf.setframerate(24000)
+        wf.writeframes(raw)
+
+
 def get_audio_duration_seconds(audio_path: Path) -> float:
     try:
         with wave.open(str(audio_path), "rb") as wf:
@@ -123,6 +146,7 @@ async def _save_gemini_voice_live_async(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "wb") as fh:
         fh.write(b"".join(chunks))
+    _ensure_wav_container(output_path)
     _validate_audio_file(output_path)
     return output_path
 
