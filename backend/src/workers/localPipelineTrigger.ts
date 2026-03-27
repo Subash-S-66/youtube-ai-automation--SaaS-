@@ -44,6 +44,11 @@ export const triggerLocalPipeline = async (
     });
     child.on('error', reject);
     child.on('close', (exitCode) => {
+      const moduleNotFoundMatch = /ModuleNotFoundError: No module named '([^']+)'/.exec(stderr);
+      if (moduleNotFoundMatch) {
+        const missingModule = moduleNotFoundMatch[1];
+        stderr += `\n[LocalPipeline] Missing Python dependency: ${missingModule}. Run: pip install -r pipeline/requirements.txt\n`;
+      }
       resolve({
         success: exitCode === 0,
         exitCode,
@@ -53,4 +58,3 @@ export const triggerLocalPipeline = async (
     });
   });
 };
-

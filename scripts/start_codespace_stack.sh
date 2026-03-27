@@ -9,6 +9,13 @@ if [[ -f "$ROOT_DIR/.codespaces/runtime_env.sh" ]]; then
   source "$ROOT_DIR/.codespaces/runtime_env.sh"
 fi
 
+PIPELINE_PYTHON_CMD="${PIPELINE_PYTHON_CMD:-python}"
+
+if ! "$PIPELINE_PYTHON_CMD" -c "import requests" >/dev/null 2>&1; then
+  echo "Pipeline Python dependencies missing. Installing from pipeline/requirements.txt..."
+  "$PIPELINE_PYTHON_CMD" -m pip install -r "$ROOT_DIR/pipeline/requirements.txt"
+fi
+
 mkdir -p "$ROOT_DIR/.codespaces/logs"
 
 BACKEND_LOG="$ROOT_DIR/.codespaces/logs/backend.log"
@@ -43,4 +50,3 @@ echo "  tail -f $BACKEND_LOG"
 echo "  tail -f $WORKER_LOG"
 echo "Stop:"
 echo "  bash scripts/stop_codespace_stack.sh"
-
