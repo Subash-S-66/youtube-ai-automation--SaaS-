@@ -7,7 +7,6 @@ import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { getUploadLimits, reserveCredits } from './uploadLimitService';
 import { ensureValidYouTubeToken } from './youtubeTokenService';
-import { generateContent } from './contentGenerationService';
 import { buildStandardPrompt } from './promptBuilderService';
 
 export interface PipelineInputSettings {
@@ -146,7 +145,7 @@ export interface EnqueuePipelineResult {
   };
 }
 
-type GeneratedJobContent = Awaited<ReturnType<typeof generateContent>>;
+type GeneratedJobContent = null;
 
 export const enqueuePipelineJob = async ({
   userId,
@@ -272,55 +271,14 @@ export const enqueuePipelineJob = async ({
     throw new AppError('Prompt does not belong to user', 403);
   }
 
-  let generatedContent: GeneratedJobContent | null = null;
-  try {
-    const standardizedPrompt = buildStandardPrompt({
-      prompt: prompt.gemini_prompt || prompt.user_prompt,
-      title: prompt.user_prompt,
-      duration: finalSettings.targetDuration || finalSettings.duration,
-      style: finalSettings.videoStyle,
-    });
-
-    const generationInput: any = {
-      topic: prompt.user_prompt,
-      prompt: standardizedPrompt,
-      videoCount: finalSettings.videoCount,
-    };
-    if (typeof finalSettings.targetDuration === 'number') generationInput.targetDuration = finalSettings.targetDuration;
-    if (typeof finalSettings.duration === 'number') generationInput.duration = finalSettings.duration;
-    if (typeof finalSettings.storyMode === 'boolean') generationInput.storyMode = finalSettings.storyMode;
-    if (typeof finalSettings.currentPart === 'number') generationInput.currentPart = finalSettings.currentPart;
-    if (typeof finalSettings.recapEnabled === 'boolean') generationInput.recapEnabled = finalSettings.recapEnabled;
-    if (typeof finalSettings.lastPrompt === 'string') generationInput.lastPrompt = finalSettings.lastPrompt;
-
-    generatedContent = await generateContent(generationInput);
-
-    const validStructuredScript = Array.isArray(generatedContent.script)
-      && generatedContent.script.every(
-        (part) => Array.isArray(part) && part.every((line) => line && typeof line.text === 'string' && line.text.trim().length > 0)
-      );
-    if (!validStructuredScript) {
-      throw new AppError('Generated script must be structured as array of { text, duration? } lines.', 502);
-    }
-  } catch (error: any) {
-    const generationError = error?.message || 'Failed to generate content before pipeline execution.';
-    await Job.create({
-      userId,
-      promptId,
-      status: 'failed',
-      logs: `Content generation failed before enqueue.\n${generationError}\n`,
-      error: generationError,
-      errorMessage: generationError,
-      errorStage: 'CONTENT_GENERATION',
-      videoCount: finalSettings.videoCount,
-      channelId: finalSettings.channelId,
-      pipelineConfig: finalSettings,
-      topic: prompt.user_prompt,
-      generatedPrompt: prompt.gemini_prompt,
-      queuedAt: new Date(),
-    });
-    throw new AppError(generationError, 502);
-  }
+  // Queue immediately; content generation runs in background worker.
+  const generatedContent: GeneratedJobContent | null = null;
+  const standardizedPrompt = buildStandardPrompt({
+    prompt: prompt.gemini_prompt || prompt.user_prompt,
+    title: prompt.user_prompt,
+    duration: finalSettings.targetDuration || finalSettings.duration,
+    style: finalSettings.videoStyle,
+  });
 
   let youtubeToken = '';
   try {
@@ -379,13 +337,13 @@ export const enqueuePipelineJob = async ({
     status: 'pending',
     logs: [
       'Job added to queue...',
-      generatedContent ? `Prepared ${generatedContent.preparedContent.length} content item(s) in backend.` : '',
+      'Content generation deferred to background worker.',
       inputAudit.aliasMappings.length ? `Input alias mappings: ${inputAudit.aliasMappings.join(', ')}` : '',
       inputAudit.unusedFields.length ? `Input fields currently not used by runtime: ${inputAudit.unusedFields.join(', ')}` : '',
       inputAudit.notes.length ? `Input notes: ${inputAudit.notes.join(' | ')}` : '',
     ].filter(Boolean).join('\n') + '\n',
     topic: prompt.user_prompt,
-    generatedPrompt: generatedContent?.prompt || prompt.gemini_prompt,
+    generatedPrompt: standardizedPrompt || prompt.gemini_prompt,
     generatedScript: generatedContent?.script || [],
     captions: generatedContent?.captions || [],
     title: generatedContent?.title || '',

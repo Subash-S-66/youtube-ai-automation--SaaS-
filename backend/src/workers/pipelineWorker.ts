@@ -6,11 +6,14 @@ import connectDB from '../config/db';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { connection } from '../config/redis';
 import JobModel from '../models/Job';
+import Prompt from '../models/Prompt';
 import User from '../models/User';
 import StoryProgress from '../models/StoryProgress';
 import SystemConfig from '../models/SystemConfig';
 import Media from '../models/Media';
 import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
+import { generateContent } from '../services/contentGenerationService';
+import { buildStandardPrompt } from '../services/promptBuilderService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
 import { triggerLocalPipeline } from './localPipelineTrigger';
@@ -333,31 +336,82 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         });
         return;
       }
-      const preparedContent = Array.isArray(dbJobForExecution.preparedContent) ? dbJobForExecution.preparedContent : [];
+      let preparedContent = Array.isArray(dbJobForExecution.preparedContent) ? dbJobForExecution.preparedContent : [];
       if (preparedContent.length === 0) {
-        const err: any = new Error('Prepared content is missing. Backend content generation must complete before pipeline execution.');
-        err.stage = 'RENDER';
-        throw err;
+        await appendLogSafe(jobId, 'No prepared content found. Generating content in background worker...\n');
+
+        const promptDoc = await Prompt.findById(dbJobForExecution.promptId);
+        if (!promptDoc) {
+          const err: any = new Error('Prompt not found for background content generation.');
+          err.stage = 'CONTENT_GENERATION';
+          throw err;
+        }
+
+        const standardizedPrompt = buildStandardPrompt({
+          prompt: promptDoc.gemini_prompt || promptDoc.user_prompt,
+          title: promptDoc.user_prompt,
+          duration: settings.targetDuration || settings.duration,
+          style: settings.videoStyle,
+        });
+
+        const generationInput: any = {
+          topic: promptDoc.user_prompt,
+          prompt: standardizedPrompt,
+          videoCount: settings.videoCount || 1,
+        };
+        if (typeof settings.targetDuration === 'number') generationInput.targetDuration = settings.targetDuration;
+        if (typeof settings.duration === 'number') generationInput.duration = settings.duration;
+        if (typeof settings.storyMode === 'boolean') generationInput.storyMode = settings.storyMode;
+        if (typeof settings.currentPart === 'number') generationInput.currentPart = settings.currentPart;
+        if (typeof settings.recapEnabled === 'boolean') generationInput.recapEnabled = settings.recapEnabled;
+        if (typeof settings.lastPrompt === 'string') generationInput.lastPrompt = settings.lastPrompt;
+
+        const generated = await generateContent(generationInput);
+        const validStructuredScript = Array.isArray(generated.script)
+          && generated.script.every(
+            (part) => Array.isArray(part) && part.every((line) => line && typeof line.text === 'string' && line.text.trim().length > 0)
+          );
+        if (!validStructuredScript) {
+          const err: any = new Error('Generated script is invalid in background worker.');
+          err.stage = 'CONTENT_GENERATION';
+          throw err;
+        }
+
+        await JobModel.findByIdAndUpdate(jobId, {
+          generatedPrompt: generated.prompt,
+          generatedScript: generated.script,
+          captions: generated.captions,
+          title: generated.title,
+          description: generated.description,
+          hashtags: generated.hashtags,
+          generatedScenes: generated.scenes,
+          generatedMetadata: generated.metadata,
+          preparedContent: generated.preparedContent,
+        });
+
+        preparedContent = generated.preparedContent as any[];
+        await appendLogSafe(jobId, `Background content generation completed with ${preparedContent.length} item(s).\n`);
       }
+      const executionJob = (await JobModel.findById(jobId)) || dbJobForExecution;
       const firstPreparedItem = (preparedContent[0] && typeof preparedContent[0] === 'object')
         ? (preparedContent[0] as Record<string, any>)
         : {};
-      const generatedScript = Array.isArray(dbJobForExecution.generatedScript?.[0])
-        ? (dbJobForExecution.generatedScript?.[0] || [])
-        : (dbJobForExecution.generatedScript || []);
+      const generatedScript = Array.isArray(executionJob.generatedScript?.[0])
+        ? (executionJob.generatedScript?.[0] || [])
+        : (executionJob.generatedScript || []);
       const payloadScript = Array.isArray(generatedScript) && generatedScript.length > 0
         ? generatedScript
         : (Array.isArray(firstPreparedItem.script) ? firstPreparedItem.script : []);
-      const payloadCaptions = Array.isArray(dbJobForExecution.captions?.[0])
-        ? (dbJobForExecution.captions?.[0] || [])
-        : (Array.isArray(dbJobForExecution.captions) ? dbJobForExecution.captions : []);
+      const payloadCaptions = Array.isArray(executionJob.captions?.[0])
+        ? (executionJob.captions?.[0] || [])
+        : (Array.isArray(executionJob.captions) ? executionJob.captions : []);
       const fallbackCaptions = Array.isArray(firstPreparedItem.captions) ? firstPreparedItem.captions : [];
       if (!Array.isArray(payloadScript) || payloadScript.length === 0) {
         const err: any = new Error('Prepared script is missing or empty. Cannot dispatch pipeline execution.');
         err.stage = 'CONTENT_GENERATION';
         throw err;
       }
-      const generatedPrompt = dbJobForExecution.generatedPrompt || '';
+      const generatedPrompt = executionJob.generatedPrompt || '';
       const backendBaseUrl = resolveBackendBaseUrl();
       if (!backendBaseUrl) {
         await appendLogSafe(
@@ -373,19 +427,19 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
       const resolvedCustomVideos = await resolveMediaUrlsByIds({
         userId,
-        ids: dbJobForExecution.customVideoIds || settings.customVideoIds || [],
+        ids: executionJob.customVideoIds || settings.customVideoIds || [],
         expectedType: 'video',
         baseUrl: backendBaseUrl,
       });
       const resolvedCustomImages = await resolveMediaUrlsByIds({
         userId,
-        ids: dbJobForExecution.customImageIds || settings.customImageIds || [],
+        ids: executionJob.customImageIds || settings.customImageIds || [],
         expectedType: 'image',
         baseUrl: backendBaseUrl,
       });
       const resolvedCustomThumbnail = await resolveMediaUrlsByIds({
         userId,
-        ids: dbJobForExecution.customThumbnailId ? [dbJobForExecution.customThumbnailId] : (settings.customThumbnailId ? [settings.customThumbnailId] : []),
+        ids: executionJob.customThumbnailId ? [executionJob.customThumbnailId] : (settings.customThumbnailId ? [settings.customThumbnailId] : []),
         expectedType: 'thumbnail',
         baseUrl: backendBaseUrl,
       });
@@ -416,7 +470,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       );
 
       const payloadVideoConfig = sanitizePayloadValue({
-        ...(dbJobForExecution.pipelineConfig || settings || {}),
+        ...(executionJob.pipelineConfig || settings || {}),
         customVideoUrls: resolvedCustomVideos.urls,
         customImageUrls: resolvedCustomImages.urls,
         customThumbnailUrl: resolvedCustomThumbnail.urls[0] || '',
@@ -427,12 +481,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         captions: payloadCaptions.length > 0 ? payloadCaptions : fallbackCaptions,
         videoConfig: payloadVideoConfig,
         youtube: {
-          title: dbJobForExecution.title || String(firstPreparedItem.title || ''),
-          description: dbJobForExecution.description || String(firstPreparedItem.description || ''),
-          hashtags: Array.isArray(dbJobForExecution.hashtags) && dbJobForExecution.hashtags.length > 0
-            ? dbJobForExecution.hashtags
+          title: executionJob.title || String(firstPreparedItem.title || ''),
+          description: executionJob.description || String(firstPreparedItem.description || ''),
+          hashtags: Array.isArray(executionJob.hashtags) && executionJob.hashtags.length > 0
+            ? executionJob.hashtags
             : (Array.isArray(firstPreparedItem.hashtags) ? firstPreparedItem.hashtags : []),
-          accountId: dbJobForExecution.youtubeAccountId || settings.channelId,
+          accountId: executionJob.youtubeAccountId || settings.channelId,
         },
       });
       if (!Array.isArray(pipelinePayload?.script) || pipelinePayload.script.length === 0) {

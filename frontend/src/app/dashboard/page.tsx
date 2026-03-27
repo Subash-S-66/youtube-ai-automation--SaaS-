@@ -1485,7 +1485,7 @@ function Dashboard() {
         onCancel={modalConfig.onCancel}
         confirmText={modalConfig.confirmText}
         cancelText={modalConfig.cancelText}
-        isLoading={generating}
+        isLoading={false}
       />
 
     </DashboardLayout>
