@@ -1295,7 +1295,7 @@ def run_prepared_pipeline(
     last_prompt = str(video_config.get("lastPrompt", ""))
     if story_mode and current_part <= 1:
         recap_enabled = False
-    topic = str(youtube.get("title", "Prepared Topic") or "Prepared Topic").strip()
+    topic = str(payload.get("topic", "") or youtube.get("title", "Prepared Topic") or "Prepared Topic").strip()
     voice_name = str(video_config.get("voice", "") or (video_config.get("voices") or [""])[0]).strip()
     if not voice_name:
         voice_name = DEFAULT_VOICE

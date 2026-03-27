@@ -6,6 +6,8 @@ import logging
 import os
 from pathlib import Path
 import random
+import re
+import tempfile
 import wave
 
 from .gemini_utils import get_gemini_api_keys
@@ -31,6 +33,54 @@ def _validate_audio_file(path: Path) -> None:
     duration = get_audio_duration_seconds(path)
     if duration < 1.0:
         raise RuntimeError("Invalid audio output")
+
+
+def _split_script_chunks(script: str, max_chars: int = 700) -> list[str]:
+    text = " ".join(str(script or "").split()).strip()
+    if not text:
+        return []
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    if not sentences:
+        return [text]
+    chunks: list[str] = []
+    buf = ""
+    for sentence in sentences:
+        candidate = sentence if not buf else f"{buf} {sentence}"
+        if len(candidate) <= max_chars:
+            buf = candidate
+            continue
+        if buf:
+            chunks.append(buf.strip())
+        buf = sentence
+    if buf:
+        chunks.append(buf.strip())
+    return chunks
+
+
+def _concat_wav_files(inputs: list[Path], output_path: Path) -> Path:
+    if not inputs:
+        raise RuntimeError("No audio chunks to merge.")
+    params = None
+    frames: list[bytes] = []
+    for path in inputs:
+        with wave.open(str(path), "rb") as wf:
+            this_params = (wf.getnchannels(), wf.getsampwidth(), wf.getframerate())
+            if params is None:
+                params = this_params
+            elif params != this_params:
+                raise RuntimeError(f"Incompatible audio chunk format for {path}")
+            frames.append(wf.readframes(wf.getnframes()))
+    if not params:
+        raise RuntimeError("Unable to read audio chunk params.")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(output_path), "wb") as wf_out:
+        wf_out.setnchannels(params[0])
+        wf_out.setsampwidth(params[1])
+        wf_out.setframerate(params[2])
+        for chunk_frames in frames:
+            wf_out.writeframes(chunk_frames)
+    _validate_audio_file(output_path)
+    return output_path
 
 
 def _ensure_wav_container(path: Path) -> None:
@@ -203,6 +253,20 @@ def generate_voice(
         raise RuntimeError("Script is empty after sanitization, unable to generate voice.")
 
     selected_voice = _resolve_gemini_voice(voice)
-    audio_path = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
-    _validate_audio_file(audio_path)
-    return audio_path, True
+    # Long scripts can be truncated by a single TTS call; synthesize in chunks and stitch.
+    chunks = _split_script_chunks(clean_script, max_chars=700)
+    if len(chunks) <= 1:
+        audio_path = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
+        _validate_audio_file(audio_path)
+        return audio_path, True
+
+    with tempfile.TemporaryDirectory(prefix="tts_chunks_", dir=str(output_path.parent)) as tmpdir:
+        tmp = Path(tmpdir)
+        chunk_paths: list[Path] = []
+        for idx, chunk_text in enumerate(chunks, start=1):
+            part_path = tmp / f"chunk_{idx:03d}.wav"
+            chunk_audio = _save_gemini_voice_sync(chunk_text, selected_voice, part_path)
+            _validate_audio_file(chunk_audio)
+            chunk_paths.append(chunk_audio)
+        merged = _concat_wav_files(chunk_paths, output_path)
+        return merged, True

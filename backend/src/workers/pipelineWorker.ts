@@ -554,6 +554,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           .toLowerCase() === 'prepared'
           ? 'prepared'
           : 'full',
+        topic: String((executionJob as any)?.topic || (firstPreparedItem as any)?.topic || '').trim(),
         script: payloadScript,
         captions: payloadCaptions.length > 0 ? payloadCaptions : fallbackCaptions,
         videoConfig: payloadVideoConfig,

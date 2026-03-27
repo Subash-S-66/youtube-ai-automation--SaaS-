@@ -113,31 +113,33 @@ def _join_sentences(sentences: list[str]) -> str:
 
 
 def _expansion_sentence(section_name: str, topic_hint: str = "") -> str:
-    hint = f" about {topic_hint}" if topic_hint else ""
+    normalized_topic = re.sub(r"#\d+", "", str(topic_hint or "")).strip(" .,:;")
+    hint = f" in {normalized_topic}" if normalized_topic else ""
     if section_name == "hook":
         return f"Imagine one real-life moment{hint} that flips your expectation instantly."
     if section_name == "recap":
         return f"To recap{hint}, the key takeaway is practical and easy to apply today."
     if section_name == "cta":
         return "Follow for more concise explainers you can use immediately."
-    return f"For example{hint}, one small decision can change the final outcome dramatically."
+    return f"A concrete example{hint} shows how one small decision can change the final outcome."
 
 
 def _smart_expansion_sentences(section_name: str, topic_hint: str = "", story_mode: bool = False) -> list[str]:
-    hint = f" about {topic_hint}" if topic_hint else ""
+    normalized_topic = re.sub(r"#\d+", "", str(topic_hint or "")).strip(" .,:;")
+    hint = f" in {normalized_topic}" if normalized_topic else ""
     base = [
-        f"For example{hint}, a simple real-world case shows why this matters immediately.",
-        f"One useful insight{hint} is that small, repeatable actions create the biggest long-term impact.",
-        f"A practical fact{hint}: when people apply this consistently, results become measurable quickly.",
+        f"For example{hint}, a simple real-world case reveals the practical impact immediately.",
+        f"An important insight{hint} is that small, repeatable actions drive long-term results.",
+        f"To clarify{hint}, this works best when one change is applied consistently over time.",
     ]
     if story_mode:
         base.append(
-            f"In a quick story{hint}, the turning point happens when the character changes one assumption."
+            f"In a quick story{hint}, the turning point happens when one assumption is challenged."
         )
     if section_name == "hook":
         return [base[0]]
     if section_name == "recap":
-        return [f"So basically{hint}, the main lesson is clear and actionable from this point forward."]
+        return [f"In short{hint}, the main lesson is clear and actionable from this point forward."]
     if section_name == "cta":
         return ["If this helped, follow now and watch the next part for the deeper breakdown."]
     return base
