@@ -6,6 +6,21 @@ import { getGoogleAuthUrl, exchangeCodeForTokens, getGoogleOAuthClient } from '.
 import User from '../models/User';
 import { google } from 'googleapis';
 
+const resolveBackendBaseUrl = (req: Request): string => {
+  const explicit = (process.env.BACKEND_URL || '').trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
+  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
+  const host = (req.headers['x-forwarded-host'] as string) || req.get('host') || '';
+  return host ? `${proto}://${host}` : '';
+};
+
+const resolveFrontendBaseUrl = (req: Request): string => {
+  const explicit = (process.env.FRONTEND_URL || '').trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
+  const backendBase = resolveBackendBaseUrl(req);
+  return backendBase || '';
+};
+
 // Generate short-lived JWT for state parameter (5 minutes)
 const generateStateToken = (userId: string): string => {
   const secret = process.env.JWT_SECRET;
@@ -38,7 +53,7 @@ export const connectYouTube = asyncHandler(async (req: Request, res: Response) =
   });
 
   // Pass a generic string or empty state for the actual OAuth URL param since we rely on the cookie
-  const authUrl = getGoogleAuthUrl('youtube-auth');
+  const authUrl = getGoogleAuthUrl('youtube-auth', resolveBackendBaseUrl(req));
 
   // Redirect user to Google OAuth consent screen
   res.redirect(authUrl);
@@ -80,7 +95,7 @@ export const getYouTubeAuthUrl = asyncHandler(async (req: Request, res: Response
     maxAge: 5 * 60 * 1000,
   });
 
-  const authUrl = getGoogleAuthUrl('youtube-auth');
+  const authUrl = getGoogleAuthUrl('youtube-auth', resolveBackendBaseUrl(req));
   res.json({ success: true, url: authUrl });
 });
 
@@ -109,7 +124,7 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
 
   try {
     // Exchange authorization code for tokens
-    const tokens = await exchangeCodeForTokens(code);
+    const tokens = await exchangeCodeForTokens(code, resolveBackendBaseUrl(req));
 
     const user = await User.findById(req.user.id);
     if (!user) {
@@ -117,7 +132,7 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
     }
 
     // Fetch channel info
-    const oauth2Client = getGoogleOAuthClient();
+    const oauth2Client = getGoogleOAuthClient(resolveBackendBaseUrl(req));
     oauth2Client.setCredentials(tokens);
 
     const youtube = google.youtube({ version: 'v3', auth: oauth2Client });
@@ -150,7 +165,7 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
     };
 
     if (reconnectChannelId && reconnectChannelId !== channelId) {
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = resolveFrontendBaseUrl(req);
       return res.redirect(`${frontendUrl}/dashboard?error=reconnect_channel_mismatch`);
     }
 
@@ -179,7 +194,7 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
        const maxChannels = (channelLimits as any)[effectivePlan] || 1;
 
        if (user.youtubeChannels.length >= maxChannels) {
-           const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+           const frontendUrl = resolveFrontendBaseUrl(req);
            return res.redirect(`${frontendUrl}/dashboard?error=channel_limit_reached`);
        }
 
@@ -200,7 +215,7 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
 
     // Redirect to frontend (placeholder)
     // Replace this with the actual frontend URL once built
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = resolveFrontendBaseUrl(req);
     res.redirect(`${frontendUrl}/dashboard?youtube=connected`);
   } catch (err) {
     throw new AppError('Failed to exchange authorization code for tokens', 500);
