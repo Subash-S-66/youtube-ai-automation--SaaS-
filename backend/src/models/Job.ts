@@ -165,6 +165,9 @@ const JobSchema = new Schema<IJob>(
 JobSchema.index({ userId: 1, status: 1 });
 JobSchema.index({ userId: 1, _id: -1 }); // Index for cursor pagination
 
+JobSchema.index({ userId: 1, createdAt: -1 });
+JobSchema.index({ status: 1, holdConsumed: 1, holdReleased: 1 });
+
 const Job = mongoose.model<IJob>('Job', JobSchema);
 
 export default Job;

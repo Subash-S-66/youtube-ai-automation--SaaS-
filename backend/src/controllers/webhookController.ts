@@ -39,6 +39,19 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     return;
   }
 
+  // Idempotency check for webhook processing using Redis
+  const { connection } = await import('../config/redis.js');
+  if (connection) {
+    // Generate a unique idempotency key based on job ID and the status payload (so we don't block legitimate status updates like pending -> processing -> success)
+    const idempotencyKey = `webhook:idempotency:${jobId}:${status}`;
+    const setNxResult = await connection.set(idempotencyKey, 'processing', 'EX', 60 * 60, 'NX'); // 1 hour TTL
+    if (!setNxResult) {
+      console.log(`[Webhook] Duplicate status update received for job ${jobId} (status: ${status}). Ignoring.`);
+      res.status(200).json({ success: true, duplicate: true });
+      return;
+    }
+  }
+
   const job = await JobModel.findById(jobId);
   if (!job) {
     res.status(404).json({ error: 'Job not found' });
@@ -82,16 +95,7 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
      if (updatedJob) {
        await consumeReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
      } else {
-       // Just update fields if already consumed/released
-       job.status = 'success';
-       job.completedAt = new Date();
-       job.errorMessage = '';
-       job.errorStage = undefined as any;
-       job.result = {
-         success: true,
-         videoUrl: job.videoUrl || '',
-         youtubeVideoId: job.youtubeVideoId || '',
-       };
+       console.log(`[Webhook] Job ${jobId} already processed (success). Skipping duplicate update.`);
      }
   } else if (normalizedStatus === 'failed') {
      const resolvedError = (typeof errorMessage === 'string' && errorMessage.trim()) ? errorMessage.trim() : (logs || 'Failed via webhook');
@@ -119,16 +123,7 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
      if (updatedJob) {
        await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
      } else {
-       job.status = 'failed';
-       job.completedAt = new Date();
-       job.error = resolvedError;
-       job.errorMessage = resolvedError;
-       if (parsedErrorStage) job.errorStage = parsedErrorStage;
-       job.result = {
-         success: false,
-         videoUrl: job.videoUrl || '',
-         youtubeVideoId: job.youtubeVideoId || '',
-       };
+       console.log(`[Webhook] Job ${jobId} already processed (failed). Skipping duplicate update.`);
      }
   } else if (normalizedStatus === 'youtube_rejected') {
      const resolvedError = (typeof errorMessage === 'string' && errorMessage.trim()) ? errorMessage.trim() : 'YouTube limits rejected the upload';
@@ -155,16 +150,7 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
      if (updatedJob) {
        await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
      } else {
-       job.status = 'failed';
-       job.completedAt = new Date();
-       job.error = resolvedError;
-       job.errorMessage = resolvedError;
-       job.errorStage = 'UPLOAD' as any;
-       job.result = {
-         success: false,
-         videoUrl: job.videoUrl || '',
-         youtubeVideoId: job.youtubeVideoId || '',
-       };
+       console.log(`[Webhook] Job ${jobId} already processed (youtube_rejected). Skipping duplicate update.`);
      }
   } else if (normalizedStatus === 'processing') {
      job.status = 'processing';

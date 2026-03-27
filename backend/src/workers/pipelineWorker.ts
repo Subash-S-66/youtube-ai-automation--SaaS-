@@ -152,8 +152,8 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     const lockKey = `lock:job:${jobId}`;
     const acquired = await acquireLock(lockKey, 3600); // 1 hour TTL
     if (!acquired) {
-      console.warn(`[PipelineWorker] Job ${jobId} is currently being processed by another worker. Skipping.`);
-      return;
+      console.warn(`[PipelineWorker] Job ${jobId} is currently being processed by another worker. Throwing error to trigger BullMQ retry.`);
+      throw new Error(`Job ${jobId} is locked by another instance.`);
     }
     console.log(`[PipelineWorker] Acquired lock for Job ${jobId} (User: ${userId})`);
 

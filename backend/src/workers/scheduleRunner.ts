@@ -19,19 +19,25 @@ export const startScheduleRunner = async () => {
     let queuedCount = 0;
     for (const schedule of orphanedSchedules) {
       if (schedule.nextRunAt) {
-        await scheduleQueue.add(
-          'runSchedule',
-          { scheduleId: schedule._id.toString() },
-          {
-            delay: Math.max(0, schedule.nextRunAt.getTime() - Date.now()),
-            jobId: `schedule-${schedule._id.toString()}-${schedule.nextRunAt.getTime()}`
-          }
-        );
-        queuedCount++;
+        // Double check if it's already in the queue to avoid duplicate jobs if we restart worker frequently
+        const existingJobs = await scheduleQueue.getJobs(['delayed', 'waiting']);
+        const isQueued = existingJobs.some((j: any) => j.data.scheduleId === schedule._id.toString());
+
+        if (!isQueued) {
+          await scheduleQueue.add(
+            'runSchedule',
+            { scheduleId: schedule._id.toString() },
+            {
+              delay: Math.max(0, schedule.nextRunAt.getTime() - Date.now()),
+              jobId: `schedule-${schedule._id.toString()}-${schedule.nextRunAt.getTime()}`
+            }
+          );
+          queuedCount++;
+        }
       }
     }
     if (queuedCount > 0) {
-      console.log(`[ScheduleRunner] Seeded ${queuedCount} existing schedules into BullMQ.`);
+      console.log(`[ScheduleRunner] Seeded ${queuedCount} missing schedules into BullMQ.`);
     }
   } catch (seedErr) {
     console.error('[ScheduleRunner] Failed to seed existing schedules on startup:', seedErr);
@@ -45,8 +51,8 @@ export const startScheduleRunner = async () => {
       const lockKey = `lock:schedule:${scheduleId}`;
       const acquired = await acquireLock(lockKey, 60); // 1 minute TTL
       if (!acquired) {
-        console.warn(`[ScheduleRunner] Schedule ${scheduleId} is currently being processed by another worker. Skipping.`);
-        return;
+        console.warn(`[ScheduleRunner] Schedule ${scheduleId} is currently being processed by another worker. Throwing error to trigger BullMQ retry.`);
+        throw new Error(`Schedule ${scheduleId} is locked by another instance.`);
       }
 
       const now = new Date();

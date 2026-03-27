@@ -28,13 +28,7 @@ export const recoverCrashedJobs = async () => {
         if (updatedJob) {
            await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
         } else {
-           await JobModel.findByIdAndUpdate(job._id, {
-               status: 'failed',
-               completedAt: new Date(),
-               error: 'Server crash during processing',
-               errorMessage: 'Server crash during processing',
-               errorStage: 'RENDER',
-           });
+           console.log(`[CrashRecovery] Job ${job._id} was already processed (holds handled) by another routine.`);
         }
       }
     }
@@ -76,13 +70,7 @@ export const startStuckJobCleanupInterval = () => {
           if (updatedJob) {
              await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
           } else {
-             await JobModel.findByIdAndUpdate(job._id, {
-                 status: 'failed',
-                 completedAt: new Date(),
-                 error: 'Job timed out (stuck in processing beyond threshold)',
-                 errorMessage: 'Job timed out (stuck in processing beyond threshold)',
-                 errorStage: 'RENDER',
-             });
+             console.log(`[StuckJobCleanup] Job ${job._id} was already processed (holds handled) by another routine.`);
           }
         }
       }
@@ -104,25 +92,38 @@ export const reconcileQueueWithDatabase = async () => {
       try {
         const bullJob = await pipelineQueue.getJob(job._id.toString());
         if (!bullJob) {
-          console.log(`[Reconciliation] Job ${job._id} is pending in DB but missing from Queue. Re-enqueueing or failing...`);
-          // Mark it as failed since it was lost
-          const updatedJob = await JobModel.findOneAndUpdate(
-              { _id: job._id, status: 'pending', holdConsumed: false, holdReleased: false },
-              {
-                  $set: {
-                      status: 'failed',
-                      completedAt: new Date(),
-                      error: 'Job lost from queue, marked failed by reconciler',
-                      errorMessage: 'Job lost from queue, marked failed by reconciler',
-                      errorStage: 'RENDER',
-                      holdReleased: true
-                  }
+          console.log(`[Reconciliation] Job ${job._id} is pending in DB but missing from Queue. Re-enqueueing...`);
+
+          const planPriorities: Record<string, number> = {
+            premium: 1,
+            pro: 2,
+            basic: 3,
+            free: 4,
+          };
+          const jobPriority = planPriorities[job.pipelineConfig?.plan || 'free'] || 4;
+          const count = job.videoCount || 1;
+          const jobTimeoutMinutes = 10 + (count - 1) * 5;
+          const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
+
+          await pipelineQueue.add(
+            'runPipeline',
+            {
+              userId: job.userId.toString(),
+              promptId: job.promptId.toString(),
+              jobId: job._id.toString(),
+              settings: job.pipelineConfig,
+            },
+            {
+              priority: jobPriority,
+              jobId: job._id.toString(),
+              attempts: 3,
+              timeout: jobTimeoutMs,
+              backoff: {
+                type: 'exponential',
+                delay: 5000,
               },
-              { new: true }
+            }
           );
-          if (updatedJob) {
-             await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
-          }
         }
       } catch (err) {
         console.error(`[Reconciliation] Error checking job ${job._id} in queue:`, err);
