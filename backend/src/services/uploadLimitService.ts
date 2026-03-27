@@ -164,27 +164,31 @@ export const reserveCredits = async (userId: string, count: number = 1): Promise
   return !!result;
 };
 
-export const consumeReservedCredits = async (userId: string, count: number = 1): Promise<void> => {
-  await User.updateOne(
+export const consumeReservedCredits = async (userId: string, count: number = 1): Promise<boolean> => {
+  const result = await User.findOneAndUpdate(
     { _id: userId, uploadsOnHold: { $gte: count } },
     {
       $inc: {
         uploadsUsedToday: count,
         uploadsOnHold: -count
       }
-    }
+    },
+    { new: true }
   );
+  return !!result;
 };
 
-export const releaseReservedCredits = async (userId: string, count: number = 1): Promise<void> => {
-  await User.updateOne(
+export const releaseReservedCredits = async (userId: string, count: number = 1): Promise<boolean> => {
+  const result = await User.findOneAndUpdate(
     { _id: userId, uploadsOnHold: { $gte: count } },
     {
       $inc: {
         uploadsOnHold: -count
       }
-    }
+    },
+    { new: true }
   );
+  return !!result;
 };
 
 export const incrementUploadCount = async (userId: string, count: number = 1): Promise<void> => {

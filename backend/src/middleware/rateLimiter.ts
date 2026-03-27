@@ -109,6 +109,17 @@ export const sendOtpLimiter = withStore({
   },
 }, 'rl_send_otp:');
 
+export const sendOtpHourlyLimiter = withStore({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 5, // Max 5 requests per hour
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many OTP requests, please try again after 1 hour.',
+  },
+}, 'rl_send_otp_hourly:');
+
 // Limit account creation attempts per IP
 export const registerLimiter = withStore({
   windowMs: 60 * 60 * 1000, // 1 hour

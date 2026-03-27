@@ -12,6 +12,7 @@ import {
   deleteUserByAdmin,
   getSystemConfig,
   updateSystemConfig,
+  updateTimeoutConfig,
   triggerWeeklyReports,
   getPlans,
   updatePlan,
@@ -33,6 +34,7 @@ router.post('/banner', setGlobalBanner);
 router.get('/banner', getGlobalBannerConfig);
 router.get('/config', getSystemConfig);
 router.post('/config', updateSystemConfig);
+router.put('/config/timeout', updateTimeoutConfig);
 router.post('/trigger-reports', triggerWeeklyReports);
 router.get('/plans', getPlans);
 router.put('/plans/:id', updatePlan);

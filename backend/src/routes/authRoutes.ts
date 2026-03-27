@@ -4,7 +4,7 @@ import { register, login, logout, adminLogin, getMe, verifyEmail, forgotPassword
 import { protect } from '../middleware/authMiddleware';
 import { validate } from '../middleware/validateResource';
 import { registerSchema, loginSchema, adminLoginSchema, forgotPasswordSchema, resetPasswordSchema, resendVerificationSchema, sendOtpSchema, verifyOtpSchema } from '../utils/validators/authValidators';
-import { authLimiter, resendVerificationLimiter, sendOtpLimiter, registerLimiter, loginLimiter } from '../middleware/rateLimiter';
+import { authLimiter, resendVerificationLimiter, sendOtpLimiter, sendOtpHourlyLimiter, registerLimiter, loginLimiter } from '../middleware/rateLimiter';
 
 const router = express.Router();
 
@@ -16,8 +16,8 @@ router.get('/google', googleLogin);
 router.get('/google/callback', googleCallback);
 router.get('/verify-email', verifyEmail);
 router.post('/resend-verification', resendVerificationLimiter, validate(resendVerificationSchema), resendVerificationEmail);
-router.post('/send-otp', sendOtpLimiter, validate(sendOtpSchema), sendOtp);
-router.post('/verify-otp', validate(verifyOtpSchema), verifyOtp);
+router.post('/send-otp', sendOtpLimiter, sendOtpHourlyLimiter, validate(sendOtpSchema), sendOtp);
+router.post('/verify-otp', sendOtpLimiter, sendOtpHourlyLimiter, validate(verifyOtpSchema), verifyOtp);
 router.post('/forgot-password', authLimiter, validate(forgotPasswordSchema), forgotPassword);
 router.post('/reset-password', authLimiter, validate(resetPasswordSchema), resetPassword);
 router.get('/me', protect, getMe);

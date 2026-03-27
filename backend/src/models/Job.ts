@@ -24,12 +24,14 @@ export interface IJob extends Document {
   logs: string;
   error?: string;
   result?: any;
+  queuedAt?: Date;
   startedAt?: Date;
   completedAt?: Date;
   holdConsumed: boolean;
   holdReleased: boolean;
   acceptedYouTubeLimitWarning: boolean;
   videoCount: number;
+  processedVideos: number;
   channelId: string;
   customVideoIds?: string[];
   customImageIds?: string[];
@@ -126,6 +128,9 @@ const JobSchema = new Schema<IJob>(
     result: {
       type: Schema.Types.Mixed,
     },
+    queuedAt: {
+      type: Date,
+    },
     startedAt: {
       type: Date,
     },
@@ -148,6 +153,10 @@ const JobSchema = new Schema<IJob>(
       type: Number,
       default: 1,
     },
+    processedVideos: {
+      type: Number,
+      default: 0,
+    },
     channelId: {
       type: String,
       required: true,
@@ -164,6 +173,9 @@ const JobSchema = new Schema<IJob>(
 // Optimize lookups for pending/running jobs per user
 JobSchema.index({ userId: 1, status: 1 });
 JobSchema.index({ userId: 1, _id: -1 }); // Index for cursor pagination
+
+JobSchema.index({ userId: 1, createdAt: -1 });
+JobSchema.index({ status: 1, holdConsumed: 1, holdReleased: 1 });
 
 const Job = mongoose.model<IJob>('Job', JobSchema);
 

@@ -1,4 +1,5 @@
 import { Worker, Job as BullJob } from 'bullmq';
+import { acquireLock, releaseLock } from '../utils/redisLock';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import connectDB from '../config/db';
@@ -258,6 +259,14 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       await appendLogSafe(jobId, `Input notes: ${inputAudit.notes.join(' | ')}\n`);
     }
 
+    const lockKey = `lock:job:${jobId}`;
+    const acquired = await acquireLock(lockKey, 3600); // 1 hour TTL
+    if (!acquired) {
+      console.warn(`[PipelineWorker] Job ${jobId} is currently being processed by another worker. Throwing error to trigger BullMQ retry.`);
+      throw new Error(`Job ${jobId} is locked by another instance.`);
+    }
+    console.log(`[PipelineWorker] Acquired lock for Job ${jobId} (User: ${userId})`);
+
     try {
       // 1. Check Rolling Limit
       if (settings.channelId) {
@@ -495,7 +504,6 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
       const pipelineRunner = await resolvePipelineRunner();
-
       const dispatchLockKey = `pipeline:dispatch:${jobId}`;
       const dispatchLock = await (connection as any).set(dispatchLockKey, String(Date.now()), 'NX', 'EX', 24 * 60 * 60);
       if (dispatchLock !== 'OK') {
@@ -507,7 +515,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         return;
       }
 
-      await JobModel.findByIdAndUpdate(jobId, { status: 'processing' });
+      // Ensure startedAt and processing state is explicitly set right before launching pipeline worker
+      // Although we atomically lock it above, we refresh it here to act as the official timer start
+      await JobModel.findByIdAndUpdate(jobId, { status: 'processing', startedAt: new Date() });
       await appendLogSafe(jobId, 'Job is running in pipeline...\n', 'processing');
 
       // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.
@@ -689,14 +699,23 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          }
 
          if (finalStatusMarker === 'SUCCESS') {
-            await JobModel.findByIdAndUpdate(jobId, {
-                status: 'success',
-                completedAt: new Date(),
-                holdConsumed: true,
-                errorMessage: '',
-                errorStage: undefined as any,
-            });
-            await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            const updatedJob = await JobModel.findOneAndUpdate(
+                { _id: jobId, status: 'processing', holdConsumed: false, holdReleased: false },
+                {
+                    $set: {
+                        status: 'success',
+                        completedAt: new Date(),
+                        holdConsumed: true,
+                        errorMessage: '',
+                        errorStage: undefined as any,
+                    }
+                },
+                { new: true }
+            );
+
+            if (updatedJob) {
+               await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            }
 
             // Handle Story Mode increment
             if (settings.storyMode && settings.storyId) {
@@ -727,40 +746,64 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
             if (acceptedWarning) {
               // Treated as consumed because user explicitly accepted the risk
-              await JobModel.findByIdAndUpdate(jobId, {
-                  status: 'failed',
-                  completedAt: new Date(),
-                  holdConsumed: true,
-                  error: 'YouTube Quota Exceeded (Warning Accepted)',
-                  errorMessage: 'YouTube Quota Exceeded (Warning Accepted)',
-                  errorStage: 'UPLOAD',
-              });
-              await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+              const updatedJob = await JobModel.findOneAndUpdate(
+                  { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+                  {
+                      $set: {
+                          status: 'failed',
+                          completedAt: new Date(),
+                          holdConsumed: true,
+                          error: 'YouTube Quota Exceeded (Warning Accepted)',
+                          errorMessage: 'YouTube Quota Exceeded (Warning Accepted)',
+                          errorStage: 'UPLOAD',
+                      }
+                  },
+                  { new: true }
+              );
+              if (updatedJob) {
+                 await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+              }
             } else {
-              await JobModel.findByIdAndUpdate(jobId, {
-                  status: 'failed',
-                  completedAt: new Date(),
-                  holdReleased: true,
-                  error: 'YouTube Quota Exceeded',
-                  errorMessage: 'YouTube Quota Exceeded',
-                  errorStage: 'UPLOAD',
-              });
-              await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+              const updatedJob = await JobModel.findOneAndUpdate(
+                  { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+                  {
+                      $set: {
+                          status: 'failed',
+                          completedAt: new Date(),
+                          holdReleased: true,
+                          error: 'YouTube Quota Exceeded',
+                          errorMessage: 'YouTube Quota Exceeded',
+                          errorStage: 'UPLOAD',
+                      }
+                  },
+                  { new: true }
+              );
+              if (updatedJob) {
+                 await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+              }
             }
 
             if (user) {
               await notifyUser(user, 'Video Upload Failed', '❌ Video upload failed due to YouTube limits.').catch(console.error);
             }
          } else {
-            await JobModel.findByIdAndUpdate(jobId, {
-                status: 'failed',
-                completedAt: new Date(),
-                holdReleased: true,
-                error: 'Generation or upload failed',
-                errorMessage: 'Generation or upload failed',
-                errorStage: 'RENDER',
-            });
-            await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            const updatedJob = await JobModel.findOneAndUpdate(
+                { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+                {
+                    $set: {
+                        status: 'failed',
+                        completedAt: new Date(),
+                        holdReleased: true,
+                        error: 'Generation or upload failed',
+                        errorMessage: 'Generation or upload failed',
+                        errorStage: 'RENDER',
+                    }
+                },
+                { new: true }
+            );
+            if (updatedJob) {
+               await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            }
 
             // FAILED (normal) - do not increment usage
             if (user) {
@@ -784,22 +827,28 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       const errorMsg = `\nWorker Error: ${error.message}`;
       await appendLogSafe(jobId, errorMsg);
 
-      const dbJob = await JobModel.findById(jobId);
-      if (dbJob && !dbJob.holdConsumed && !dbJob.holdReleased) {
-         // Gracefully handle failure and credit release
-         await JobModel.findByIdAndUpdate(jobId, {
-             status: 'failed',
-             completedAt: new Date(),
-             holdReleased: true,
-             error: error.message,
-             errorMessage: error.message,
-             errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
-         });
+      // Gracefully handle failure and credit release atomically
+      const updatedJob = await JobModel.findOneAndUpdate(
+          { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+          {
+              $set: {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  holdReleased: true,
+                  error: error.message,
+                  errorMessage: error.message,
+                  errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
+              }
+          },
+          { new: true }
+      );
+      if (updatedJob) {
          await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
       }
 
       throw error;
     } finally {
+      await releaseLock(lockKey).catch((err) => console.error(`Failed to release lock for ${jobId}:`, err));
       // Decrease the channel specific hold unconditionally if the job finished/failed/was skipped
       // The `releaseReservedCredits` covers global. Channel holds are just local guards.
       const dbJob = await JobModel.findById(jobId);
@@ -819,11 +868,11 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 );
 
 pipelineWorker.on('completed', (job) => {
-  console.log(`Job ${job.id} has completed successfully`);
+  console.log(`[PipelineWorker] Job ${job.id} has completed successfully in BullMQ.`);
 });
 
 pipelineWorker.on('failed', (job, err) => {
-  console.error(`Job ${job?.id} has failed with ${err.message}`);
+  console.error(`[PipelineWorker] Job ${job?.id} has failed in BullMQ with error: ${err.message}`, err);
 });
 
 // Graceful Shutdown
