@@ -251,6 +251,15 @@ export const enqueuePipelineJob = async ({
   if (!channel) {
     throw new AppError(`YouTube channel with ID ${finalSettings.channelId} not found`, 404);
   }
+  if (channel.isValid === false) {
+    throw new AppError(
+      `youtube_token_expired: YouTube token for channel "${channel.channelName}" is invalid. Please reconnect this channel.`,
+      400
+    );
+  }
+  if (channel.status === 'disabled_due_to_plan') {
+    throw new AppError('Channel disabled due to plan downgrade. Please upgrade.', 403);
+  }
 
   if (channel.videosOnHold + finalSettings.videoCount > 10) {
     throw new AppError(

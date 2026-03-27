@@ -116,6 +116,13 @@ export const getValidYouTubeToken = async (userId: string, channelId: string): P
 
       await notifyUser(user, 'Action Required: Reconnect YouTube', `âš ï¸ Your YouTube connection for channel ${channel.channelName} expired. Please reconnect.`).catch(console.error);
 
+      const message = error instanceof Error ? error.message : String(error || '');
+      if (message.includes('Missing YouTube OAuth environment variables')) {
+        throw new Error(
+          'YouTube OAuth is not configured on this worker. Set YOUTUBE_CLIENT_ID/YOUTUBE_CLIENT_SECRET/YOUTUBE_REDIRECT_URI (or GOOGLE_* equivalents).'
+        );
+      }
+
       throw new Error('YouTube authentication expired. Please reconnect your account.');
     } finally {
       refreshLocks.delete(lockKey);
@@ -125,4 +132,3 @@ export const getValidYouTubeToken = async (userId: string, channelId: string): P
   refreshLocks.set(lockKey, refreshPromise);
   return refreshPromise;
 };
-

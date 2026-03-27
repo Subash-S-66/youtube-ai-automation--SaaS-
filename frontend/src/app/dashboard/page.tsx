@@ -158,9 +158,10 @@ function Dashboard() {
             setCustomTopic(userData.data.user.lastCustomTopic);
           }
 
-          const initialChannelId = userData.data?.youtubeChannels && userData.data.youtubeChannels.length > 0
-            ? userData.data.youtubeChannels[0].channelId
-            : '';
+          const initialValidChannel = Array.isArray(userData.data?.youtubeChannels)
+            ? userData.data.youtubeChannels.find((channel: any) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
+            : null;
+          const initialChannelId = initialValidChannel?.channelId || '';
           if (initialChannelId) {
             setSelectedChannelId(initialChannelId);
           }
@@ -206,6 +207,16 @@ function Dashboard() {
                 onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
             });
             // Clean URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (urlError === 'reconnect_channel_mismatch') {
+            setModalConfig({
+                isOpen: true,
+                title: 'Reconnect Failed',
+                description: 'You selected a different Google account. Please reconnect using the same YouTube channel.',
+                type: 'error',
+                confirmText: 'Close',
+                onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+            });
             window.history.replaceState({}, document.title, window.location.pathname);
         }
 
@@ -270,6 +281,46 @@ function Dashboard() {
     return () => clearInterval(interval);
   }, [user]);
 
+  useEffect(() => {
+    if (!user?.isYoutubeConnected) {
+      if (selectedChannelId) {
+        setSelectedChannelId('');
+      }
+      return;
+    }
+
+    if (!selectedChannelId) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Valid Channel Required',
+        description: invalidYouTubeChannels.length > 0
+          ? 'Your connected channel token is expired. Reconnect that channel before starting generation.'
+          : 'Please select a connected YouTube channel first.',
+        type: 'error',
+        confirmText: invalidYouTubeChannels.length > 0 ? 'Reconnect' : 'Close',
+        onConfirm: () => {
+          setModalConfig(prev => ({ ...prev, isOpen: false }));
+          if (invalidYouTubeChannels.length > 0) {
+            handleReconnectChannel(invalidYouTubeChannels[0].channelId);
+          }
+        },
+        cancelText: 'Cancel',
+        onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+      });
+      return;
+    }
+    if (validYouTubeChannels.length === 0) {
+      if (selectedChannelId) {
+        setSelectedChannelId('');
+      }
+      return;
+    }
+    const isSelectedValid = validYouTubeChannels.some((channel: any) => channel.channelId === selectedChannelId);
+    if (!isSelectedValid) {
+      setSelectedChannelId(validYouTubeChannels[0]?.channelId || '');
+    }
+  }, [user?.isYoutubeConnected, validYouTubeChannels, selectedChannelId]);
+
   const currentPlan = ((user?.plan || user?.user?.plan || 'free') as string).toLowerCase();
   const planFeatures = (user?.planFeatures || {}) as {
     voice_selection?: boolean;
@@ -291,6 +342,10 @@ function Dashboard() {
   const canUseFormatSelection = planFeatures.format_selection ?? isPaidPlan;
   const canUseTemplateCustomization = planFeatures.template_customization ?? false;
   const canUseCustomMedia = planFeatures.custom_media ?? false;
+  const allYouTubeChannels = Array.isArray(user?.youtubeChannels) ? user.youtubeChannels : [];
+  const activeYouTubeChannels = allYouTubeChannels.filter((channel: any) => channel?.status !== 'disabled_due_to_plan');
+  const validYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid !== false);
+  const invalidYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid === false);
   const effectiveStoryMode = canUseStoryMode && storyMode;
   const uploadLimitPerDay = user?.uploadLimitPerDay ?? user?.uploadLimit ?? 0;
   const remainingUploads = user?.remainingUploads ?? 0;
@@ -331,6 +386,13 @@ function Dashboard() {
   const handleConnectYouTube = useCallback(() => {
     (async () => {
       const url = await youtubeService.getAuthUrl();
+      window.location.href = url;
+    })();
+  }, []);
+
+  const handleReconnectChannel = useCallback((channelId: string) => {
+    (async () => {
+      const url = await youtubeService.getAuthUrl(channelId);
       window.location.href = url;
     })();
   }, []);
@@ -551,13 +613,14 @@ function Dashboard() {
      const errorMsg = err.response?.data?.message || err.message || 'An unknown error occurred.';
 
      if (errorMsg.includes('youtube_token_expired') || errorMsg.includes('YouTube channel is not connected or token is invalid')) {
+         const reconnectTarget = selectedChannelId || invalidYouTubeChannels[0]?.channelId || '';
          setModalConfig({
              isOpen: true,
              title: 'YouTube Reconnect Required',
              description: 'Your YouTube token has expired or is invalid. Please reconnect your account to continue.',
              type: 'error',
              confirmText: 'Reconnect',
-             onConfirm: handleConnectYouTube,
+             onConfirm: () => reconnectTarget ? handleReconnectChannel(reconnectTarget) : handleConnectYouTube(),
              cancelText: 'Close',
              onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
          });
@@ -1003,11 +1066,11 @@ function Dashboard() {
                       {!user?.isYoutubeConnected && (
                         <option value="" className="bg-[#111827]">Connect YouTube</option>
                       )}
-                      {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length === 0 && (
+                      {user?.isYoutubeConnected && validYouTubeChannels.length === 0 && (
                         <option value="" className="bg-[#111827]">No channels found</option>
                       )}
-                        {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length > 0 && (
-                          user.youtubeChannels.map((channel: any) => (
+                        {user?.isYoutubeConnected && validYouTubeChannels.length > 0 && (
+                          validYouTubeChannels.map((channel: any) => (
                             <option key={channel.channelId} value={channel.channelId} className="bg-[#111827]">
                               {channel.channelName}
                             </option>
@@ -1017,8 +1080,10 @@ function Dashboard() {
                       {!user?.isYoutubeConnected && (
                         <p className="text-[10px] text-slate-500 mt-1"></p>
                       )}
-                      {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length === 0 && (
-                        <p className="text-[10px] text-slate-500 mt-1">No channels linked yet.</p>
+                      {user?.isYoutubeConnected && validYouTubeChannels.length === 0 && (
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          {invalidYouTubeChannels.length > 0 ? 'Reconnect expired channel(s) to continue.' : 'No channels linked yet.'}
+                        </p>
                       )}
                     <div className="mt-2 sm:hidden">
                       {!user?.isYoutubeConnected ? (
@@ -1398,7 +1463,7 @@ function Dashboard() {
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.99 }}
                   type="submit"
-                  disabled={generating || !user?.isYoutubeConnected}
+                  disabled={generating || !user?.isYoutubeConnected || !selectedChannelId || validYouTubeChannels.length === 0}
                   className="w-full py-4 px-4 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-lg tracking-wide border border-white/20"
                 >
                 {generating ? (
@@ -1444,7 +1509,7 @@ function Dashboard() {
                     )}
                   </div>
 
-                  {user?.isYoutubeConnected && user?.youtubeChannels && user.youtubeChannels.length > 0 && (
+                  {user?.isYoutubeConnected && validYouTubeChannels.length > 0 && (
                     <div className="mt-2">
                       <select
                         id="channel-select"
@@ -1453,12 +1518,31 @@ function Dashboard() {
                         onChange={(e) => setSelectedChannelId(e.target.value)}
                         className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
                       >
-                        {user.youtubeChannels.map((channel: any) => (
+                        {validYouTubeChannels.map((channel: any) => (
                           <option key={channel.channelId} value={channel.channelId}>
                             {channel.channelName}
                           </option>
                         ))}
                       </select>
+                    </div>
+                  )}
+                  {user?.isYoutubeConnected && invalidYouTubeChannels.length > 0 && (
+                    <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+                      <p className="text-xs font-semibold text-red-300 mb-2">Reconnect Required</p>
+                      <div className="space-y-2">
+                        {invalidYouTubeChannels.map((channel: any) => (
+                          <div key={channel.channelId} className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-slate-300 truncate">{channel.channelName}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleReconnectChannel(channel.channelId)}
+                              className="text-[11px] bg-red-500/20 hover:bg-red-500/30 text-red-200 font-semibold px-2.5 py-1 rounded border border-red-500/30 transition-colors"
+                            >
+                              Reconnect
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

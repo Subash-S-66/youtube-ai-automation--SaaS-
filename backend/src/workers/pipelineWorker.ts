@@ -1,4 +1,4 @@
-import { Worker, Job as BullJob } from 'bullmq';
+import { Worker, Job as BullJob, UnrecoverableError } from 'bullmq';
 import { acquireLock, releaseLock } from '../utils/redisLock';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
@@ -36,6 +36,17 @@ import { notifyUser } from '../services/notificationService';
 
 // Load env vars
 dotenv.config();
+
+const hasYoutubeOAuthConfig = Boolean(
+  (process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID) &&
+  (process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET) &&
+  (process.env.YOUTUBE_REDIRECT_URI || process.env.GOOGLE_REDIRECT_URI)
+);
+if (!hasYoutubeOAuthConfig) {
+  console.warn(
+    '[PipelineWorker] Missing YouTube OAuth env vars. Upload jobs will fail at TOKEN stage. Configure YOUTUBE_* or GOOGLE_* vars.'
+  );
+}
 
 // Connect to MongoDB BEFORE starting worker
 connectDB();
@@ -779,7 +790,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                         errorStage: undefined as any,
                     }
                 },
-                { new: true }
+                { returnDocument: 'after' }
             );
 
             if (updatedJob) {
@@ -827,7 +838,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                           errorStage: 'UPLOAD',
                       }
                   },
-                  { new: true }
+                  { returnDocument: 'after' }
               );
               if (updatedJob) {
                  await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
@@ -845,7 +856,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                           errorStage: 'UPLOAD',
                       }
                   },
-                  { new: true }
+                  { returnDocument: 'after' }
               );
               if (updatedJob) {
                  await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
@@ -868,7 +879,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                         errorStage: 'RENDER',
                     }
                 },
-                { new: true }
+                { returnDocument: 'after' }
             );
             if (updatedJob) {
                await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
@@ -909,12 +920,15 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                   errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
               }
           },
-          { new: true }
+          { returnDocument: 'after' }
       );
       if (updatedJob) {
          await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
       }
 
+      if (error?.stage === 'TOKEN') {
+        throw new UnrecoverableError(error.message || 'YouTube token failure');
+      }
       throw error;
     } finally {
       await releaseLock(lockKey).catch((err) => console.error(`Failed to release lock for ${jobId}:`, err));
@@ -937,7 +951,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 );
 
 pipelineWorker.on('completed', (job) => {
-  console.log(`[PipelineWorker] Job ${job.id} has completed successfully in BullMQ.`);
+  console.log(`[PipelineWorker] BullMQ completed job ${job.id}.`);
 });
 
 pipelineWorker.on('failed', (job, err) => {

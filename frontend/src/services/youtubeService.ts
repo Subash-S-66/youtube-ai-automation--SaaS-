@@ -1,9 +1,10 @@
 import api from '../lib/api';
 
 export const youtubeService = {
-  async getAuthUrl() {
+  async getAuthUrl(reconnectChannelId?: string) {
     // Request an auth URL from the API so we can include the Bearer token.
-    const response = await api.get('/youtube/auth-url');
+    const query = reconnectChannelId ? `?reconnectChannelId=${encodeURIComponent(reconnectChannelId)}` : '';
+    const response = await api.get(`/youtube/auth-url${query}`);
     return response.data?.url as string;
   },
 

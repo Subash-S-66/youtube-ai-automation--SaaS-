@@ -52,6 +52,25 @@ export const getYouTubeAuthUrl = asyncHandler(async (req: Request, res: Response
     throw new AppError('Not authorized', 401);
   }
 
+  const reconnectChannelId = typeof req.query.reconnectChannelId === 'string'
+    ? req.query.reconnectChannelId.trim()
+    : '';
+  if (reconnectChannelId) {
+    const user = await User.findById(req.user.id).select('youtubeChannels');
+    const hasChannel = !!user?.youtubeChannels?.some((c: any) => c.channelId === reconnectChannelId);
+    if (!hasChannel) {
+      throw new AppError('Reconnect channel not found for this user', 404);
+    }
+    res.cookie('oauth_reconnect_channel', reconnectChannelId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 10 * 60 * 1000,
+    });
+  } else {
+    res.clearCookie('oauth_reconnect_channel');
+  }
+
   const stateToken = generateStateToken(req.user.id);
 
   res.cookie('oauth_state', stateToken, {
@@ -70,7 +89,9 @@ export const getYouTubeAuthUrl = asyncHandler(async (req: Request, res: Response
 // @access  Private (protected by state token via middleware)
 export const youtubeCallback = asyncHandler(async (req: Request, res: Response) => {
   // Clear the state cookie
+  const reconnectChannelId = req.cookies?.oauth_reconnect_channel as string | undefined;
   res.clearCookie('oauth_state');
+  res.clearCookie('oauth_reconnect_channel');
   const code = req.query.code as string;
   const error = req.query.error as string;
 
@@ -128,6 +149,11 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
         expiry_date: tokens.expiry_date || undefined,
     };
 
+    if (reconnectChannelId && reconnectChannelId !== channelId) {
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      return res.redirect(`${frontendUrl}/dashboard?error=reconnect_channel_mismatch`);
+    }
+
     if (existingChannelIndex !== -1) {
        // Update existing channel
        if (user.youtubeChannels[existingChannelIndex]) {
@@ -136,6 +162,7 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
                ...newTokens
            };
            user.youtubeChannels[existingChannelIndex].channelName = channelName; // Update name just in case
+           user.youtubeChannels[existingChannelIndex].isValid = true;
        }
     } else {
        // Enforce Channel Limits dynamically with effective plan
@@ -162,6 +189,7 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
            channelName,
            tokens: newTokens,
            videosOnHold: 0,
+           isValid: true,
        });
     }
 
