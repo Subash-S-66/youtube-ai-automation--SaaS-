@@ -702,9 +702,7 @@ function Dashboard() {
          handleApiError(err);
       }
     } finally {
-      if (acceptedWarning) {
-          setGenerating(false);
-      }
+      setGenerating(false);
     }
   };
 
