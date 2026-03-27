@@ -310,7 +310,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
       const pipelineRunner = await resolvePipelineRunner();
 
-      await JobModel.findByIdAndUpdate(jobId, { status: 'processing' });
+      // Ensure startedAt and processing state is explicitly set right before launching pipeline worker
+      // Although we atomically lock it above, we refresh it here to act as the official timer start
+      await JobModel.findByIdAndUpdate(jobId, { status: 'processing', startedAt: new Date() });
       await appendLogSafe(jobId, 'Job is running in pipeline...\n', 'processing');
 
       // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.

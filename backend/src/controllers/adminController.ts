@@ -154,6 +154,41 @@ const configSchema = z.object({
   }),
 });
 
+const timeoutConfigSchema = z.object({
+  body: z.object({
+    perVideoTimeoutMs: z.number().positive(),
+    baseTimeoutMs: z.number().positive(),
+  }),
+});
+
+export const updateTimeoutConfig = asyncHandler(async (req: Request, res: Response) => {
+  const validation = timeoutConfigSchema.safeParse({ body: req.body });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const { perVideoTimeoutMs, baseTimeoutMs } = validation.data.body;
+
+  const config = await SystemConfig.findOneAndUpdate(
+    {},
+    { perVideoTimeoutMs, baseTimeoutMs },
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
+  );
+
+  // Cleanup any stale duplicates.
+  await SystemConfig.deleteMany({ _id: { $ne: config._id } });
+
+  res.status(200).json({
+    success: true,
+    message: 'Timeout configuration updated successfully',
+    data: {
+      perVideoTimeoutMs: config.perVideoTimeoutMs,
+      baseTimeoutMs: config.baseTimeoutMs,
+    },
+  });
+});
+
 export const updateSystemConfig = asyncHandler(async (req: Request, res: Response) => {
   const validation = configSchema.safeParse({ body: req.body });
   if (!validation.success) {

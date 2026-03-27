@@ -1,6 +1,34 @@
 import JobModel from '../models/Job';
+import SystemConfig from '../models/SystemConfig';
 import { releaseReservedCredits } from '../services/uploadLimitService';
+import { calculateJobTimeout } from '../utils/timeoutHelper';
 import { pipelineQueue } from '../queues/pipelineQueue';
+
+const MAX_QUEUE_WAIT_TIME = 2 * 60 * 60 * 1000; // 2 hours
+
+export const safelyFailJob = async (job: any, errorMessage: string) => {
+  const result = await JobModel.findOneAndUpdate(
+    {
+      _id: job._id,
+      status: { $in: ['processing', 'pending'] } // Ensure it's not already succeeded/failed
+    },
+    {
+      status: 'failed',
+      completedAt: new Date(),
+      error: errorMessage,
+      errorMessage: errorMessage,
+      errorStage: 'RENDER',
+      holdReleased: true, // we will attempt release below if it was atomic
+    },
+    { new: true } // Return updated doc
+  );
+
+  if (result) {
+    if (!job.holdConsumed && !job.holdReleased) {
+      await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+    }
+  }
+};
 
 export const recoverCrashedJobs = async () => {
   try {
@@ -41,36 +69,33 @@ export const startStuckJobCleanupInterval = () => {
   // Run every 5 minutes
   setInterval(async () => {
     try {
-      await reconcileQueueWithDatabase();
+      // Fetch dynamic configuration
+      let systemConfig = await SystemConfig.findOne().sort({ updatedAt: -1 });
+      const config = {
+        baseTimeoutMs: systemConfig?.baseTimeoutMs || 2 * 60 * 1000,
+        perVideoTimeoutMs: systemConfig?.perVideoTimeoutMs || 6 * 60 * 1000,
+      };
 
-      const threshold = Number(process.env.STUCK_JOB_THRESHOLD_MS || 60 * 60 * 1000); // Max pipeline duration
-      const staleTime = new Date(Date.now() - threshold);
-      const stuckJobs = await JobModel.find({
-        status: 'processing',
-        executionLockedAt: { $lt: staleTime }
+      const allActiveJobs = await JobModel.find({
+        status: { $in: ['processing', 'pending'] }
       });
 
-      if (stuckJobs.length > 0) {
-        console.log(`[StuckJobCleanup] Found ${stuckJobs.length} timed-out jobs. Marking failed.`);
-        for (const job of stuckJobs) {
-          const updatedJob = await JobModel.findOneAndUpdate(
-              { _id: job._id, holdConsumed: false, holdReleased: false },
-              {
-                  $set: {
-                      status: 'failed',
-                      completedAt: new Date(),
-                      error: 'Job timed out (stuck in processing beyond threshold)',
-                      errorMessage: 'Job timed out (stuck in processing beyond threshold)',
-                      errorStage: 'RENDER',
-                      holdReleased: true
-                  }
-              },
-              { new: true }
-          );
-          if (updatedJob) {
-             await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
-          } else {
-             console.log(`[StuckJobCleanup] Job ${job._id} was already processed (holds handled) by another routine.`);
+      for (const job of allActiveJobs) {
+        if (job.status === 'processing' && job.startedAt) {
+          const runTime = Date.now() - job.startedAt.getTime();
+          const allowedTime = calculateJobTimeout(job.videoCount || 1, config, job.processedVideos || 0);
+
+          if (runTime > allowedTime) {
+            console.log(`[StuckJobCleanup] Job ${job._id} timed out. Run time: ${runTime}ms, Allowed: ${allowedTime}ms`);
+            await safelyFailJob(job, 'Job timed out (dynamic timeout exceeded)');
+          }
+        } else if (job.status === 'pending' && job.queuedAt) {
+          const queueWait = Date.now() - job.queuedAt.getTime();
+
+          if (queueWait > MAX_QUEUE_WAIT_TIME) {
+            console.log(`[StuckJobCleanup] Job ${job._id} stuck in queue too long. Wait time: ${queueWait}ms`);
+            // Add retry mechanism or fail
+            await safelyFailJob(job, 'Job failed (stuck in queue beyond maximum allowed wait time)');
           }
         }
       }
