@@ -909,7 +909,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       // Gracefully handle failure and credit release atomically
       const updatedJob = await JobModel.findOneAndUpdate(
-          { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+          { _id: jobId, status: { $in: ['pending', 'processing'] } },
           {
               $set: {
                   status: 'failed',
@@ -922,12 +922,19 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           },
           { returnDocument: 'after' }
       );
-      if (updatedJob) {
+      if (updatedJob && !updatedJob.holdConsumed) {
          await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
       }
 
       if (error?.stage === 'TOKEN') {
         throw new UnrecoverableError(error.message || 'YouTube token failure');
+      }
+      if (
+        error?.stage === 'RENDER' &&
+        typeof error?.message === 'string' &&
+        error.message.includes('Local pipeline process failed with exit code')
+      ) {
+        throw new UnrecoverableError(error.message);
       }
       throw error;
     } finally {
