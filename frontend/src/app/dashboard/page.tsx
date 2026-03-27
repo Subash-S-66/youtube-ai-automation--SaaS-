@@ -101,6 +101,8 @@ function Dashboard() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const paymentConfirmingRef = useRef(false);
+  const jobStatusRef = useRef<Record<string, string>>({});
+  const notificationsPrimedRef = useRef(false);
   const allYouTubeChannels = Array.isArray(user?.youtubeChannels) ? user.youtubeChannels : [];
   const activeYouTubeChannels = allYouTubeChannels.filter((channel: any) => channel?.status !== 'disabled_due_to_plan');
   const validYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid !== false);
@@ -242,40 +244,53 @@ function Dashboard() {
             try {
                 const jobsData = await pipelineService.getJobs();
 
-            // Check for newly completed/failed jobs to notify the user
             const currentJobs = jobsData.data || [];
-            const seenJobNotifications = JSON.parse(localStorage.getItem('seenJobNotifications') || '[]');
-
+            const nextStatusMap: Record<string, string> = {};
             for (const job of currentJobs) {
-                const isSuccess = job.status === 'success' || job.status === 'completed';
-                const isFailed = job.status === 'failed';
-
-                if ((isSuccess || isFailed) && !seenJobNotifications.includes(job._id)) {
-                    seenJobNotifications.push(job._id);
-                    localStorage.setItem('seenJobNotifications', JSON.stringify(seenJobNotifications));
-
-                    if (isSuccess) {
-                        setModalConfig({
-                            isOpen: true,
-                            title: 'Job Completed',
-                            description: 'Your video generation and upload has completed successfully!',
-                            type: 'success',
-                            confirmText: 'Awesome',
-                            onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
-                        });
-                    } else if (isFailed) {
-                        setModalConfig({
-                            isOpen: true,
-                            title: 'Job Failed',
-                            description: 'A background job failed to complete. You can view the logs in your history.',
-                            type: 'error',
-                            confirmText: 'Dismiss',
-                            onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
-                        });
-                    }
-                }
+              nextStatusMap[job._id] = String(job.status || '');
             }
 
+            if (!notificationsPrimedRef.current) {
+              // Prime with current snapshot so old completed/failed jobs don't trigger popups.
+              jobStatusRef.current = nextStatusMap;
+              notificationsPrimedRef.current = true;
+              setJobs(currentJobs);
+              return;
+            }
+
+            const prevStatusMap = jobStatusRef.current;
+            for (const job of currentJobs) {
+              const prevStatus = prevStatusMap[job._id] || '';
+              const currStatus = String(job.status || '');
+              const wasActive = prevStatus === 'pending' || prevStatus === 'processing' || prevStatus === 'queued' || prevStatus === 'running';
+              const isSuccess = currStatus === 'success' || currStatus === 'completed';
+              const isFailed = currStatus === 'failed';
+
+              // Notify only on real state transition from active -> terminal.
+              if (wasActive && (isSuccess || isFailed)) {
+                if (isSuccess) {
+                  setModalConfig({
+                    isOpen: true,
+                    title: 'Job Completed',
+                    description: 'Your video generation and upload has completed successfully!',
+                    type: 'success',
+                    confirmText: 'Awesome',
+                    onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+                  });
+                } else {
+                  setModalConfig({
+                    isOpen: true,
+                    title: 'Job Failed',
+                    description: 'A background job failed to complete. You can view the logs in your history.',
+                    type: 'error',
+                    confirmText: 'Dismiss',
+                    onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+                  });
+                }
+              }
+            }
+
+            jobStatusRef.current = nextStatusMap;
             setJobs(currentJobs);
             } catch (err) {
                 // Silently ignore polling errors

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Convert text to speech using Edge TTS only.
 Falls back to silent audio as last resort.
 """
@@ -100,80 +100,12 @@ def _probe_media_duration(output_path: Path) -> float:
 
 def _normalize_audio_to_mp3(output_path: Path) -> None:
     """
-    Ensure output_path is a valid, probeable MP3.
-    Handles cases where providers return WAV/PCM bytes but caller expects .mp3.
+    Legacy compatibility hook.
+    In production prepared mode we avoid ffmpeg conversions and only ensure the file exists.
     """
     if not output_path.exists() or output_path.stat().st_size <= 0:
         raise RuntimeError(f"Generated audio file is missing or empty: {output_path}")
-
-    current_duration = _probe_media_duration(output_path)
-    if math.isfinite(current_duration) and current_duration > 0:
-        return
-
-    tmp_mp3 = output_path.with_suffix(".normalized.mp3")
-    generic_cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(output_path),
-        "-ac",
-        "1",
-        "-ar",
-        "24000",
-        "-c:a",
-        "libmp3lame",
-        "-q:a",
-        "4",
-        str(tmp_mp3),
-    ]
-    raw_pcm_attempts = [
-        ["24000", "1"],
-        ["22050", "1"],
-        ["16000", "1"],
-    ]
-
-    conversion_errors: list[str] = []
-    try:
-        subprocess.run(generic_cmd, check=True, capture_output=True, text=True)
-    except Exception as exc:
-        conversion_errors.append(f"generic ffmpeg input failed: {exc}")
-
-    if not tmp_mp3.exists() or tmp_mp3.stat().st_size <= 0:
-        for sample_rate, channels in raw_pcm_attempts:
-            raw_cmd = [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "s16le",
-                "-ar",
-                sample_rate,
-                "-ac",
-                channels,
-                "-i",
-                str(output_path),
-                "-c:a",
-                "libmp3lame",
-                "-q:a",
-                "4",
-                str(tmp_mp3),
-            ]
-            try:
-                subprocess.run(raw_cmd, check=True, capture_output=True, text=True)
-                if tmp_mp3.exists() and tmp_mp3.stat().st_size > 0:
-                    break
-            except Exception as exc:
-                conversion_errors.append(f"raw pcm {sample_rate}Hz failed: {exc}")
-
-    if not tmp_mp3.exists() or tmp_mp3.stat().st_size <= 0:
-        raise RuntimeError(
-            f"Failed to normalize generated audio to MP3 for {output_path}. "
-            f"Attempts: {' | '.join(conversion_errors)[:600]}"
-        )
-
-    tmp_mp3.replace(output_path)
-    normalized_duration = _probe_media_duration(output_path)
-    if not (math.isfinite(normalized_duration) and normalized_duration > 0):
-        raise RuntimeError(f"Audio normalization produced invalid duration for {output_path}")
+    return
 
 def _is_nonrecoverable_edge_error(message: str) -> bool:
     """
@@ -613,108 +545,28 @@ def generate_voice(
     rate: str = "",
     rotate_profile: bool = True,
 ) -> tuple[Path, bool]:
-    """
-    Generate voice audio from script text.
-
-    Tries Gemini Audio first, then Edge TTS with multiple voice rotations.
-    Raises RuntimeError if all attempts fail — never returns silent audio,
-    as a muted video upload is worse than a visible pipeline failure.
-
-    Returns:
-        (audio_path, True) on success
-    Raises:
-        RuntimeError: if all voice generation attempts are exhausted
-    """
+    """Generate voice audio with Google/Gemini only (non-Google fallback disabled)."""
     if rotate_profile:
         selected_voice, selected_rate = pick_voice_profile(voice=voice, rate=rate)
     else:
         selected_voice = " ".join(str(voice).split()).strip() or ROTATION_VOICES[0]
         selected_rate = " ".join(str(rate).split()).strip() or random.choice(RATE_OPTIONS)
 
-    # Sanitize text to avoid invisible characters that break TTS
     clean_script = _sanitize_tts_text(script)
     if not clean_script:
         raise RuntimeError("Script is empty after sanitization, unable to generate voice.")
 
-    edge_error = ""
-    global _EDGE_TTS_DISABLED_REASON
+    if not GEMINI_AUDIO_ENABLED:
+        raise RuntimeError("Gemini Audio is disabled. Set GEMINI_AUDIO_ENABLED=true.")
 
-    gemini_error = ""
-
-    # --- Stage 1: Try Gemini Audio (Primary) ---
-    if GEMINI_AUDIO_ENABLED:
-        try:
-            LOGGER.info("Attempting primary voice generation via Gemini Audio...")
-            audio_file = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
-            if audio_file.exists() and audio_file.stat().st_size > 1000:
-                _normalize_audio_to_mp3(audio_file)
-                LOGGER.info(f"Successfully generated voice via Gemini Audio ({audio_file.stat().st_size} bytes)")
-                return audio_file, True
-        except Exception as gemini_err:
-            gemini_error = str(gemini_err)
-            LOGGER.warning(f"Gemini Audio failed, falling back to Edge TTS. Error: {gemini_err}")
-            LOGGER.info(f"FALLBACK TRIGGERED: Using Edge TTS for voice generation instead of Gemini Audio.")
-    else:
-        LOGGER.info("Skipping Gemini Audio (GEMINI_AUDIO_ENABLED=false).")
-
-    if FORCE_GOOGLE_AUDIO_ONLY or GEMINI_AUDIO_ONLY:
+    try:
+        LOGGER.info("Attempting voice generation via Gemini Audio only...")
+        audio_file = _save_gemini_voice_sync(clean_script, selected_voice, output_path)
+        if audio_file.exists() and audio_file.stat().st_size > 1000:
+            LOGGER.info("Successfully generated Gemini audio (%s bytes)", audio_file.stat().st_size)
+            return audio_file, True
+        raise RuntimeError("Gemini returned empty/too-small audio file.")
+    except Exception as gemini_err:
         raise RuntimeError(
-            f"Google/Gemini audio failed (Edge fallback disabled): {gemini_error or 'no audio generated'}"
-        )
-
-    # --- Stage 2: Try Edge TTS with multiple voices (Fallback) ---
-    if _EDGE_TTS_DISABLED_REASON:
-        LOGGER.warning("Skipping Edge TTS (disabled earlier in this run): %s", _EDGE_TTS_DISABLED_REASON)
-        edge_error = _EDGE_TTS_DISABLED_REASON
-    else:
-        # Build a list of voices to try: selected first, then 2 random alternates
-        voices_to_try = [selected_voice]
-        alternates = [v for v in ROTATION_VOICES if v != selected_voice]
-        random.shuffle(alternates)
-        voices_to_try.extend(alternates[:2])
-
-        for idx, try_voice in enumerate(voices_to_try):
-            try:
-                LOGGER.info(
-                    "Edge TTS attempt %d/%d: %s at %s",
-                    idx + 1, len(voices_to_try), try_voice, selected_rate,
-                )
-                audio_file = asyncio.run(
-                    _save_voice_async(clean_script, try_voice, selected_rate, output_path)
-                )
-                file_size = audio_file.stat().st_size
-                LOGGER.info(
-                    "Voice generated (Edge TTS): %s at %s (%s bytes)",
-                    try_voice, selected_rate, f"{file_size:,}",
-                )
-                return audio_file, True
-            except Exception as edge_exc:
-                edge_error = str(edge_exc)[:150]
-                LOGGER.warning("Edge TTS voice %s failed: %s", try_voice, edge_error)
-                if _is_nonrecoverable_edge_error(str(edge_exc)):
-                    _EDGE_TTS_DISABLED_REASON = edge_error or "nonrecoverable Edge TTS failure"
-                    LOGGER.warning(
-                        "Disabling Edge TTS for remaining videos in this run: %s",
-                        _EDGE_TTS_DISABLED_REASON,
-                    )
-                    break
-                if idx < len(voices_to_try) - 1:
-                    import time
-                    time.sleep(max(0.0, EDGE_TTS_VOICE_SWITCH_DELAY_SECONDS))
-
-    # --- Stage 3: Optional silent fallback ---
-    if FORCE_GOOGLE_AUDIO_ONLY:
-        raise RuntimeError("Google/Gemini audio failed and FORCE_GOOGLE_AUDIO_ONLY=true.")
-    if ALLOW_SILENT_AUDIO_FALLBACK:
-        estimated_duration = _estimate_duration_seconds(clean_script)
-        LOGGER.warning(
-            "All voice providers failed. Generating silent fallback audio for %.1fs "
-            "(ALLOW_SILENT_AUDIO_FALLBACK=true).",
-            estimated_duration,
-        )
-        silent = _write_silent_audio(output_path, estimated_duration)
-        return silent, False
-
-    # --- Stage 4: Hard fail so we never skip narration unless explicitly allowed ---
-    raise RuntimeError(f"All voice generation attempts failed: {edge_error}")
-
+            f"Google/Gemini audio failed (non-Google fallback disabled): {gemini_err}"
+        ) from gemini_err

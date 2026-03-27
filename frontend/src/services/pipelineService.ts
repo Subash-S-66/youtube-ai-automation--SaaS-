@@ -7,7 +7,13 @@ export const pipelineService = {
   },
 
   async getJobs(page = 1, limit = 10) {
-    const response = await api.get(`/pipeline/jobs?page=${page}&limit=${limit}`);
+    const ts = Date.now();
+    const response = await api.get(`/pipeline/jobs?page=${page}&limit=${limit}&_ts=${ts}`, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+      },
+    });
     return response.data;
   },
 };

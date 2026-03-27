@@ -14,34 +14,72 @@ import { pipelineService } from '../../services/pipelineService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { cn } from '../../lib/utils';
 
+const POLL_INTERVAL_MS = 2000;
+
 export default function HistoryPage() {
   const [user, setUser] = useState<any>(null);
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
+    let active = true;
+
+    const fetchData = async (opts?: { silent?: boolean }) => {
+      const silent = !!opts?.silent;
+      if (!silent) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       try {
         const [userData, jobsData] = await Promise.all([
           authService.getMe(),
           pipelineService.getJobs(page, 10)
         ]);
+        if (!active) return;
         setUser(userData.data);
         setJobs(jobsData.data);
         setTotalPages(jobsData.pagination?.pages || 1);
       } catch (err) {
-        authService.handleAuthError(err);
+        if (!silent) {
+          authService.handleAuthError(err);
+        }
       } finally {
-        setLoading(false);
+        if (!active) return;
+        if (!silent) {
+          setLoading(false);
+        } else {
+          setRefreshing(false);
+        }
       }
     };
+
     fetchData();
+    const interval = setInterval(() => {
+      fetchData({ silent: true });
+    }, POLL_INTERVAL_MS);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [page]);
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const jobsData = await pipelineService.getJobs(page, 10);
+      setJobs(jobsData.data);
+      setTotalPages(jobsData.pagination?.pages || 1);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const toggleJob = (id: string) => {
     setExpandedJobId(prev => prev === id ? null : id);
@@ -101,10 +139,23 @@ export default function HistoryPage() {
               <History className="h-5 w-5 text-[#7C5CFF]" />
             </div>
             <h2 className="text-xl font-bold text-white tracking-tight">Job History</h2>
+            {refreshing && (
+              <RefreshCw className="h-4 w-4 ml-3 animate-spin text-slate-500" />
+            )}
           </div>
-          <span className="text-sm font-medium text-slate-400 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235]">
-            Total Records: {jobs.length}
-          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleManualRefresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1 text-sm font-medium text-slate-300 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235] hover:bg-[#1A2235] disabled:opacity-60 transition-colors"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              Refresh
+            </button>
+            <span className="text-sm font-medium text-slate-400 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235]">
+              Total Records: {jobs.length}
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">

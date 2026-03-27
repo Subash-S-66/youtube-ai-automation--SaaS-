@@ -126,6 +126,24 @@ const resolvePipelineRunner = async (): Promise<'local' | 'azure' | 'remote'> =>
   return process.env.PIPELINE_SERVICE_URL ? 'remote' : 'local';
 };
 
+const updateProgressSafe = async (
+  job: BullJob<PipelineJobPayload>,
+  progress: number,
+  stage: string,
+  message?: string
+): Promise<void> => {
+  try {
+    await job.updateProgress({
+      progress: Math.max(0, Math.min(100, Math.floor(progress))),
+      stage,
+      message: message || '',
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    // Best-effort only
+  }
+};
+
 const parseBaseUrl = (value: string): string => {
   const cleaned = value.trim();
   if (!cleaned) return '';
@@ -267,6 +285,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     }
 
     await appendLogSafe(jobId, 'Job is processing...\n');
+    await updateProgressSafe(job, 5, 'processing', 'Job accepted by worker');
     if (inputAudit.aliasMappings.length) {
       await appendLogSafe(jobId, `Input alias mappings applied: ${inputAudit.aliasMappings.join(', ')}\n`);
     }
@@ -333,6 +352,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       }
 
       // 2. Load backend-prepared content from DB (execution-only pipeline)
+      await updateProgressSafe(job, 12, 'content_load', 'Loading prepared content');
       const dbJobForExecution = await JobModel.findById(jobId);
       if (!dbJobForExecution) {
         throw new Error(`Job ${jobId} not found`);
@@ -350,6 +370,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       let preparedContent = Array.isArray(dbJobForExecution.preparedContent) ? dbJobForExecution.preparedContent : [];
       if (preparedContent.length === 0) {
         await appendLogSafe(jobId, 'No prepared content found. Generating content in background worker...\n');
+        await updateProgressSafe(job, 22, 'content_generation', 'Generating structured content');
 
         const promptDoc = await Prompt.findById(dbJobForExecution.promptId);
         if (!promptDoc) {
@@ -375,7 +396,11 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         if (typeof settings.storyMode === 'boolean') generationInput.storyMode = settings.storyMode;
         if (typeof settings.currentPart === 'number') generationInput.currentPart = settings.currentPart;
         if (typeof settings.recapEnabled === 'boolean') generationInput.recapEnabled = settings.recapEnabled;
+        if (typeof settings.ctaEnabled === 'boolean') generationInput.ctaEnabled = settings.ctaEnabled;
         if (typeof settings.lastPrompt === 'string') generationInput.lastPrompt = settings.lastPrompt;
+        if (settings.templateConfig && typeof settings.templateConfig === 'object') {
+          generationInput.templateConfig = settings.templateConfig;
+        }
 
         const generated = await generateContent(generationInput);
         const validStructuredScript = Array.isArray(generated.script)
@@ -402,6 +427,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
 
         preparedContent = generated.preparedContent as any[];
         await appendLogSafe(jobId, `Background content generation completed with ${preparedContent.length} item(s).\n`);
+        await updateProgressSafe(job, 38, 'content_generation', 'Content generation completed');
       }
       const executionJob = (await JobModel.findById(jobId)) || dbJobForExecution;
       const firstPreparedItem = (preparedContent[0] && typeof preparedContent[0] === 'object')
@@ -479,6 +505,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           },
         })}\n`
       );
+      await updateProgressSafe(job, 50, 'payload_build', 'Media resolution and payload build');
 
       const payloadVideoConfig = sanitizePayloadValue({
         ...(executionJob.pipelineConfig || settings || {}),
@@ -558,6 +585,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       }
 
       // 3. Ensure valid YouTube token before upload execution
+      await updateProgressSafe(job, 60, 'token_validation', 'Validating YouTube token');
       let youtubeToken = '';
       try {
         youtubeToken = (await ensureValidYouTubeToken(settings.channelId, userId)).accessToken;
@@ -588,6 +616,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // Although we atomically lock it above, we refresh it here to act as the official timer start
       await JobModel.findByIdAndUpdate(jobId, { status: 'processing', startedAt: new Date() });
       await appendLogSafe(jobId, 'Job is running in pipeline...\n', 'processing');
+      await updateProgressSafe(job, 70, 'dispatch', 'Dispatching pipeline runtime');
 
       // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.
       // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
@@ -639,6 +668,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           throw err;
         }
         await appendLogSafe(jobId, `\nLocal pipeline process finished. Awaiting webhook updates.\n`);
+        await updateProgressSafe(job, 95, 'pipeline_runtime', 'Pipeline runtime finished, awaiting final status');
         return;
       }
 

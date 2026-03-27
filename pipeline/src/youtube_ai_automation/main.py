@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import random
+import requests
 import socket
 import time
 from urllib.parse import unquote, urlparse
@@ -107,6 +108,13 @@ from youtube_ai_automation.video_fetcher import download_scene_videos
 from youtube_ai_automation.viral_pattern_engine import ViralPatternScore, estimate_viral_probability
 from youtube_ai_automation.voice_generator import generate_voice, pick_voice_profile
 from youtube_ai_automation.youtube_uploader import SHORTS_MAX_DURATION_SECONDS, upload_video
+from youtube_ai_automation.duration_controller import (
+    allocate_section_budget,
+    adjust_script_to_duration,
+    build_timed_lines,
+    estimate_script_duration_seconds,
+    validate_output,
+)
 
 LOGGER = logging.getLogger("youtube_ai_automation")
 NARRATION_RETRY_ATTEMPTS = 5
@@ -1421,7 +1429,6 @@ def _normalize_script_from_payload(script_items: list[object]) -> str:
         elif isinstance(item, dict):
             text = str(item.get("text", "")).strip()
             if not text:
-                # Accept legacy or alternate key names from older callers.
                 text = str(item.get("prompt", "")).strip()
             if not text:
                 text = str(item.get("line", "")).strip()
@@ -1434,7 +1441,78 @@ def _normalize_script_from_payload(script_items: list[object]) -> str:
                 f"script[{idx}] is empty; provide a non-empty string or object with text."
             )
         lines.append(text)
-    return "\n".join(lines)
+    return " ".join(lines)
+
+
+def _extract_target_duration(video_config: dict) -> int:
+    raw = video_config.get("targetDuration", video_config.get("duration", 60))
+    try:
+        target = int(raw)
+    except Exception:
+        target = 60
+    return max(15, min(60, target))
+
+
+def _build_section_scripts(
+    base_script: str,
+    topic: str,
+    target_duration: int,
+    cta_enabled: bool,
+    recap_enabled: bool,
+) -> tuple[dict[str, str], dict[str, int]]:
+    budget = allocate_section_budget(
+        target_seconds=target_duration,
+        has_cta=cta_enabled,
+        has_recap=recap_enabled,
+    )
+    section_budget = {
+        "hook": budget.hook,
+        "main_content": budget.main_content,
+        "recap": budget.recap,
+        "cta": budget.cta,
+    }
+
+    sentences = [part.strip() for part in base_script.split(".") if part.strip()]
+    hook_seed = f"{sentences[0]}." if sentences else f"{topic} in one short."
+    main_seed = " ".join(sentences[1:]) if len(sentences) > 1 else base_script
+    recap_seed = f"In short, {topic} matters now."
+    cta_seed = "Follow for more and share this short."
+
+    hook_text = adjust_script_to_duration(
+        script=hook_seed,
+        target_seconds=section_budget["hook"],
+        section_name="hook",
+        topic_hint=topic,
+    )
+    main_text = adjust_script_to_duration(
+        script=main_seed,
+        target_seconds=section_budget["main_content"],
+        section_name="main",
+        topic_hint=topic,
+    )
+    recap_text = ""
+    if recap_enabled and section_budget["recap"] > 0:
+        recap_text = adjust_script_to_duration(
+            script=recap_seed,
+            target_seconds=section_budget["recap"],
+            section_name="recap",
+            topic_hint=topic,
+        )
+    cta_text = ""
+    if cta_enabled and section_budget["cta"] > 0:
+        cta_text = adjust_script_to_duration(
+            script=cta_seed,
+            target_seconds=section_budget["cta"],
+            section_name="cta",
+            topic_hint=topic,
+        )
+
+    return {
+        "hook": hook_text,
+        "main_content": main_text,
+        "recap": recap_text,
+        "cta": cta_text,
+    }, section_budget
 
 
 def run_prepared_pipeline(
@@ -1443,6 +1521,8 @@ def run_prepared_pipeline(
     publish_at: str | None,
     count: int,
 ) -> list[Path]:
+    # Production prepared mode: deterministic timing + Google audio only.
+    # Video stitching/upload side-effects are intentionally disabled in this mode.
     created: list[Path] = []
     if not isinstance(payload, dict):
         raise ValueError("PIPELINE_PAYLOAD must be an object.")
@@ -1461,26 +1541,115 @@ def run_prepared_pipeline(
     if not isinstance(video_config.get("customImageUrls", []), list):
         raise ValueError("videoConfig.customImageUrls must be an array when provided.")
 
-    os.environ["SETTINGS"] = json.dumps(video_config)
-    normalized = {
-        "topic": str(youtube.get("title", "Prepared Topic") or "Prepared Topic"),
-        "title": str(youtube.get("title", "Prepared Title") or "Prepared Title"),
-        "hook": str(youtube.get("title", "Prepared Hook") or "Prepared Hook"),
-        "description": str(youtube.get("description", "Prepared description") or "Prepared description"),
-        "hashtags": youtube.get("hashtags", ["#shorts"]),
-        "script": script_text,
-        "scenes": [f"scene {i}" for i in range(1, 6)],
-        "searchQueries": [f"query {i}" for i in range(1, 6)],
-        "captions": captions if isinstance(captions, list) else [],
-    }
-    content = _normalize_prepared_item(normalized)
-    LOGGER.info("Running prepared payload execution for title=%s", content.title)
-    video_path = _build_video_from_content(
-        content=content,
-        upload=upload,
-        publish_at=publish_at,
+    target_duration = _extract_target_duration(video_config)
+    cta_enabled = bool(video_config.get("ctaEnabled", video_config.get("enableCTA", False)))
+    recap_enabled = bool(video_config.get("recapEnabled", False))
+    topic = str(youtube.get("title", "Prepared Topic") or "Prepared Topic").strip()
+    voice_name = str(video_config.get("voice", DEFAULT_VOICE) or DEFAULT_VOICE).strip()
+    voice_rate = str(video_config.get("voiceRate", "") or "").strip()
+
+    # Auto-regenerate loop for strict timing validation.
+    best_package: dict | None = None
+    last_errors: list[str] = []
+    for _attempt in range(1, 4):
+        section_scripts, section_budget = _build_section_scripts(
+            base_script=script_text,
+            topic=topic,
+            target_duration=target_duration,
+            cta_enabled=cta_enabled,
+            recap_enabled=recap_enabled,
+        )
+        ordered_parts = [
+            section_scripts["hook"],
+            section_scripts["main_content"],
+            section_scripts["recap"],
+            section_scripts["cta"],
+        ]
+        final_script = " ".join(part for part in ordered_parts if part).strip()
+        estimated_duration = estimate_script_duration_seconds(final_script)
+        valid, errors = validate_output(
+            target_seconds=target_duration,
+            actual_seconds=estimated_duration,
+            has_cta=cta_enabled,
+            has_recap=recap_enabled,
+            cta_text=section_scripts["cta"],
+            recap_text=section_scripts["recap"],
+            full_script=final_script,
+        )
+        best_package = {
+            "script": final_script,
+            "sections": section_scripts,
+            "sections_budget": section_budget,
+            "estimated_duration": round(estimated_duration, 2),
+        }
+        last_errors = errors
+        if valid:
+            break
+        # Re-adjust in next loop with the latest output as seed.
+        script_text = final_script
+
+    if not best_package:
+        raise RuntimeError("Failed to build deterministic script package.")
+    if last_errors:
+        raise RuntimeError(f"Validation failed after regeneration attempts: {', '.join(last_errors)}")
+
+    # Generate section-level and full narration audio via Google path.
+    output_dir = AUDIO_PATH.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    section_audio_paths: dict[str, str] = {}
+    for section_name in ("hook", "main_content", "recap", "cta"):
+        section_text = best_package["sections"].get(section_name, "")
+        if not section_text:
+            continue
+        section_path = output_dir / f"voice_{section_name}.wav"
+        audio_path, _ = generate_voice(
+            script=section_text,
+            voice=voice_name,
+            rate=voice_rate,
+            output_path=section_path,
+            rotate_profile=False,
+        )
+        section_audio_paths[section_name] = str(audio_path)
+
+    full_audio_path, _ = generate_voice(
+        script=best_package["script"],
+        voice=voice_name,
+        rate=voice_rate,
+        output_path=(output_dir / "voice_full.wav"),
+        rotate_profile=False,
     )
-    created.append(video_path)
+    created.append(full_audio_path)
+
+    timed_lines = build_timed_lines(best_package["script"])
+    caption_font = str(video_config.get("templateConfig", {}).get("fontStyle", "Anton")).strip() or "Anton"
+    caption_color = str(video_config.get("templateConfig", {}).get("subtitleColor", "#FFFFFF")).strip() or "#FFFFFF"
+    hashtags = youtube.get("hashtags", ["#shorts"])
+    if not isinstance(hashtags, list):
+        hashtags = ["#shorts"]
+
+    result_payload = {
+        "script": best_package["script"],
+        "duration": best_package["estimated_duration"],
+        "audio_url": str(full_audio_path),
+        "captions": {
+            "text": [row.get("text", "") for row in timed_lines],
+            "timed": timed_lines,
+            "font": caption_font,
+            "color": caption_color,
+        },
+        "hashtags": [str(tag).strip() for tag in hashtags if str(tag).strip()],
+        "cta": best_package["sections"].get("cta", ""),
+        "recap": best_package["sections"].get("recap", ""),
+        "sections": best_package["sections"],
+        "sectionBudgets": best_package["sections_budget"],
+        "sectionAudio": section_audio_paths,
+        "uploadSkipped": True,
+        "validationErrors": last_errors,
+    }
+    result_file = output_dir / "prepared_result.json"
+    result_file.write_text(json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"PIPELINE_OUTPUT_JSON:{json.dumps(result_payload, ensure_ascii=False)}")
+    LOGGER.info("Prepared deterministic payload written to %s", result_file)
     return created
 
 

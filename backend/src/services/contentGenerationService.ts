@@ -10,7 +10,12 @@ export interface ContentGenerationInput {
   storyMode?: boolean;
   currentPart?: number;
   recapEnabled?: boolean;
+  ctaEnabled?: boolean;
   lastPrompt?: string;
+  templateConfig?: {
+    fontStyle?: string;
+    subtitleColor?: string;
+  };
 }
 
 export interface PreparedContentItem {
@@ -67,6 +72,70 @@ const splitScriptLines = (script: string): string[] => {
     .filter(Boolean);
 };
 
+const WORDS_PER_SECOND = 2.5;
+
+const estimateLineDuration = (line: string): number => {
+  const words = String(line || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+  if (!words) return 1;
+  return Math.max(1, Number((words / WORDS_PER_SECOND).toFixed(2)));
+};
+
+const estimateScriptDuration = (lines: string[]): number => {
+  return Number(lines.reduce((sum, line) => sum + estimateLineDuration(line), 0).toFixed(2));
+};
+
+const allocateSections = (targetDuration: number, hasCTA: boolean, hasRecap: boolean) => {
+  const target = Math.max(15, Math.min(60, Math.floor(targetDuration)));
+  const hook = target >= 25 ? 5 : Math.max(3, Math.floor(target * 0.15));
+  let cta = 0;
+  let recap = 0;
+
+  if (hasCTA && hasRecap) {
+    cta = Math.max(6, Math.floor(target * 0.12));
+    recap = Math.max(5, Math.floor(target * 0.1));
+  } else if (hasCTA) {
+    cta = Math.max(5, Math.floor(target * 0.13));
+  } else if (hasRecap) {
+    recap = Math.max(5, Math.floor(target * 0.12));
+  }
+
+  let mainContent = Math.max(6, target - hook - cta - recap);
+  const drift = target - (hook + mainContent + cta + recap);
+  if (drift !== 0) mainContent += drift;
+
+  return {
+    hook,
+    main_content: mainContent,
+    recap,
+    cta,
+  };
+};
+
+const ensureDurationBounds = (lines: string[], targetDurationSeconds: number): string[] => {
+  const safe = lines.filter(Boolean);
+  if (!safe.length) return safe;
+
+  let current = estimateScriptDuration(safe);
+  const target = Math.max(15, Math.min(60, targetDurationSeconds));
+
+  while (current > target + 0.5 && safe.length > 1) {
+    safe.pop();
+    current = estimateScriptDuration(safe);
+  }
+
+  const filler = 'This is the key detail that completes the explanation.';
+  while (current < target - 0.5) {
+    safe.push(filler);
+    current = estimateScriptDuration(safe);
+    if (safe.length > 20) break;
+  }
+
+  return safe;
+};
+
 const buildLineCaptions = (
   scriptLines: string[],
   targetDurationSeconds: number
@@ -86,11 +155,9 @@ const buildStructuredScript = (
   scriptLines: string[],
   targetDurationSeconds: number
 ): Array<{ text: string; duration?: number }> => {
-  const lines = scriptLines.filter(Boolean);
+  const lines = ensureDurationBounds(scriptLines.filter(Boolean), targetDurationSeconds);
   if (lines.length === 0) return [];
-  const totalMs = Math.max(15000, Math.min(60000, Math.floor(targetDurationSeconds * 1000)));
-  const slotSeconds = Math.max(1, Math.floor((totalMs / lines.length) / 1000));
-  return lines.map((line) => ({ text: line, duration: slotSeconds }));
+  return lines.map((line) => ({ text: line, duration: estimateLineDuration(line) }));
 };
 
 const normalizePreparedItem = (raw: any, fallbackTopic: string, targetDurationSeconds: number): PreparedContentItem => {
@@ -139,8 +206,11 @@ const buildStructuredPrompt = (
   storyMode: boolean,
   currentPart?: number,
   recapEnabled?: boolean,
-  lastPrompt?: string
+  lastPrompt?: string,
+  ctaEnabled?: boolean,
+  templateConfig?: { fontStyle?: string; subtitleColor?: string }
 ): string => {
+  const sectionBudget = allocateSections(durationSeconds, !!ctaEnabled, !!recapEnabled);
   const partNote =
     total > 1
       ? `This is video ${index} of ${total} for the same pipeline job. Keep variation high and avoid duplicate hooks.`
@@ -160,11 +230,24 @@ ${storyNote}
 Return ONLY JSON with this exact structure:
 {
   "topic": "string",
+  "target_duration": ${durationSeconds},
+  "sections": {
+    "hook": ${sectionBudget.hook},
+    "main_content": ${sectionBudget.main_content},
+    "recap": ${sectionBudget.recap},
+    "cta": ${sectionBudget.cta}
+  },
   "title": "string, max 60 chars preferred",
   "hook": "string",
   "description": "string",
   "hashtags": ["#shorts", "..."],
-  "script": "exactly 5 lines separated by newline",
+  "script": "timed narrative matching section durations",
+  "recap_text": "string (required when recap > 0)",
+  "cta_text": "string (required when cta > 0)",
+  "caption_style": {
+    "font": "${clean(templateConfig?.fontStyle || 'Anton')}",
+    "color": "${clean(templateConfig?.subtitleColor || '#FFFFFF')}"
+  },
   "scenes": ["5 scene phrases"],
   "search_queries": ["5 stock search phrases"]
 }
@@ -243,7 +326,9 @@ export const generateContent = async (input: ContentGenerationInput): Promise<Co
       !!input.storyMode,
       input.currentPart,
       input.recapEnabled,
-      input.lastPrompt
+      input.lastPrompt,
+      input.ctaEnabled,
+      input.templateConfig
     );
 
     try {
