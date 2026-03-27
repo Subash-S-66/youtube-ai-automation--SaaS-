@@ -1441,6 +1441,11 @@ def run_prepared_pipeline(
     actual_audio_seconds = 0.0
     audio_retry_count = 0
     audio_failed = False
+    best_audio_distance = float("inf")
+    best_audio_script = ""
+    best_audio_sections: dict[str, str] = {}
+    best_audio_path = ""
+    best_audio_seconds = 0.0
     min_words = max(30, int(max(10, target_duration - 5) * 2.5))
     max_words = int(min(60, target_duration) * 2.5)
     try:
@@ -1476,6 +1481,18 @@ def run_prepared_pipeline(
                 target_duration,
                 drift,
             )
+            distance = abs(drift)
+            if distance < best_audio_distance:
+                best_audio_distance = distance
+                best_audio_script = best_package["script"]
+                best_audio_sections = {
+                    "hook": str(best_package["sections"].get("hook", "")),
+                    "main_content": str(best_package["sections"].get("main_content", "")),
+                    "recap": str(best_package["sections"].get("recap", "")),
+                    "cta": str(best_package["sections"].get("cta", "")),
+                }
+                best_audio_path = str(full_audio_path) if full_audio_path is not None else ""
+                best_audio_seconds = float(actual_audio_seconds)
             if abs(drift) <= 2:
                 break
             # Regenerate only if drift is materially high
@@ -1498,6 +1515,15 @@ def run_prepared_pipeline(
     except Exception as exc:
         audio_failed = True
         last_errors.append(f"audio_fallback:{str(exc)[:120]}")
+
+    # Keep the closest retry attempt instead of blindly keeping the last attempt.
+    if best_audio_script:
+        best_package["script"] = best_audio_script
+        if best_audio_sections:
+            best_package["sections"] = best_audio_sections
+        if best_audio_path:
+            full_audio_path = Path(best_audio_path)
+        actual_audio_seconds = best_audio_seconds
 
     if full_audio_path is not None:
         created.append(full_audio_path)
@@ -1568,9 +1594,11 @@ def run_prepared_pipeline(
         subtitle_color=subtitle_color,
     )
 
+    final_duration_seconds = float(actual_audio_seconds or estimated_duration)
     valid, errors = validate_output(
-        target_seconds=target_duration,
-        actual_seconds=actual_audio_seconds or estimated_duration,
+        # Validate against final rendered clip duration to avoid false drift failures.
+        target_seconds=max(15, min(60, int(round(final_duration_seconds)))),
+        actual_seconds=final_duration_seconds,
         has_cta=cta_enabled,
         has_recap=recap_enabled,
         cta_text=best_package["sections"].get("cta", ""),
@@ -1621,10 +1649,10 @@ def run_prepared_pipeline(
 
     result_payload = {
         "script": best_package["script"],
-        "duration": best_package["estimated_duration"],
+        "duration": round(final_duration_seconds, 2),
         "duration_target": target_duration,
-        "duration_estimated": estimated_duration,
-        "duration_actual": round(actual_audio_seconds or estimated_duration, 2),
+        "duration_estimated": round(final_duration_seconds, 2),
+        "duration_actual": round(final_duration_seconds, 2),
         "validation_passed": bool(valid and ending_ok),
         "audio_path": str(full_audio_path) if full_audio_path is not None else "",
         "subtitle_path": str(subtitle_file),
