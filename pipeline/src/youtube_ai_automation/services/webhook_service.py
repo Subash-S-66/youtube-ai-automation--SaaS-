@@ -51,9 +51,13 @@ def send_job_status(
     if not webhook_url or not job_id:
         return
 
+    normalized_status = str(status or "").strip()
+    if normalized_status.lower() == "running":
+        normalized_status = "processing"
+
     payload = {
         "jobId": job_id,
-        "status": status,
+        "status": normalized_status,
         "logs": logs,
         "videoUrl": video_url,
         "youtubeVideoId": youtube_video_id,

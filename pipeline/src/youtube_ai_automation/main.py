@@ -1406,7 +1406,14 @@ def run_prepared_pipeline(
             )
             actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
             if actual_audio_seconds <= 0:
-                raise RuntimeError("Unable to measure generated audio duration.")
+                # Some providers may return audio data that isn't reliably parsable by wave.
+                # Fall back to script-based duration instead of failing the whole job.
+                actual_audio_seconds = estimate_audio_duration(best_package["script"])
+                LOGGER.warning(
+                    "Unable to measure generated audio duration; using estimated duration %.2fs",
+                    actual_audio_seconds,
+                )
+                break
             drift = actual_audio_seconds - target_duration
             LOGGER.info(
                 "audio_attempt=%s actual=%.2fs target=%ss drift=%.2fs",
@@ -1460,6 +1467,8 @@ def run_prepared_pipeline(
 
     estimated_duration = estimate_audio_duration(best_package["script"])
     actual_audio_seconds = get_audio_duration_seconds(full_audio_path) if full_audio_path is not None else estimated_duration
+    if actual_audio_seconds <= 0:
+        actual_audio_seconds = estimated_duration
     if abs(actual_audio_seconds - estimated_duration) > 2:
         LOGGER.warning(
             "Audio/script sync drift detected. actual=%.2fs estimated=%.2fs",
