@@ -1,5 +1,10 @@
 """
 Generate structured short-form content for YouTube Shorts.
+Rewritten for:
+  - Strict duration control (word budget enforced)
+  - CTA / Recap flags properly embedded
+  - One-sentence-per-line script for clean TTS + caption alignment
+  - Scene queries matched 1:1 to script lines
 """
 
 from __future__ import annotations
@@ -9,25 +14,24 @@ import json
 import logging
 import math
 import os
+import re
 import time
-from textwrap import dedent
 from typing import Any
 
 import requests
 
 LOGGER = logging.getLogger(__name__)
-GEMINI_FALLBACK_MODELS_DEFAULT = (
-    "gemini-3.1-flash-preview",
-)
+
+WORDS_PER_SECOND = 2.5
 GEMINI_RETRY_STATUS_CODES = {429, 503}
 GEMINI_MAX_RETRIES_PER_MODEL = 2
 GEMINI_RETRY_DELAYS_SECONDS = (2, 5, 10)
-GEMINI_REQUEST_TIMEOUT_SECONDS = 35
-GEMINI_MODEL_LIST_TIMEOUT_SECONDS = 8
-GEMINI_MODEL_LIST_CACHE_SECONDS = 120
-_GEMINI_AVAILABLE_MODELS_CACHE: dict[str, Any] = {"fetched_at": 0.0, "models": None}
+GEMINI_REQUEST_TIMEOUT_SECONDS = 40
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Data structures
+# ─────────────────────────────────────────────────────────────────────────────
 @dataclass
 class GeneratedContent:
     topic: str
@@ -35,9 +39,9 @@ class GeneratedContent:
     hook: str
     description: str
     hashtags: list[str]
-    script: str
-    scenes: list[str]
-    search_queries: list[str]
+    script: str          # Full script, one sentence per line
+    scenes: list[str]    # One per script line
+    search_queries: list[str]  # One per script line
 
     def upload_description(self) -> str:
         tag_line = " ".join(self.hashtags)
@@ -48,27 +52,47 @@ class GeneratedContent:
         return [tag for tag in cleaned if tag][:15]
 
 
-def _clean_text(value: str) -> str:
-    return " ".join(str(value).split()).strip()
+# ─────────────────────────────────────────────────────────────────────────────
+# Text helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def _clean(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
 
 
 def _word_bounds(target_duration: int) -> tuple[int, int]:
-    min_seconds = max(15, int(target_duration) - 5)
-    max_seconds = min(60, int(target_duration) + 5)
-    min_words = math.floor(min_seconds * 2.5)
-    max_words = math.floor(max_seconds * 2.5)
-    return min_words, max_words
+    """Tight ±5 second window around target duration."""
+    t = max(15, min(60, int(target_duration)))
+    return math.floor((t - 5) * WORDS_PER_SECOND), math.floor((t + 5) * WORDS_PER_SECOND)
 
 
-def _split_script_lines(script: str) -> list[str]:
-    return [line.strip() for line in str(script).splitlines() if line.strip()]
+def _split_into_lines(script: str) -> list[str]:
+    """Split script at sentence boundaries, one sentence per line."""
+    text = " ".join(str(script or "").split()).strip()
+    if not text:
+        return []
+    # First try newline-delimited (already pre-split by the model)
+    newline_parts = [p.strip() for p in text.splitlines() if p.strip()]
+    if len(newline_parts) >= 2:
+        return newline_parts
+    # Fall back to sentence-boundary splitting
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _estimate_duration(line: str) -> float:
+    words = len(str(line or "").split())
+    return max(0.5, words / WORDS_PER_SECOND)
+
+
+def _count_words(text: str) -> int:
+    return len(str(text or "").split())
 
 
 def _clean_hashtags(raw: list[str]) -> list[str]:
     cleaned: list[str] = []
     seen: set[str] = set()
     for tag in raw:
-        value = _clean_text(tag)
+        value = _clean(tag)
         if not value:
             continue
         if not value.startswith("#"):
@@ -81,269 +105,278 @@ def _clean_hashtags(raw: list[str]) -> list[str]:
     return cleaned[:15]
 
 
-def _extract_json_payload(text: str) -> Any:
+def _extract_json(text: str) -> Any:
+    """Extract the first JSON object from model output."""
     candidate = str(text).strip()
-    if candidate.startswith("```"):
-        lines = [line for line in candidate.splitlines() if not line.strip().startswith("```")]
-        candidate = "\n".join(lines).strip()
-    decoder = json.JSONDecoder()
-    for idx, char in enumerate(candidate):
-        if char not in "[{":
-            continue
-        try:
-            parsed, _ = decoder.raw_decode(candidate[idx:])
-            return parsed
-        except json.JSONDecodeError:
-            continue
-    raise ValueError("No valid JSON payload found.")
+    # Strip markdown fences
+    candidate = re.sub(r'^```(?:json)?\s*', '', candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r'\s*```$', '', candidate)
+    start = candidate.find('{')
+    end = candidate.rfind('}')
+    if start == -1 or end <= start:
+        raise ValueError("No JSON object found in model response.")
+    return json.loads(candidate[start:end + 1])
 
 
-def _validate_content_quality(payload: dict[str, Any]) -> list[str]:
-    warnings: list[str] = []
-    topic = _clean_text(payload.get("topic", ""))
-    if not topic:
-        warnings.append("Missing topic.")
-    script = _clean_text(payload.get("script", ""))
-    if not script:
-        warnings.append("Missing script.")
-    return warnings
+# ─────────────────────────────────────────────────────────────────────────────
+# THE CONTENT PROMPT
+# This prompt is called from the Python pipeline and must match the TS version.
+# ─────────────────────────────────────────────────────────────────────────────
+def _build_content_prompt(
+    narration_brief: str,
+    topic: str,
+    target_duration: int,
+    index: int,
+    total: int,
+    story_mode: bool,
+    current_part: int,
+    recap_enabled: bool,
+    cta_enabled: bool,
+    last_prompt: str,
+) -> str:
+    target = max(15, min(60, int(target_duration)))
+    min_words, max_words = _word_bounds(target)
+
+    # Section budgets
+    hook_words = round(min_words * 0.18)
+    cta_words = round(min_words * 0.14) if cta_enabled else 0
+    recap_words = round(min_words * 0.12) if recap_enabled else 0
+    main_words = min_words - hook_words - cta_words - recap_words
+
+    variation_note = (
+        f"This is video {index} of {total} in this batch. Use a DIFFERENT hook and angle from any previous video."
+        if total > 1 else ""
+    )
+    story_note = ""
+    if story_mode:
+        if current_part > 1 and last_prompt:
+            story_note = f"STORY MODE Part {current_part}: Continue from: \"{last_prompt[:120]}\". Frame as ongoing series."
+        else:
+            story_note = f"STORY MODE Part {current_part}: Open the story arc. Frame as episode 1 of a series."
+
+    recap_line = (
+        f"• Recap (second-to-last line): ~{recap_words} words — one sentence summarising the key takeaway."
+        if recap_enabled else "• NO recap section."
+    )
+    cta_line = (
+        f"• CTA (last line): ~{cta_words} words — a direct action call (follow, subscribe, save, share, etc.)."
+        if cta_enabled else "• NO call-to-action. End with a strong closing statement or thought."
+    )
+
+    return f"""You are an elite YouTube Shorts content engine. Return ONLY valid JSON — no markdown, no extra text.
+
+NARRATION BRIEF (this IS what the video is about — follow it exactly):
+"{narration_brief}"
+
+TOPIC: {topic}
+TARGET DURATION: {target} seconds
+TOTAL WORD BUDGET: {min_words}–{max_words} words (entire script must stay in this range)
+
+SECTION BREAKDOWN (each section's words add to the total budget):
+• Hook (first line): ~{hook_words} words — strong curiosity/shock/question opening. MUST be the first sentence.
+• Main body: ~{main_words} words — deliver the core insight. Plain, punchy, spoken sentences.
+{recap_line}
+{cta_line}
+
+{variation_note}
+{story_note}
+
+SCRIPT RULES (critical):
+1. Every line will be spoken aloud by a TTS voice. Write for the ear.
+2. Split the script into SHORT lines — one sentence per line, max 15 words per line.
+3. NEVER start a line with: "In this video", "Welcome back", "Today we", "Here are", "Let me tell you".
+4. NO labels in the script (do NOT write "Hook:", "CTA:", "Main:", "Recap:").
+5. Hook must be first. CTA (if enabled) must be last. Recap (if enabled) must be second-to-last.
+6. Count words: total script must be {min_words}–{max_words} words. Expand main body if under. Trim if over.
+
+SCENE RULES:
+- Generate exactly one scene per script line (minimum 5, maximum 12 scenes total).
+- Each scene is a stock-video search phrase: specific, visual, 4-8 words.
+  Good: "scientist examining glowing DNA strand under microscope"
+  Bad: "technology innovation"
+- Scenes must visually match what is being SAID on that line.
+
+HASHTAG RULES:
+- 10–15 hashtags, all lowercase with #
+- Must include #shorts
+- Mix broad (#science) and specific (#spacediscovery) tags
+
+OUTPUT — return ONLY this JSON structure:
+{{
+  "topic": "string — the video topic, max 80 chars",
+  "title": "string — YouTube title, max 60 chars, curiosity-driven, includes key subject",
+  "hook": "string — the first line of the script (copied from script line 1)",
+  "description": "string — 2-3 SEO sentences, factually accurate",
+  "hashtags": ["#shorts", "..."],
+  "script": "string — ALL lines separated by newlines, one sentence per line, total {min_words}–{max_words} words",
+  "scenes": ["scene for line 1", "scene for line 2", "..."],
+  "search_queries": ["stock video query 1", "stock video query 2", "..."]
+}}
+
+The "scenes" and "search_queries" arrays MUST have the SAME number of items as there are lines in "script".
+FINAL CHECK: count the words in "script". It MUST be {min_words}–{max_words} words total."""
 
 
-def _sanitize_output(payload: dict[str, Any], target_duration: int, gemini_api_key: str = "") -> GeneratedContent:
-    topic = _clean_text(str(payload.get("topic", "")))
-    if not topic:
-        raise ValueError("Topic is missing or empty.")
-
-    title = _clean_text(str(payload.get("title", "")))
-    if not title:
-        raise ValueError("Title is missing or empty.")
-    title = title[:60]
-
-    description = _clean_text(str(payload.get("description", "")))
-    if not description:
-        raise ValueError("Description is missing or empty.")
-
-    raw_script = str(payload.get("script", ""))
-    lines = _split_script_lines(raw_script)
-    lines = [line for line in lines if line.strip()]
-    if not lines:
-        raise ValueError("Script is empty after cleaning.")
-
-    full_text = " ".join(lines)
-    word_count = len(full_text.split())
+# ─────────────────────────────────────────────────────────────────────────────
+# Validate + normalise one AI response
+# ─────────────────────────────────────────────────────────────────────────────
+def _normalise_output(payload: dict[str, Any], target_duration: int) -> GeneratedContent:
+    topic = _clean(payload.get("topic", ""))
+    title = _clean(payload.get("title", ""))[:100]
+    description = _clean(payload.get("description", ""))
+    raw_script = _clean(payload.get("script", ""))
     min_words, max_words = _word_bounds(target_duration)
-    if word_count < min_words:
+
+    if not topic:
+        raise ValueError("Missing topic.")
+    if not title:
+        raise ValueError("Missing title.")
+    if not description:
+        raise ValueError("Missing description.")
+    if not raw_script:
+        raise ValueError("Missing script.")
+
+    lines = _split_into_lines(raw_script)
+    if len(lines) < 2:
+        raise ValueError(f"Script has only {len(lines)} line(s). Need at least 2.")
+
+    total_words = _count_words(raw_script)
+    if total_words < min_words:
         raise ValueError(
-            f"Script too short: {word_count} words, need {min_words}-{max_words} for {target_duration}s video."
+            f"Script too short: {total_words} words, need {min_words}–{max_words} for {target_duration}s."
         )
-
-    if word_count > max_words:
-        sentences = [s.strip() for s in full_text.split(".") if s.strip()]
-        trimmed = ""
-        for sentence in sentences:
-            candidate = (trimmed + ". " + sentence).strip()
-            if len(candidate.split()) <= max_words:
-                trimmed = candidate
-            else:
+    # Soft trim if over budget (keep first lines that fit)
+    if total_words > max_words + 20:
+        trimmed: list[str] = []
+        word_count = 0
+        for line in lines:
+            lw = _count_words(line)
+            if word_count + lw > max_words and len(trimmed) >= 3:
                 break
-        if trimmed:
-            full_text = trimmed.rstrip(".") + "."
-        lines = [full_text]
+            trimmed.append(line)
+            word_count += lw
+        lines = trimmed
 
-    script = full_text
+    raw_scenes = payload.get("scenes", [])
+    raw_queries = payload.get("search_queries", [])
+    raw_hashtags = payload.get("hashtags", [])
 
-    raw_hashtags = payload.get("hashtags")
-    if not isinstance(raw_hashtags, list):
-        raise ValueError("Hashtags must be a list of strings.")
-    hashtags = _clean_hashtags([str(item) for item in raw_hashtags])
+    scenes = [_clean(x) for x in raw_scenes if _clean(x)]
+    search_queries = [_clean(x) for x in raw_queries if _clean(x)]
+    hashtags = _clean_hashtags([_clean(x) for x in raw_hashtags])
+
+    if len(scenes) < 3:
+        raise ValueError(f"Too few scenes: {len(scenes)}, need at least 3.")
     if not hashtags:
-        raise ValueError("Hashtags list cannot be empty.")
+        raise ValueError("No hashtags returned.")
 
-    raw_scenes = payload.get("scenes")
-    if not isinstance(raw_scenes, list):
-        raise ValueError("Scenes must be a list of strings.")
-    scenes = [_clean_text(str(item)) for item in raw_scenes if _clean_text(str(item))]
-    if len(scenes) < 5 or len(scenes) > 12:
-        raise ValueError("Scenes must contain 5 to 12 non-empty items.")
-
-    raw_queries = payload.get("search_queries")
-    if not isinstance(raw_queries, list):
-        raise ValueError("Search queries must be a list of strings.")
-    search_queries = [_clean_text(str(item)) for item in raw_queries if _clean_text(str(item))]
-    if len(search_queries) != len(scenes):
-        raise ValueError("Search queries must contain exactly one item per scene.")
+    hook = _clean(payload.get("hook", "")) or lines[0]
 
     return GeneratedContent(
         topic=topic,
         title=title,
-        hook=lines[0] if lines else "",
+        hook=hook,
         description=description,
         hashtags=hashtags,
-        script=script,
-        scenes=scenes,
-        search_queries=search_queries,
+        script="\n".join(lines),
+        scenes=scenes[:max(5, len(lines))],
+        search_queries=search_queries[:max(5, len(lines))],
     )
 
 
-def _call_openai(prompt: str, api_key: str, model: str) -> str:
-    response = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={"model": model, "input": prompt},
-        timeout=75,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("output_text"):
-        return str(payload["output_text"]).strip()
-    parts: list[str] = []
-    for item in payload.get("output", []):
-        for content in item.get("content", []):
-            text = content.get("text")
-            if text:
-                parts.append(str(text))
-    result = "\n".join(parts).strip()
-    if not result:
-        raise ValueError("OpenAI response did not contain text output.")
+# ─────────────────────────────────────────────────────────────────────────────
+# Model call helpers
+# ─────────────────────────────────────────────────────────────────────────────
+def _normalize_model_name(model: str) -> str:
+    name = " ".join(str(model).split()).strip()
+    return name[len("models/"):] if name.startswith("models/") else name
+
+
+def _model_candidates(primary: str) -> list[str]:
+    primary = _normalize_model_name(primary) or "gemini-2.0-flash"
+    fallbacks_env = os.getenv("GEMINI_FALLBACK_MODELS", "")
+    fallbacks = [_normalize_model_name(m) for m in fallbacks_env.split(",") if m.strip()]
+    seen: set[str] = set()
+    result: list[str] = []
+    for m in [primary, *fallbacks]:
+        if m and m not in seen:
+            seen.add(m)
+            result.append(m)
     return result
 
 
-def _normalize_gemini_model_name(model: str) -> str:
-    model_name = " ".join(str(model).split()).strip()
-    if model_name.startswith("models/"):
-        model_name = model_name[len("models/"):]
-    return model_name
-
-
-def _gemini_model_candidates(primary_model: str) -> list[str]:
-    primary = _normalize_gemini_model_name(primary_model) or GEMINI_FALLBACK_MODELS_DEFAULT[0]
-    env_fallbacks_raw = os.getenv("GEMINI_FALLBACK_MODELS", "")
-    env_fallbacks = [
-        _normalize_gemini_model_name(item)
-        for item in env_fallbacks_raw.split(",")
-        if _normalize_gemini_model_name(item)
-    ]
-    out: list[str] = [
-        primary,
-        *env_fallbacks,
-        *GEMINI_FALLBACK_MODELS_DEFAULT,
-    ]
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for item in out:
-        key = item.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
-    return deduped
-
-
-def _fetch_available_gemini_models(api_key: str) -> set[str] | None:
-    now = time.time()
-    cached_at = float(_GEMINI_AVAILABLE_MODELS_CACHE.get("fetched_at", 0.0))
-    cached_models = _GEMINI_AVAILABLE_MODELS_CACHE.get("models")
-    if cached_models and now - cached_at < GEMINI_MODEL_LIST_CACHE_SECONDS:
-        return cached_models if isinstance(cached_models, set) else None
-
-    try:
-        response = requests.get(
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            params={"key": api_key},
-            timeout=GEMINI_MODEL_LIST_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        models = set()
-        for item in payload.get("models", []):
-            name = _normalize_gemini_model_name(item.get("name", ""))
-            if name:
-                models.add(name)
-        if models:
-            _GEMINI_AVAILABLE_MODELS_CACHE["fetched_at"] = now
-            _GEMINI_AVAILABLE_MODELS_CACHE["models"] = models
-            return models
-    except Exception as exc:
-        LOGGER.warning("Failed to fetch Gemini models list: %s", str(exc)[:120])
-
-    _GEMINI_AVAILABLE_MODELS_CACHE["fetched_at"] = now
-    _GEMINI_AVAILABLE_MODELS_CACHE["models"] = None
-    return None
-
-
-from .gemini_utils import execute_with_gemini_fallback
-
-
-def _call_gemini_single_key(prompt: str, api_key: str, model: str) -> str:
-    errors: list[str] = []
-    model_candidates = _gemini_model_candidates(model)
-    available_models = _fetch_available_gemini_models(api_key)
-    if available_models:
-        primary = model_candidates[0] if model_candidates else ""
-        filtered = [item for item in model_candidates[1:] if item in available_models]
-        if primary:
-            model_candidates = [primary, *filtered]
-
-    for index, model_name in enumerate(model_candidates):
-        for attempt in range(1, GEMINI_MAX_RETRIES_PER_MODEL + 1):
-            try:
-                response = requests.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
-                    params={"key": api_key},
-                    headers={"Content-Type": "application/json"},
-                    json={"contents": [{"parts": [{"text": prompt}]}]},
-                    timeout=GEMINI_REQUEST_TIMEOUT_SECONDS,
-                )
-                response.raise_for_status()
-                payload = response.json()
-                parts: list[str] = []
-                for candidate in payload.get("candidates", []):
-                    content = candidate.get("content", {})
-                    for part in content.get("parts", []):
-                        text = part.get("text")
-                        if text:
-                            parts.append(str(text))
-                result = "\n".join(parts).strip()
-                if result:
-                    if index > 0:
-                        LOGGER.info("Gemini fallback model in use: %s", model_name)
-                    return result
-                errors.append(f"{model_name}: empty response")
-                break
-            except requests.exceptions.HTTPError as hexc:
-                status_code = hexc.response.status_code
-                response_text = (hexc.response.text or "")[:160]
-                if status_code in GEMINI_RETRY_STATUS_CODES and attempt < GEMINI_MAX_RETRIES_PER_MODEL:
-                    delay = GEMINI_RETRY_DELAYS_SECONDS[min(attempt - 1, len(GEMINI_RETRY_DELAYS_SECONDS) - 1)]
-                    LOGGER.warning(
-                        "Gemini %s HTTP %s on attempt %s/%s. Retrying in %ss.",
-                        model_name,
-                        status_code,
-                        attempt,
-                        GEMINI_MAX_RETRIES_PER_MODEL,
-                        delay,
-                    )
-                    time.sleep(delay)
-                    continue
-                errors.append(f"{model_name}: HTTP {status_code}: {response_text or str(hexc)[:80]}")
-                break
-            except Exception as exc:
-                errors.append(f"{model_name}: {str(exc)[:100]}")
-                break
-    raise RuntimeError("Gemini request failed for all models: " + " | ".join(errors))
-
-
 def _call_gemini(prompt: str, api_key: str, model: str) -> str:
-    def operation(key: str) -> str:
-        return _call_gemini_single_key(prompt, key, model)
-    return execute_with_gemini_fallback(operation)
+    from .gemini_utils import execute_with_gemini_fallback
+
+    def _single_call(key: str) -> str:
+        errors: list[str] = []
+        for model_name in _model_candidates(model):
+            for attempt in range(1, GEMINI_MAX_RETRIES_PER_MODEL + 1):
+                try:
+                    resp = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
+                        params={"key": key},
+                        headers={"Content-Type": "application/json"},
+                        json={
+                            "contents": [{"parts": [{"text": prompt}]}],
+                            "generationConfig": {
+                                "temperature": 0.4,
+                                "maxOutputTokens": 1200,
+                            },
+                        },
+                        timeout=GEMINI_REQUEST_TIMEOUT_SECONDS,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    parts: list[str] = []
+                    for cand in data.get("candidates", []):
+                        for part in cand.get("content", {}).get("parts", []):
+                            if part.get("text"):
+                                parts.append(str(part["text"]))
+                    text = "\n".join(parts).strip()
+                    if text:
+                        return text
+                    errors.append(f"{model_name}: empty response")
+                    break
+                except requests.exceptions.HTTPError as e:
+                    status = e.response.status_code
+                    if status in GEMINI_RETRY_STATUS_CODES and attempt < GEMINI_MAX_RETRIES_PER_MODEL:
+                        delay = GEMINI_RETRY_DELAYS_SECONDS[min(attempt - 1, 2)]
+                        LOGGER.warning("Gemini %s HTTP %s, retrying in %ss", model_name, status, delay)
+                        time.sleep(delay)
+                        continue
+                    errors.append(f"{model_name}: HTTP {status}")
+                    break
+                except Exception as exc:
+                    errors.append(f"{model_name}: {str(exc)[:80]}")
+                    break
+        raise RuntimeError("Gemini failed: " + " | ".join(errors))
+
+    return execute_with_gemini_fallback(_single_call)
+
+
+def _call_openai(prompt: str, api_key: str, model: str) -> str:
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.4,
+            "max_tokens": 1200,
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    if not text:
+        raise ValueError("OpenAI returned empty response.")
+    return text
 
 
 def _call_anthropic(prompt: str, api_key: str, model: str) -> str:
-    response = requests.post(
+    resp = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
             "x-api-key": api_key,
@@ -352,47 +385,66 @@ def _call_anthropic(prompt: str, api_key: str, model: str) -> str:
         },
         json={
             "model": model,
-            "max_tokens": 1600,
+            "max_tokens": 1200,
+            "temperature": 0.4,
             "messages": [{"role": "user", "content": prompt}],
         },
-        timeout=75,
+        timeout=60,
     )
-    response.raise_for_status()
-    payload = response.json()
-    parts = [
-        str(block.get("text", "")).strip()
-        for block in payload.get("content", [])
-        if block.get("type") == "text"
-    ]
-    result = "\n".join(part for part in parts if part).strip()
-    if not result:
-        raise ValueError("Anthropic response did not contain text output.")
-    return result
+    resp.raise_for_status()
+    data = resp.json()
+    parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+    text = "\n".join(p for p in parts if p).strip()
+    if not text:
+        raise ValueError("Anthropic returned empty response.")
+    return text
 
 
-def _call_jules(prompt: str, api_url: str, api_key: str) -> str | None:
-    try:
-        response = requests.post(
-            api_url,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={"prompt": prompt},
-            timeout=75,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        result = payload.get("output_text") or payload.get("response") or payload.get("text")
-        if result:
-            return str(result).strip()
-    except Exception as exc:
-        LOGGER.warning("Jules API failed: %s", exc)
-    return None
+def _call_model(prompt: str, provider: str, gemini_api_key: str, gemini_model: str,
+                openai_api_key: str, openai_model: str,
+                anthropic_api_key: str, anthropic_model: str) -> str:
+    # Jules routing (highest priority)
+    jules_url = os.getenv("JULES_API_URL")
+    jules_key = os.getenv("JULES_API_KEY")
+    if jules_url and jules_key:
+        try:
+            resp = requests.post(
+                jules_url,
+                headers={"Authorization": f"Bearer {jules_key}", "Content-Type": "application/json"},
+                json={"prompt": prompt},
+                timeout=60,
+            )
+            if resp.ok:
+                data = resp.json()
+                out = data.get("output_text") or data.get("response") or data.get("text")
+                if out:
+                    return str(out).strip()
+        except Exception as e:
+            LOGGER.warning("Jules API failed: %s", e)
+
+    norm = provider.strip().lower()
+    if norm in {"gemini", "google"}:
+        if not gemini_api_key:
+            raise ValueError("GEMINI_API_KEY is missing.")
+        return _call_gemini(prompt, gemini_api_key, gemini_model)
+    if norm == "openai":
+        if not openai_api_key:
+            raise ValueError("OPENAI_API_KEY is missing.")
+        return _call_openai(prompt, openai_api_key, openai_model)
+    if norm in {"anthropic", "claude"}:
+        if not anthropic_api_key:
+            raise ValueError("ANTHROPIC_API_KEY is missing.")
+        return _call_anthropic(prompt, anthropic_api_key, anthropic_model)
+    raise ValueError(f"Unsupported provider: {provider}")
 
 
-def _call_model(
-    prompt: str,
+# ─────────────────────────────────────────────────────────────────────────────
+# Retry wrapper
+# ─────────────────────────────────────────────────────────────────────────────
+def _generate_with_retry(
+    model_prompt: str,
+    topic: str,
+    target_duration: int,
     provider: str,
     gemini_api_key: str,
     gemini_model: str,
@@ -400,39 +452,76 @@ def _call_model(
     openai_model: str,
     anthropic_api_key: str,
     anthropic_model: str,
-) -> str:
-    jules_url = os.getenv("JULES_API_URL")
-    jules_key = os.getenv("JULES_API_KEY")
-    if jules_url and jules_key:
-        jules_result = _call_jules(prompt, jules_url, jules_key)
-        if jules_result:
-            return jules_result
+) -> GeneratedContent:
+    MAX_RETRIES = 3
+    last_error: Exception | None = None
 
-    normalized = provider.strip().lower()
-    if normalized in {"gemini", "google"}:
-        if not gemini_api_key:
-            raise ValueError("GEMINI_API_KEY is missing.")
-        return _call_gemini(prompt, gemini_api_key, gemini_model)
-    if normalized == "openai":
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY is missing.")
-        return _call_openai(prompt, openai_api_key, openai_model)
-    if normalized in {"anthropic", "claude"}:
-        if not anthropic_api_key:
-            raise ValueError("ANTHROPIC_API_KEY is missing.")
-        return _call_anthropic(prompt, anthropic_api_key, anthropic_model)
-    raise ValueError(f"Unsupported provider: {provider}")
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            raw_text = _call_model(
+                model_prompt, provider, gemini_api_key, gemini_model,
+                openai_api_key, openai_model, anthropic_api_key, anthropic_model,
+            )
+            payload = _extract_json(raw_text)
+            return _normalise_output(payload, target_duration)
+        except Exception as exc:
+            last_error = exc
+            LOGGER.warning("Content gen attempt %s/%s failed: %s", attempt, MAX_RETRIES, str(exc)[:120])
+            if attempt < MAX_RETRIES:
+                time.sleep(attempt * 1.5)
+
+    raise RuntimeError(f"Content generation failed after {MAX_RETRIES} attempts: {last_error}")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Deterministic fallback
+# ─────────────────────────────────────────────────────────────────────────────
+def _fallback(topic: str, narration_brief: str, target_duration: int) -> GeneratedContent:
+    safe_topic = _clean(topic) or "This Topic"
+    brief_sentence = (_clean(narration_brief).split(".")[0] or safe_topic) + "."
+    lines = [
+        f"Did you know this about {safe_topic}?",
+        brief_sentence,
+        "Most people completely overlook this.",
+        "Once you see it, everything changes.",
+        "Follow for more fast facts like this.",
+    ]
+    return GeneratedContent(
+        topic=safe_topic,
+        title=f"{safe_topic} — What You Need to Know"[:60],
+        hook=lines[0],
+        description=f"Quick breakdown of {safe_topic} in under a minute.",
+        hashtags=["#shorts", "#facts", "#viral", "#youtube"],
+        script="\n".join(lines),
+        scenes=[
+            "person looking amazed at smartphone screen",
+            "technology concept abstract background",
+            "person thinking with curious expression",
+            "mind blown reaction close up",
+            "person tapping subscribe button on phone",
+        ],
+        search_queries=[
+            "amazed person smartphone screen",
+            "technology abstract background",
+            "person curious expression",
+            "mind blown reaction",
+            "subscribe button phone",
+        ],
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Public entry point (called from main.py and azure_job_runner.py)
+# ─────────────────────────────────────────────────────────────────────────────
 def generate_content(
     topic: str,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-3.1-flash-preview",
+    gemini_model: str = "gemini-2.0-flash",
     openai_api_key: str = "",
-    openai_model: str = "gpt-4.1-mini",
+    openai_model: str = "gpt-4o-mini",
     anthropic_api_key: str = "",
-    anthropic_model: str = "claude-3.5-sonnet",
+    anthropic_model: str = "claude-3-5-haiku-latest",
     target_duration: int = 40,
     content_type: str = "tech",
     story_mode: bool = False,
@@ -440,76 +529,40 @@ def generate_content(
     recap_enabled: bool = False,
     cta_enabled: bool = False,
     last_prompt: str = "",
+    video_index: int = 1,
+    video_total: int = 1,
 ) -> GeneratedContent:
-    topic = _clean_text(topic)
+    topic = _clean(topic)
     if not topic:
         raise ValueError("Topic is required for content generation.")
-    normalized_provider = provider.strip().lower()
-    if normalized_provider in {"", "none", "template"}:
-        raise ValueError("AI provider is required; template/default content is disabled.")
 
-    min_words, max_words = _word_bounds(target_duration)
-    story_instruction = ""
-    if story_mode:
-        if current_part > 1:
-            story_instruction = (
-                f"\nThis is PART {current_part} of an ongoing story."
-                f"\nPrevious prompt context:\n{last_prompt}\n"
-                "\nContinue the narrative naturally."
-            )
-        else:
-            story_instruction = "\nThis is PART 1 of a new multi-part story series."
+    norm_provider = provider.strip().lower()
+    if norm_provider in {"", "none", "template"}:
+        raise ValueError("An AI provider is required. Set AI_PROVIDER in environment.")
 
-    prompt = dedent(
-        f"""
-        You are an expert YouTube Shorts content creator focused on virality, retention, and performance.
-        Create a vertical video script (under 60 seconds) that is highly engaging.
+    # The narration brief should come from the pipeline payload (already AI-generated).
+    # For local single-shot calls, we build a minimal brief from the topic.
+    narration_brief = topic
 
-        TOPIC: {topic}
-        {story_instruction}
-
-        --------------------------------
-        ABSOLUTE RULES - VIRAL OPTIMIZATION
-        --------------------------------
-        1. Ensure the first 3 seconds (Line 1) are a massive hook.
-        2. Keep the storytelling fast-paced with an unexpected twist or insight before the end.
-        3. CTA_RULE: if ctaEnabled is true, the LAST 1-2 lines MUST be a call-to-action.
-           RECAP_RULE: if recapEnabled is true, lines 2-3 from the end (before CTA) MUST briefly recap the key point.
-           IMPORTANT: CTA and recap count toward the total word budget.
-           Do NOT add them on top of the script; include them within the min/max word range.
-
-        --------------------------------
-        SCRIPT STRUCTURE ({min_words}-{max_words} total words, separated into natural sentence-level lines, NO line labels)
-        --------------------------------
-        Write natural narration lines with no labels/headings.
-        Keep line count between 5 and 12.
-        Total script word count must be between {min_words} and {max_words}.
-
-        --------------------------------
-        SCENE DESCRIPTIONS (for stock video search)
-        --------------------------------
-        Generate exactly one scene description per script line (minimum 5, maximum 12).
-
-        --------------------------------
-        OUTPUT FORMAT - strict JSON, no markdown, no commentary
-        --------------------------------
-        {{
-          "topic": "string",
-          "title": "string",
-          "hook": "string",
-          "description": "string",
-          "hashtags": ["#shorts", "..."],
-          "script": "newline-separated lines",
-          "scenes": ["<scene 1>", "...", "<scene N>"],
-          "search_queries": ["<query 1>", "...", "<query N>"]
-        }}
-        """
-    ).strip()
+    model_prompt = _build_content_prompt(
+        narration_brief=narration_brief,
+        topic=topic,
+        target_duration=target_duration,
+        index=video_index,
+        total=video_total,
+        story_mode=story_mode,
+        current_part=current_part,
+        recap_enabled=recap_enabled,
+        cta_enabled=cta_enabled,
+        last_prompt=last_prompt,
+    )
 
     try:
-        raw = _call_model(
-            prompt=prompt,
-            provider=normalized_provider,
+        return _generate_with_retry(
+            model_prompt=model_prompt,
+            topic=topic,
+            target_duration=target_duration,
+            provider=norm_provider,
             gemini_api_key=gemini_api_key,
             gemini_model=gemini_model,
             openai_api_key=openai_api_key,
@@ -517,15 +570,6 @@ def generate_content(
             anthropic_api_key=anthropic_api_key,
             anthropic_model=anthropic_model,
         )
-        payload = _extract_json_payload(raw)
-        if not isinstance(payload, dict):
-            raise ValueError("Model output was not a JSON object.")
-        quality_warnings = _validate_content_quality(payload)
-        if quality_warnings:
-            for warning in quality_warnings:
-                LOGGER.warning("Content quality issue: %s", warning)
-        return _sanitize_output(payload, target_duration=target_duration, gemini_api_key=gemini_api_key)
     except Exception as exc:
-        if normalized_provider in {"gemini", "google"}:
-            raise RuntimeError(f"Gemini content generation failed: {exc}") from exc
-        raise RuntimeError(f"AI content generation failed: {exc}") from exc
+        LOGGER.error("All content generation attempts failed. Using fallback. Error: %s", exc)
+        return _fallback(topic, narration_brief, target_duration)

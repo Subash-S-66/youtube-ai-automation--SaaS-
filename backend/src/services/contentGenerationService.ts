@@ -48,6 +48,11 @@ export interface ContentGenerationResult {
   preparedContent: PreparedContentItem[];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+const WORDS_PER_SECOND = 2.5;
+
 const clean = (value: unknown): string => String(value ?? '').trim();
 
 const clipHashtags = (tags: string[]): string[] => {
@@ -66,127 +71,217 @@ const clipHashtags = (tags: string[]): string[] => {
   return out;
 };
 
-const splitScriptLines = (script: string): string[] => {
-  return script
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+/** Split on sentence boundaries, preserving full sentences */
+const splitIntoLines = (script: string): string[] => {
+  const text = String(script || '').replace(/\s+/g, ' ').trim();
+  if (!text) return [];
+  // Split after .  !  ?  keeping the punctuation with the sentence
+  const raw = text.split(/(?<=[.!?])\s+/);
+  return raw.map(s => s.trim()).filter(Boolean);
 };
 
-const splitSentences = (text: string): string[] => {
-  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!normalized) return [];
-  return normalized
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-};
-
-const trimScriptToMaxWords = (script: string, maxWords: number): string => {
-  const sentences = splitSentences(script);
-  if (!sentences.length) return String(script || '').trim();
-
-  const selected: string[] = [];
-  let words = 0;
-  for (const sentence of sentences) {
-    const count = sentence.split(/\s+/).filter(Boolean).length;
-    if (words + count > maxWords) break;
-    selected.push(sentence);
-    words += count;
-  }
-
-  if (!selected.length) {
-    const clipped = String(script || '')
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, Math.max(1, maxWords))
-      .join(' ')
-      .trim();
-    return clipped.endsWith('.') || clipped.endsWith('!') || clipped.endsWith('?')
-      ? clipped
-      : `${clipped}.`;
-  }
-
-  return selected.join('\n').trim();
-};
-
-const WORDS_PER_SECOND = 2.5;
-
-const estimateLineDuration = (line: string): number => {
-  const words = String(line || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
+/** Estimate how long a line takes to speak at 2.5 wps */
+const estimateDuration = (line: string): number => {
+  const words = line.split(/\s+/).filter(Boolean).length;
   if (!words) return 1;
-  return Math.max(1, Number((words / WORDS_PER_SECOND).toFixed(2)));
+  return Math.max(0.5, words / WORDS_PER_SECOND);
 };
 
-const estimateScriptDuration = (lines: string[]): number => {
-  return Number(lines.reduce((sum, line) => sum + estimateLineDuration(line), 0).toFixed(2));
-};
-
-const buildLineCaptions = (
-  scriptLines: string[],
+/** Build per-line captions with real millisecond timestamps */
+const buildCaptions = (
+  lines: string[],
   targetDurationSeconds: number
 ): Array<{ startMs: number; endMs: number; text: string }> => {
-  const lines = scriptLines.filter(Boolean);
-  if (lines.length === 0) return [];
-  const totalMs = Math.max(15000, Math.min(60000, Math.floor(targetDurationSeconds * 1000)));
-  const totalWords = lines.reduce((sum, line) => sum + line.split(/\s+/).filter(Boolean).length, 0);
+  if (!lines.length) return [];
+  const totalMs = Math.max(10_000, Math.min(65_000, Math.floor(targetDurationSeconds * 1000)));
+  const weights = lines.map(l => estimateDuration(l));
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+
   let cursor = 0;
   return lines.map((line, idx) => {
-    const lineWords = line.split(/\s+/).filter(Boolean).length;
-    const lineFrac = lineWords / Math.max(1, totalWords);
-    const lineDurMs = Math.round(lineFrac * totalMs);
+    const fraction = weights[idx]! / Math.max(1, totalWeight);
+    const durMs = Math.round(fraction * totalMs);
     const startMs = cursor;
-    const endMs = idx === lines.length - 1 ? totalMs : cursor + lineDurMs;
+    const endMs = idx === lines.length - 1 ? totalMs : Math.min(totalMs, cursor + durMs);
     cursor = endMs;
     return { startMs, endMs, text: line };
   });
 };
 
+/** Build structured script objects from lines */
 const buildStructuredScript = (
-  scriptLines: string[],
-  _targetDurationSeconds: number
+  lines: string[]
 ): Array<{ text: string; duration?: number }> => {
-  const lines = scriptLines.filter(Boolean);
-  if (lines.length === 0) return [];
-  return lines.map((line) => ({ text: line, duration: estimateLineDuration(line) }));
+  return lines.map(line => ({ text: line, duration: estimateDuration(line) }));
 };
 
-const normalizePreparedItem = (raw: any, fallbackTopic: string, targetDurationSeconds: number): PreparedContentItem => {
+/** Extract the first JSON object from a model response */
+const extractFirstJsonObject = (value: string): any => {
+  const text = value.trim();
+  // Strip markdown fences
+  const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  const start = stripped.indexOf('{');
+  const end = stripped.lastIndexOf('}');
+  if (start === -1 || end <= start) {
+    throw new AppError('AI response did not contain a JSON object.', 502);
+  }
+  return JSON.parse(stripped.slice(start, end + 1));
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CORE CONTENT-GENERATION PROMPT
+// This is the most important function in the service.
+// It produces a single JSON object for one video.
+// ─────────────────────────────────────────────────────────────────────────────
+const buildContentPrompt = (
+  narrationBrief: string,
+  topic: string,
+  targetDurationSeconds: number,
+  index: number,
+  total: number,
+  storyMode: boolean,
+  currentPart: number,
+  recapEnabled: boolean,
+  ctaEnabled: boolean,
+  lastPrompt: string,
+): string => {
+  const targetDuration = Math.max(15, Math.min(60, targetDurationSeconds));
+  const minWords = Math.floor((targetDuration - 5) * WORDS_PER_SECOND);
+  const maxWords = Math.floor((targetDuration + 5) * WORDS_PER_SECOND);
+
+  // Tightly computed section budgets
+  const hookWords = Math.round(minWords * 0.18);                   // ~18% for hook
+  const ctaWords = ctaEnabled ? Math.round(minWords * 0.14) : 0;  // ~14% if CTA enabled
+  const recapWords = recapEnabled ? Math.round(minWords * 0.12) : 0;
+  const mainWords = minWords - hookWords - ctaWords - recapWords;  // rest for main body
+
+  const variationNote = total > 1
+    ? `This is video ${index} of ${total} in this batch. Use a DIFFERENT hook and angle from any previous video.`
+    : '';
+
+  const storyNote = storyMode
+    ? `STORY MODE Part ${currentPart}: ${currentPart > 1 && lastPrompt ? `Continue from: "${lastPrompt.slice(0, 120)}"` : 'Open the story arc.'} Frame as an ongoing series.`
+    : '';
+
+  return `You are an elite YouTube Shorts content engine. Return ONLY valid JSON — no markdown, no extra text.
+
+NARRATION BRIEF (this IS what the video is about — follow it exactly):
+"${narrationBrief}"
+
+TOPIC: ${topic}
+TARGET DURATION: ${targetDuration} seconds
+TOTAL WORD BUDGET: ${minWords}–${maxWords} words (the entire script must stay in this range)
+
+SECTION BREAKDOWN (every section's words add up to the total budget):
+• Hook (first line): ~${hookWords} words — strong curiosity/shock/question opening. MUST be the first sentence of script.
+• Main body: ~${mainWords} words — deliver the core insight. Plain, punchy, spoken sentences.
+${recapEnabled ? `• Recap (second-to-last): ~${recapWords} words — one sentence summarising the key takeaway.` : '• NO recap section.'}
+${ctaEnabled ? `• CTA (last line): ~${ctaWords} words — a direct action call (follow, subscribe, save, share, etc.).` : '• NO call-to-action. End with a strong closing statement or thought.'}
+
+${variationNote}
+${storyNote}
+
+SCRIPT RULES (critical):
+1. Every line of the script will be spoken aloud by a TTS voice. Write for the ear.
+2. Split the script into SHORT lines — one sentence per line, max 15 words per line.
+3. NEVER start a line with: "In this video", "Welcome back", "Today we", "Here are", "Let me tell you".
+4. NO labels in the script (don't write "Hook:", "CTA:", "Main:", "Recap:").
+5. The hook must come first. CTA (if enabled) must be last. Recap (if enabled) must be second-to-last.
+6. Count words: total script must be ${minWords}–${maxWords} words. If you're under, expand the main body. If over, trim it.
+
+SCENE RULES:
+- Generate exactly one scene per script line (minimum 5, maximum 12 scenes total).
+- Each scene is a stock-video search phrase: specific, visual, 4-8 words.
+  Good: "scientist examining glowing DNA strand under microscope"
+  Bad: "technology innovation"
+- Scenes must visually match what is being SAID on that line.
+
+HASHTAG RULES:
+- 10–15 hashtags, all lowercase with #
+- Must include #shorts
+- Mix broad (#science) and specific (#spacediscovery) tags
+
+OUTPUT — return exactly this JSON structure (no other keys):
+{
+  "topic": "string — the video topic, max 80 chars",
+  "title": "string — YouTube title, max 60 chars, curiosity-driven, includes key subject",
+  "hook": "string — the first line of the script (copied from script[0])",
+  "description": "string — 2-3 SEO sentences about the video, factually accurate",
+  "hashtags": ["#shorts", "..."],
+  "script": "string — ALL lines joined by newlines, one sentence per line, total ${minWords}–${maxWords} words",
+  "scenes": ["scene for line 1", "scene for line 2", "..."],
+  "search_queries": ["stock video query 1", "stock video query 2", "..."]
+}
+
+The "scenes" and "search_queries" arrays must have the SAME number of items as there are lines in "script".
+Double-check: count the words in "script". It MUST be ${minWords}–${maxWords} words.`;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Validate and normalise one AI-returned content item
+// ─────────────────────────────────────────────────────────────────────────────
+const normalizeContentItem = (
+  raw: any,
+  fallbackTopic: string,
+  targetDurationSeconds: number
+): PreparedContentItem => {
   const topic = clean(raw?.topic) || fallbackTopic;
   const title = clean(raw?.title).slice(0, 100);
   const description = clean(raw?.description);
   const rawScript = clean(raw?.script);
-  const minWords = Math.floor((targetDurationSeconds - 5) * 2.5);
-  const maxWords = Math.floor(Math.min(60, targetDurationSeconds + 5) * 2.5);
-  const cappedScript = trimScriptToMaxWords(rawScript, maxWords);
-  const scriptLines = splitScriptLines(cappedScript);
-  const minLines = 3;
-  if (!topic || !title || !description || scriptLines.length < minLines) {
-    throw new AppError('AI content generation returned invalid structure.', 502);
+  const minWords = Math.floor((targetDurationSeconds - 5) * WORDS_PER_SECOND);
+  const maxWords = Math.floor((targetDurationSeconds + 5) * WORDS_PER_SECOND);
+
+  if (!topic || !title || !description) {
+    throw new AppError('AI content missing required fields (topic/title/description).', 502);
   }
-  const wordCount = scriptLines.join(' ').split(/\s+/).filter(Boolean).length;
+
+  if (!rawScript) {
+    throw new AppError('AI content returned empty script.', 502);
+  }
+
+  const lines = splitIntoLines(rawScript).filter(l => l.length > 0);
+  if (lines.length < 2) {
+    throw new AppError(`Script has too few lines (${lines.length}). Expected at least 2.`, 502);
+  }
+
+  const wordCount = rawScript.split(/\s+/).filter(Boolean).length;
   if (wordCount < minWords) {
     throw new AppError(
-      `Script too short: ${wordCount} words for ${targetDurationSeconds}s target.`,
+      `Script too short: ${wordCount} words, need ${minWords}–${maxWords} for ${targetDurationSeconds}s.`,
       502
     );
   }
+  if (wordCount > maxWords + 20) {
+    // Soft over-budget — trim lines from the end until within budget
+    let trimmedLines = [...lines];
+    while (trimmedLines.join(' ').split(/\s+/).length > maxWords && trimmedLines.length > 2) {
+      trimmedLines.pop();
+    }
+    lines.splice(0, lines.length, ...trimmedLines);
+  }
 
-  const hook = clean(raw?.hook) || scriptLines[0] || '';
+  const hook = clean(raw?.hook) || lines[0] || '';
   const scenesRaw = Array.isArray(raw?.scenes) ? raw.scenes : [];
-  const searchQueriesRaw = Array.isArray(raw?.search_queries) ? raw.search_queries : (Array.isArray(raw?.searchQueries) ? raw.searchQueries : []);
+  const searchQueriesRaw = Array.isArray(raw?.search_queries)
+    ? raw.search_queries
+    : Array.isArray(raw?.searchQueries)
+      ? raw.searchQueries
+      : [];
   const hashtagsRaw = Array.isArray(raw?.hashtags) ? raw.hashtags : [];
 
-  const scenes = scenesRaw.map((x: any) => clean(x)).filter(Boolean).slice(0, 5);
-  const searchQueries = searchQueriesRaw.map((x: any) => clean(x)).filter(Boolean).slice(0, 5);
+  const scenes = scenesRaw.map((x: any) => clean(x)).filter(Boolean);
+  const searchQueries = searchQueriesRaw.map((x: any) => clean(x)).filter(Boolean);
   const hashtags = clipHashtags(hashtagsRaw.map((x: any) => clean(x)));
 
-  if (scenes.length < 5 || searchQueries.length < 5 || hashtags.length === 0) {
-    throw new AppError('AI content generation returned incomplete scenes/search/hashtags.', 502);
+  if (scenes.length < 3) {
+    throw new AppError(`Scenes too few (${scenes.length}), need at least 3.`, 502);
   }
+  if (hashtags.length === 0) {
+    throw new AppError('AI returned no hashtags.', 502);
+  }
+
+  const finalScript = lines.join('\n');
 
   return {
     topic,
@@ -194,231 +289,137 @@ const normalizePreparedItem = (raw: any, fallbackTopic: string, targetDurationSe
     hook,
     description,
     hashtags,
-    script: scriptLines.join('\n'),
-    captions: buildLineCaptions(scriptLines, targetDurationSeconds),
-    scenes,
-    searchQueries,
+    script: finalScript,
+    captions: buildCaptions(lines, targetDurationSeconds),
+    scenes: scenes.slice(0, Math.max(5, lines.length)),
+    searchQueries: searchQueries.slice(0, Math.max(5, lines.length)),
   };
 };
 
-const buildStructuredPrompt = (
-  generatedPrompt: string,
-  topic: string,
-  durationSeconds: number,
-  index: number,
-  total: number,
-  storyMode: boolean,
-  currentPart?: number,
-  recapEnabled?: boolean,
-  lastPrompt?: string,
-  ctaEnabled?: boolean,
-  templateConfig?: { fontStyle?: string; subtitleColor?: string }
-): string => {
-  const partNote =
-    total > 1
-      ? `This is video ${index} of ${total} for the same pipeline job. Keep variation high and avoid duplicate hooks.`
-      : '';
-  const storyNote = storyMode
-    ? `Story mode is enabled. Current part: ${currentPart || 1}. Recap enabled: ${!!recapEnabled}. Previous prompt context: ${clean(lastPrompt)}`
-    : '';
-  const ctaNote = ctaEnabled
-    ? `CTA: Include a 1-2 sentence call-to-action at the END of the script. CTA counts toward word budget.`
-    : `CTA: Do NOT include a call-to-action.`;
-  const recapNote = recapEnabled
-    ? `RECAP: Include a 1 sentence recap of the main point BEFORE the CTA. Recap counts toward word budget.`
-    : `RECAP: Do NOT include a recap section.`;
-  const minWords = Math.floor((durationSeconds - 5) * 2.5);
-  const maxWords = Math.floor(Math.min(60, durationSeconds + 5) * 2.5);
-  return `
-Create a YouTube Shorts script for the topic below.
-
-Topic / Prompt: ${generatedPrompt}
-Target duration: ${durationSeconds} seconds
-Word count: ${minWords}-${maxWords} words TOTAL (including CTA and recap if present)
-
-${ctaNote}
-${recapNote}
-${storyNote}
-${partNote}
-
-RULES:
-- The script must be ${minWords}-${maxWords} words. Count every word.
-- Write in clear, punchy sentences. No filler.
-- First sentence must be a strong hook (curiosity/surprise/question).
-- Use natural line breaks between sentences.
-- Do NOT add section labels like "Hook:", "CTA:", "Main:".
-- Return ONLY JSON matching this exact schema:
-{
-  "topic": "string",
-  "title": "string (max 60 chars)",
-  "hook": "string (first sentence)",
-  "description": "string (2-3 SEO sentences)",
-  "hashtags": ["#shorts", "..."],
-  "script": "full script as newline-separated lines",
-  "scenes": ["5 stock video search phrases"],
-  "search_queries": ["5 stock video search queries"]
-}
-`.trim();
-};
-
-const extractFirstJsonObject = (value: string): any => {
-  const text = value.trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end <= start) {
-    throw new AppError('AI response did not contain JSON content.', 502);
-  }
-  return JSON.parse(text.slice(start, end + 1));
-};
-
-const generateStructuredContentWithAI = async (prompt: string): Promise<any> => {
-  const aiResult = await generateFromAI(prompt);
-  const output = clean(aiResult.text);
-  if (!output) {
-    throw new AppError('Empty response from content generation model.', 502);
-  }
-  return extractFirstJsonObject(output);
-};
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Retry wrapper
+// ─────────────────────────────────────────────────────────────────────────────
 const generateWithRetry = async (
   modelPrompt: string,
   topic: string,
   targetDurationSeconds: number
 ): Promise<PreparedContentItem> => {
   const MAX_RETRIES = 3;
-  const minWords = Math.floor((targetDurationSeconds - 5) * 2.5);
-  const maxWords = Math.floor(Math.min(60, targetDurationSeconds + 5) * 2.5);
   let lastError: unknown = null;
-  for (let i = 0; i < MAX_RETRIES; i += 1) {
+
+  for (let i = 0; i < MAX_RETRIES; i++) {
     try {
-      const raw = await generateStructuredContentWithAI(modelPrompt);
-      const result = normalizePreparedItem(raw, topic, targetDurationSeconds);
-      const words = result.script.split(/\s+/).filter(Boolean).length;
-      if (words < minWords) {
-        throw new Error(`Script too short: ${words} < ${minWords}`);
-      }
-      if (words > maxWords) {
-        throw new Error(`Script too long: ${words} > ${maxWords}`);
-      }
-      return result;
+      const aiResult = await generateFromAI(modelPrompt);
+      const output = clean(aiResult.text);
+      if (!output) throw new AppError('Empty response from AI.', 502);
+      const raw = extractFirstJsonObject(output);
+      return normalizeContentItem(raw, topic, targetDurationSeconds);
     } catch (err) {
       lastError = err;
-      if (i === MAX_RETRIES - 1) {
-        throw err;
+      if (i < MAX_RETRIES - 1) {
+        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
       }
     }
   }
   throw lastError instanceof Error ? lastError : new Error('Content generation retries exhausted.');
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Deterministic fallback (when AI fails completely)
+// ─────────────────────────────────────────────────────────────────────────────
 const deterministicFallback = (
   topic: string,
-  generatedPrompt: string,
-  index: number
+  narrationBrief: string,
+  targetDurationSeconds: number
 ): PreparedContentItem => {
-  const safeTopic = clean(topic) || 'Untitled Topic';
-  const safePrompt = clean(generatedPrompt) || safeTopic;
-  const title = `${safeTopic} Update`.slice(0, 60);
+  const safeTopic = clean(topic) || 'This Topic';
+  const shortBrief = narrationBrief.slice(0, 200);
   const lines = [
-    `What if this changes everything about ${safeTopic}?`,
-    `Here is the setup: ${safePrompt.slice(0, 120)}.`,
-    `Most people miss this key detail when they discuss ${safeTopic}.`,
-    `The twist is that one small decision changes the outcome fast.`,
-    `Follow for the next short on ${safeTopic}.`,
+    `Did you know this about ${safeTopic}?`,
+    `${shortBrief.split('.')[0] || safeTopic}.`,
+    `Most people overlook this key detail.`,
+    `It changes everything once you see it.`,
+    `Follow for more fast facts like this.`,
   ];
   return {
     topic: safeTopic,
-    title,
-    hook: lines[0] || '',
-    description: `Quick breakdown of ${safeTopic}.`,
-    hashtags: ['#shorts', '#viral', '#youtube'],
+    title: `${safeTopic} — What You Need to Know`.slice(0, 60),
+    hook: lines[0]!,
+    description: `Quick breakdown of ${safeTopic} in under a minute.`,
+    hashtags: ['#shorts', '#facts', '#viral', '#youtube'],
     script: lines.join('\n'),
-    captions: buildLineCaptions(lines, 40),
-    scenes: ['opening scene', 'context scene', 'detail scene', 'twist scene', 'cta scene'],
-    searchQueries: ['intro', 'context', 'detail', 'twist', 'call to action'],
+    captions: buildCaptions(lines, targetDurationSeconds),
+    scenes: [
+      'person looking surprised at smartphone screen',
+      'technology concept abstract background',
+      'close-up of person thinking',
+      'modern office technology setup',
+      'person tapping subscribe button on phone',
+    ],
+    searchQueries: [
+      'surprised person technology',
+      'technology abstract background',
+      'person thinking close up',
+      'modern office technology',
+      'phone subscribe button',
+    ],
   };
 };
 
-const isGenericTopic = (topic: string): boolean => {
-  const value = clean(topic).toLowerCase();
-  return ['tech', 'technology', 'science', 'ai', 'business', 'news'].includes(value);
-};
-
-const refineGenericTopic = async (topic: string): Promise<string> => {
-  const baseTopic = clean(topic);
-  if (!isGenericTopic(baseTopic)) return baseTopic;
-  const prompt = `
-Return exactly 10 latest specific YouTube Shorts topic ideas for "${baseTopic}".
-Rules:
-- One topic per line
-- No numbering
-- No intro/outro text
-- Keep each line under 12 words
-`.trim();
-  try {
-    const result = await generateFromAI(prompt);
-    const lines = String(result.text || '')
-      .split('\n')
-      .map((x) => x.trim().replace(/^[-*0-9.)\s]+/, ''))
-      .filter(Boolean);
-    return clean(lines[0] || baseTopic);
-  } catch {
-    return baseTopic;
-  }
-};
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────────────
 export const generateContent = async (input: ContentGenerationInput): Promise<ContentGenerationResult> => {
-  const baseTopic = extractTopicValue(input.topic);
-  const topic = await refineGenericTopic(baseTopic);
+  const topic = extractTopicValue(input.topic);
   if (!topic) {
     throw new AppError('Topic is required for content generation.', 400);
   }
 
   const count = Math.max(1, Number(input.videoCount || 1));
   const targetDuration = Math.max(15, Math.min(60, Number(input.targetDuration || input.duration || 40)));
-  const generatedPrompt = clean(input.prompt);
-  if (!generatedPrompt) {
-    throw new AppError('A standardized prompt is required before content generation.', 400);
+  const narrationBrief = clean(input.prompt);
+
+  if (!narrationBrief) {
+    throw new AppError('A narration brief is required before content generation.', 400);
   }
 
   const preparedContent: PreparedContentItem[] = [];
 
-  for (let i = 1; i <= count; i += 1) {
-    const modelPrompt = buildStructuredPrompt(
-      generatedPrompt,
+  for (let i = 1; i <= count; i++) {
+    const modelPrompt = buildContentPrompt(
+      narrationBrief,
       topic,
       targetDuration,
       i,
       count,
       !!input.storyMode,
-      input.currentPart,
-      input.recapEnabled,
-      input.lastPrompt,
-      input.ctaEnabled,
-      input.templateConfig
+      input.currentPart || 1,
+      !!input.recapEnabled,
+      !!input.ctaEnabled,
+      input.lastPrompt || ''
     );
 
     try {
       preparedContent.push(await generateWithRetry(modelPrompt, topic, targetDuration));
     } catch (error) {
-      // deterministic fallback keeps the pipeline executable when model response is malformed
-      preparedContent.push(deterministicFallback(topic, generatedPrompt, i));
+      console.error(`[ContentGen] Video ${i}/${count} failed, using fallback:`, error);
+      preparedContent.push(deterministicFallback(topic, narrationBrief, targetDuration));
     }
   }
 
-  const first = preparedContent[0];
+  const first = preparedContent[0]!;
 
   return {
-    prompt: generatedPrompt,
-    script: preparedContent.map((item) =>
-      buildStructuredScript(splitScriptLines(item.script), targetDuration)
+    prompt: narrationBrief,
+    script: preparedContent.map(item =>
+      buildStructuredScript(splitIntoLines(item.script))
     ),
-    captions: preparedContent.map((item) => item.captions),
-    title: first?.title || '',
-    description: first?.description || '',
-    hashtags: first?.hashtags || [],
-    scenes: preparedContent.map((item) => item.scenes),
-    metadata: preparedContent.map((item) => ({
+    captions: preparedContent.map(item => item.captions),
+    title: first.title,
+    description: first.description,
+    hashtags: first.hashtags,
+    scenes: preparedContent.map(item => item.scenes),
+    metadata: preparedContent.map(item => ({
       title: item.title,
       description: item.description,
       hashtags: item.hashtags,

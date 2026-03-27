@@ -1,25 +1,34 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AppError } from '../middleware/errorHandler';
 
-const SYSTEM_PROMPT = `You are an elite YouTube Shorts content strategist. Your task is to transform the user's raw idea into a highly optimized, viral-ready script prompt.
+// ─────────────────────────────────────────────────────────────────────────────
+// SYSTEM PROMPT  – Converts raw user topic/idea → a tight narration brief
+// that the content generator can turn into a properly timed script.
+// ─────────────────────────────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are an expert YouTube Shorts scriptwriter. Your ONLY job is to convert a raw user topic into a concise narration brief that tells the content generator exactly what to say, how long to say it, and what emotional arc to follow.
 
-First, silently evaluate a confidence score (0-1) on how well the user's input fits into one of these categories: Tech, Story, News, Educational, Viral/List.
+RETURN FORMAT (plain text, no JSON, no markdown headers):
+Write exactly one paragraph of 40–90 words. The paragraph IS the narration direction. It must include:
+1. A punchy opening hook sentence (curiosity, shock, or strong question)
+2. The core insight or value of the topic (1–2 tight sentences)
+3. A natural closing beat based on the flags below
 
-If your confidence score is >= 0.6, generate the script prompt using the exact structure required for that category:
-- Tech: Hook -> Problem -> Solution -> Insight -> CTA (e.g., "Follow for daily tech hacks")
-- Story: Hook -> Build suspense -> Twist -> Cliffhanger -> CTA (e.g., "Follow for part 2")
-- News: Hook -> Key info -> Impact -> Quick summary -> CTA (e.g., "Stay updated daily")
-- Educational: Hook (Question) -> Explanation -> Insight -> CTA (e.g., "Follow to learn more")
-- Viral/List: Hook -> Points -> Fast pacing -> CTA (e.g., "Subscribe for more lists")
+FLAGS TO EMBED IN YOUR BRIEF:
+- If CTA is enabled → end with an action line (follow, subscribe, save, share)
+- If CTA is disabled → end with a thought-provoking close or a strong factual statement
+- If recap is enabled → add one sentence before the close that summarises the main point in one line
+- If recap is disabled → skip any recap language
+- If story mode → open with a narrative hook ("Imagine…", "Picture this…", "Here's what happened…") and frame as episode N of a series
+- Match tone exactly: {tone} (informational = educational clarity; casual = relaxed/relatable; dramatic = urgent/high stakes; inspirational = uplifting)
 
-If your confidence score is < 0.6 (or if the input is too vague/unknown), you MUST use the GENERAL VIRAL MODE structure:
-- GENERAL VIRAL MODE: Hook (curiosity-based) -> Relatable setup -> Interesting insight -> Mini twist -> CTA (e.g., "Follow for more", "Stay tuned")
-
-ABSOLUTE RULES:
-1. HOOK: The very first line (0-3s) MUST be a strong hook using curiosity, shock, or a compelling question (e.g., "You won't believe...", "What if I told you...").
-2. VARIATION: Generate fresh, creative wording every single time. Never use weak or generic content. Maintain high engagement quality.
-3. CTA: The final line MUST be an engaging CTA (dynamic based on the topic, or "Follow for more" / "Stay tuned" if fallback).
-4. OUTPUT: Provide ONLY the final optimized script prompt text. Do not output JSON, do not include the confidence score, do not include the classification name, and do not include unnecessary explanations. Make it directly usable for the video generation pipeline.`;
+STRICT RULES:
+- Every word in your output will be spoken aloud. Write for the ear, not the eye.
+- No bullet points, numbered lists, section headers, or labels like "Hook:", "CTA:".
+- No filler phrases ("In this video…", "Welcome back…", "Today we're going to…").
+- No hashtags, no emojis.
+- Keep sentences short (max 20 words each). Vary rhythm — alternate short punchy sentences with slightly longer ones.
+- The first sentence must be the hook. The last sentence must match the CTA/no-CTA instruction exactly.
+- Output the paragraph and nothing else.`;
 
 export interface PromptGenerationOptions {
   targetDuration?: number;
@@ -43,35 +52,35 @@ const buildPromptWithOptions = (user_prompt: string, options: PromptGenerationOp
   const recapEnabled = !!options.recapEnabled;
   const storyMode = !!options.storyMode;
   const currentPart = Math.max(1, Number(options.currentPart || 1));
-  const storyId = String(options.storyId || '').trim() || 'none';
-  const videoCount = Math.max(1, Math.min(10, Number(options.videoCount || 1)));
-  const videoStyle = String(options.videoStyle || '').trim() || 'default';
-  const tone = String(options.tone || '').trim() || 'neutral';
-  const fontStyle = String(options.templateConfig?.fontStyle || 'Anton').trim() || 'Anton';
-  const subtitleColor = String(options.templateConfig?.subtitleColor || '#FFFFFF').trim() || '#FFFFFF';
-  return `${SYSTEM_PROMPT}
+  const tone = String(options.tone || 'informational').trim() || 'informational';
+  const videoStyle = String(options.videoStyle || '').trim() || 'educational';
+
+  // Word budget: 2.5 words per second, ±5 seconds grace
+  const minWords = Math.floor((targetDuration - 5) * 2.5);
+  const maxWords = Math.floor((targetDuration + 5) * 2.5);
+
+  const storyContext = storyMode
+    ? `STORY MODE: This is Part ${currentPart} of an ongoing series. Open with a narrative hook referencing part ${currentPart - 1 > 0 ? `(previous episode context)` : '(first episode, set the scene)'}.`
+    : '';
+
+  const systemWithFlags = SYSTEM_PROMPT
+    .replace('{tone}', `${tone}`)
+    .replace('{videoStyle}', `${videoStyle}`);
+
+  return `${systemWithFlags}
+
+USER TOPIC: ${user_prompt}
 
 PIPELINE PARAMETERS:
-- targetDuration: ${targetDuration} seconds
-- ctaEnabled: ${ctaEnabled}
-- recapEnabled: ${recapEnabled}
-- storyMode: ${storyMode}
-- currentPart: ${currentPart}
-- storyId: ${storyId}
-- videoCount: ${videoCount}
-- videoStyle: ${videoStyle}
-- tone: ${tone}
-- templateConfig.fontStyle: ${fontStyle}
-- templateConfig.subtitleColor: ${subtitleColor}
+- Target video duration: ${targetDuration} seconds
+- Script word budget: ${minWords}–${maxWords} words TOTAL (the entire script must fit in this range)
+- CTA enabled: ${ctaEnabled}
+- Recap enabled: ${recapEnabled}
+- Video style: ${videoStyle}
+- Tone: ${tone}
+${storyContext}
 
-Return ONLY the optimised narration prompt. Do NOT return JSON.
-The prompt must contain a natural-language instruction specifying:
-total video duration = ${targetDuration}s,
-CTA required = ${ctaEnabled},
-recap required = ${recapEnabled},
-story mode = ${storyMode} part ${currentPart}.
-
-USER INPUT: ${user_prompt}`;
+Write the narration brief now. Remember: plain paragraph, spoken aloud, ${minWords}–${maxWords} words, no labels or formatting.`;
 };
 
 export const generateGeminiPrompt = async (user_prompt: string, options: PromptGenerationOptions = {}): Promise<string> => {
@@ -92,12 +101,14 @@ export const generateGeminiPrompt = async (user_prompt: string, options: PromptG
       if (response.ok) {
         const data = await response.json();
         const output = data?.output_text || data?.response || data?.text;
-        if (output) return String(output).trim();
+        if (output && String(output).trim().split(/\s+/).length >= 10) {
+          return String(output).trim();
+        }
       } else {
-        console.warn(`Jules API failed with status ${response.status}, falling back to Gemini Lite...`);
+        console.warn(`Jules API failed with status ${response.status}, falling back to Gemini...`);
       }
     } catch (e) {
-      console.warn('Jules API request failed, falling back to Gemini Lite...', e);
+      console.warn('Jules API request failed, falling back to Gemini...', e);
     }
   }
 
@@ -108,36 +119,33 @@ export const generateGeminiPromptDirect = async (user_prompt: string): Promise<s
   const apiKey = process.env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    console.warn('AI API Keys are not configured, falling back to raw user prompt.');
+    console.warn('GEMINI_API_KEY not configured, using raw user prompt.');
     return user_prompt;
   }
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-
     const model = genAI.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || 'gemini-3.1-flash-preview',
-      systemInstruction: SYSTEM_PROMPT,
+      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
     });
 
-    // Add a random temperature to ensure variation
     const result = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: user_prompt }] }],
       generationConfig: {
-        temperature: 0.9,
-      }
+        temperature: 0.7,
+        maxOutputTokens: 512,
+      },
     });
-    const responseText = result.response.text();
 
-    if (!responseText) {
-      console.warn('Received empty response from Gemini, falling back to raw user prompt.');
+    const responseText = result.response.text();
+    if (!responseText || responseText.trim().split(/\s+/).length < 10) {
+      console.warn('Gemini returned empty/short response, using raw prompt.');
       return user_prompt;
     }
 
     return responseText.trim();
   } catch (error) {
     console.error('Gemini API Error:', error);
-    console.warn('Failed to generate video prompt, falling back to raw user prompt.');
     return user_prompt;
   }
 };

@@ -1,6 +1,7 @@
+import dotenv from 'dotenv';
+dotenv.config();
 import { Worker, Job as BullJob, UnrecoverableError } from 'bullmq';
 import { acquireLock, releaseLock } from '../utils/redisLock';
-import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import connectDB from '../config/db';
 import { pipelineQueue } from '../queues/pipelineQueue';
@@ -425,6 +426,37 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         }
 
         const generated = await generateContent(generationInput);
+        console.log(`[PipelineWorker] Model used for content generation:`, generationInput);
+        await appendLogSafe(jobId, `[PipelineWorker] Model used for content generation: ${JSON.stringify(generationInput)}\n`);
+        console.log(`[PipelineWorker] Prompt generated:`, generated.prompt);
+        await appendLogSafe(jobId, `[PipelineWorker] Prompt generated: ${generated.prompt}\n`);
+        console.log(`[PipelineWorker] Generated script:`, generated.script);
+        await appendLogSafe(jobId, `[PipelineWorker] Generated script: ${JSON.stringify(generated.script)}\n`);
+        if (generated.captions) {
+          console.log(`[PipelineWorker] Generated captions:`, generated.captions);
+          await appendLogSafe(jobId, `[PipelineWorker] Generated captions: ${JSON.stringify(generated.captions)}\n`);
+        }
+        if (generated.title) {
+          console.log(`[PipelineWorker] Generated title:`, generated.title);
+          await appendLogSafe(jobId, `[PipelineWorker] Generated title: ${generated.title}\n`);
+        }
+        if (generated.description) {
+          console.log(`[PipelineWorker] Generated description:`, generated.description);
+          await appendLogSafe(jobId, `[PipelineWorker] Generated description: ${generated.description}\n`);
+        }
+        if (generated.hashtags) {
+          console.log(`[PipelineWorker] Generated hashtags:`, generated.hashtags);
+          await appendLogSafe(jobId, `[PipelineWorker] Generated hashtags: ${JSON.stringify(generated.hashtags)}\n`);
+        }
+        if (generated.metadata) {
+          console.log(`[PipelineWorker] Generated metadata:`, generated.metadata);
+          await appendLogSafe(jobId, `[PipelineWorker] Generated metadata: ${JSON.stringify(generated.metadata)}\n`);
+        }
+        if (generated.preparedContent) {
+          console.log(`[PipelineWorker] Generated preparedContent:`, generated.preparedContent);
+          await appendLogSafe(jobId, `[PipelineWorker] Generated preparedContent: ${JSON.stringify(generated.preparedContent)}\n`);
+        }
+        console.log(`[PipelineWorker] Saving generated content to DB for job ${jobId}`);
         const validStructuredScript = Array.isArray(generated.script)
           && generated.script.every(
             (part) => Array.isArray(part) && part.every((line) => line && typeof line.text === 'string' && line.text.trim().length > 0)
@@ -448,7 +480,9 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         });
 
         preparedContent = generated.preparedContent as any[];
+          console.log(`[PipelineWorker] Content generation completed for job ${jobId}. Items: ${preparedContent.length}`);
         await appendLogSafe(jobId, `Background content generation completed with ${preparedContent.length} item(s).\n`);
+          await appendLogSafe(jobId, `[PipelineWorker] Content generation completed for job ${jobId}. Items: ${preparedContent.length}\n`);
         await updateProgressSafe(job, 38, 'content_generation', 'Content generation completed');
       }
       const executionJob = (await JobModel.findById(jobId)) || dbJobForExecution;
