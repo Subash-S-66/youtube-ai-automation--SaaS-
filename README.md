@@ -85,6 +85,17 @@ Stop both:
 bash scripts/stop_codespace_stack.sh
 ```
 
+Pipeline-only service mode (Codespaces can run only pipeline runtime):
+
+```bash
+bash scripts/run_pipeline_service_codespace.sh
+```
+
+Set backend env:
+- `PIPELINE_RUNNER=remote`
+- `PIPELINE_SERVICE_URL=https://<your-codespace-forwarded-url>`
+- `PIPELINE_SERVICE_SECRET=<shared-secret>`
+
 ### Start the Frontend
 ```bash
 cd frontend

@@ -14,6 +14,7 @@ import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
 import { triggerLocalPipeline } from './localPipelineTrigger';
+import { triggerRemotePipeline } from './remotePipelineTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { normalizePipelineSettings } from '../services/pipelineRunService';
@@ -95,7 +96,11 @@ const appendLogSafe = async (jobId: string, newText: string, status?: string): P
   }
 };
 
-const resolvePipelineRunner = async (): Promise<'local' | 'azure'> => {
+const resolvePipelineRunner = async (): Promise<'local' | 'azure' | 'remote'> => {
+  const envRunner = (process.env.PIPELINE_RUNNER || '').toLowerCase();
+  if (envRunner === 'local' || envRunner === 'azure' || envRunner === 'remote') {
+    return envRunner;
+  }
   try {
     const config = await SystemConfig.findOne().sort({ updatedAt: -1 });
     if (config?.pipelineRunner === 'azure' || config?.pipelineRunner === 'local') {
@@ -104,8 +109,7 @@ const resolvePipelineRunner = async (): Promise<'local' | 'azure'> => {
   } catch (error) {
     console.warn('Failed to load SystemConfig for pipeline runner. Falling back to env.', error);
   }
-  const fallback = (process.env.PIPELINE_RUNNER || 'local').toLowerCase();
-  return fallback === 'azure' ? 'azure' : 'local';
+  return process.env.PIPELINE_SERVICE_URL ? 'remote' : 'local';
 };
 
 const parseBaseUrl = (value: string): string => {
@@ -539,6 +543,17 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },
         { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
       ];
+
+      if (pipelineRunner === 'remote') {
+        await appendLogSafe(jobId, `\nDispatching remote pipeline service for job ${jobId}...\n`);
+        const remoteResult = await triggerRemotePipeline({
+          jobId,
+          userId,
+          envVars,
+        });
+        await appendLogSafe(jobId, `\nRemote pipeline accepted: ${remoteResult.message}\n`);
+        return;
+      }
 
       if (pipelineRunner === 'local') {
         await appendLogSafe(jobId, `\nDispatching local pipeline process for job ${jobId}...\n`);

@@ -11,7 +11,7 @@
       ]
     }
   },
-  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y ffmpeg && python -m pip install --upgrade pip && pip install -r pipeline/requirements.txt && chmod +x scripts/bootstrap_codespaces_env.sh scripts/run_pipeline_codespace.sh scripts/start_codespace_stack.sh scripts/stop_codespace_stack.sh",
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y ffmpeg && python -m pip install --upgrade pip && pip install -r pipeline/requirements.txt && chmod +x scripts/bootstrap_codespaces_env.sh scripts/run_pipeline_codespace.sh scripts/start_codespace_stack.sh scripts/stop_codespace_stack.sh scripts/run_pipeline_service_codespace.sh",
   "postStartCommand": "bash scripts/bootstrap_codespaces_env.sh",
   "remoteEnv": {
     "PYTHONPATH": "${containerWorkspaceFolder}/pipeline/src"
