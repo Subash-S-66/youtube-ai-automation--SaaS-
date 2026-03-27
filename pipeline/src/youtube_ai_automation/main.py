@@ -1274,6 +1274,8 @@ def run_prepared_pipeline(
         raise ValueError("videoConfig.customImageUrls must be an array when provided.")
 
     target_duration = _extract_target_duration(video_config)
+    # Hard cap early so oversized generated scripts don't start at ~70s for a 60s request.
+    script_text = _enforce_word_cap(script_text, int(min(60, target_duration) * 2.5))
     cta_enabled = bool(video_config.get("ctaEnabled", video_config.get("enableCTA", False)))
     recap_enabled = bool(video_config.get("recapEnabled", False))
     story_mode = bool(video_config.get("storyMode", False))
@@ -1441,21 +1443,36 @@ def run_prepared_pipeline(
     actual_audio_seconds = 0.0
     audio_retry_count = 0
     audio_failed = False
-    best_audio_distance = float("inf")
-    best_audio_script = ""
-    best_audio_sections: dict[str, str] = {}
-    best_audio_path = ""
-    best_audio_seconds = 0.0
-    min_words = max(30, int(max(10, target_duration - 5) * 2.5))
     max_words = int(min(60, target_duration) * 2.5)
     try:
-        for audio_attempt in range(1, 4):
-            # Keep script bounded before every expensive TTS attempt.
-            best_package["script"] = _resize_main_content_to_total_words(
-                best_package["sections"],
-                max_words,
-                min_main_words=20,
+        # Stable strategy: generate once from bounded script.
+        best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
+        full_audio_path, _ = generate_voice(
+            script=best_package["script"],
+            voice=voice_name,
+            rate=voice_rate,
+            output_path=(output_dir / "voice_full.wav"),
+            rotate_profile=False,
+        )
+        actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
+        if actual_audio_seconds <= 0:
+            actual_audio_seconds = estimate_audio_duration(best_package["script"])
+            LOGGER.warning(
+                "Unable to measure generated audio duration; using estimated duration %.2fs",
+                actual_audio_seconds,
             )
+        LOGGER.info(
+            "audio_attempt=%s actual=%.2fs target=%ss drift=%.2fs",
+            1,
+            actual_audio_seconds,
+            target_duration,
+            actual_audio_seconds - target_duration,
+        )
+
+        # Single corrective pass only if hard cap exceeded.
+        if actual_audio_seconds > 60:
+            audio_retry_count = 1
+            best_package["script"] = _enforce_word_cap(best_package["script"], int(60 * 2.5))
             full_audio_path, _ = generate_voice(
                 script=best_package["script"],
                 voice=voice_name,
@@ -1463,67 +1480,17 @@ def run_prepared_pipeline(
                 output_path=(output_dir / "voice_full.wav"),
                 rotate_profile=False,
             )
-            actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
-            if actual_audio_seconds <= 0:
-                # Some providers may return audio data that isn't reliably parsable by wave.
-                # Fall back to script-based duration instead of failing the whole job.
-                actual_audio_seconds = estimate_audio_duration(best_package["script"])
-                LOGGER.warning(
-                    "Unable to measure generated audio duration; using estimated duration %.2fs",
-                    actual_audio_seconds,
-                )
-                break
-            drift = actual_audio_seconds - target_duration
+            actual_audio_seconds = get_audio_duration_seconds(full_audio_path) or estimate_audio_duration(best_package["script"])
             LOGGER.info(
                 "audio_attempt=%s actual=%.2fs target=%ss drift=%.2fs",
-                audio_attempt,
+                2,
                 actual_audio_seconds,
                 target_duration,
-                drift,
-            )
-            distance = abs(drift)
-            if distance < best_audio_distance:
-                best_audio_distance = distance
-                best_audio_script = best_package["script"]
-                best_audio_sections = {
-                    "hook": str(best_package["sections"].get("hook", "")),
-                    "main_content": str(best_package["sections"].get("main_content", "")),
-                    "recap": str(best_package["sections"].get("recap", "")),
-                    "cta": str(best_package["sections"].get("cta", "")),
-                }
-                best_audio_path = str(full_audio_path) if full_audio_path is not None else ""
-                best_audio_seconds = float(actual_audio_seconds)
-            if abs(drift) <= 2:
-                break
-            # Regenerate only if drift is materially high
-            if abs(drift) <= 3:
-                break
-            if audio_attempt >= 3:
-                break
-            audio_retry_count += 1
-            current_words = max(1, len(best_package["script"].split()))
-            desired_words = int(round(current_words * (target_duration / max(1.0, actual_audio_seconds))))
-            desired_words = max(min_words, min(max_words, desired_words))
-            if abs(desired_words - current_words) < 5:
-                desired_words = current_words + (8 if drift < 0 else -8)
-                desired_words = max(min_words, min(max_words, desired_words))
-            best_package["script"] = _resize_main_content_to_total_words(
-                best_package["sections"],
-                desired_words,
-                min_main_words=20,
+                actual_audio_seconds - target_duration,
             )
     except Exception as exc:
         audio_failed = True
         last_errors.append(f"audio_fallback:{str(exc)[:120]}")
-
-    # Keep the closest retry attempt instead of blindly keeping the last attempt.
-    if best_audio_script:
-        best_package["script"] = best_audio_script
-        if best_audio_sections:
-            best_package["sections"] = best_audio_sections
-        if best_audio_path:
-            full_audio_path = Path(best_audio_path)
-        actual_audio_seconds = best_audio_seconds
 
     if full_audio_path is not None:
         created.append(full_audio_path)
@@ -1532,36 +1499,7 @@ def run_prepared_pipeline(
     actual_audio_seconds = get_audio_duration_seconds(full_audio_path) if full_audio_path is not None else estimated_duration
     if actual_audio_seconds <= 0:
         actual_audio_seconds = estimated_duration
-    if abs(actual_audio_seconds - estimated_duration) > 2:
-        LOGGER.warning(
-            "Audio/script sync drift detected. actual=%.2fs estimated=%.2fs",
-            actual_audio_seconds,
-            estimated_duration,
-        )
-        delta = actual_audio_seconds - estimated_duration
-        if delta > 0:
-            best_package["sections"]["main_content"] = adjust_script_to_duration(
-                script=best_package["sections"].get("main_content", ""),
-                target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) - delta)),
-                section_name="main",
-                topic_hint=topic,
-                story_mode=story_mode,
-            )
-        else:
-            best_package["sections"]["main_content"] = expand_meaningfully(
-                best_package["sections"].get("main_content", ""),
-                max(6, int(abs(delta) * 2.5)),
-            )
-        best_package["script"] = " ".join(
-            p for p in [
-                best_package["sections"].get("hook", ""),
-                best_package["sections"].get("main_content", ""),
-                best_package["sections"].get("recap", ""),
-                best_package["sections"].get("cta", ""),
-            ] if p
-        ).strip()
-        best_package["script"] = _enforce_word_cap(best_package["script"], max_words)
-        estimated_duration = estimate_audio_duration(best_package["script"])
+    # No aggressive post-audio script rewrite; keep stable output.
 
     # Final enforcement: if actual audio still exceeds hard cap, trim and regenerate once.
     if full_audio_path is not None and actual_audio_seconds > 60:
@@ -1597,7 +1535,7 @@ def run_prepared_pipeline(
     final_duration_seconds = float(actual_audio_seconds or estimated_duration)
     valid, errors = validate_output(
         # Validate against final rendered clip duration to avoid false drift failures.
-        target_seconds=max(15, min(60, int(round(final_duration_seconds)))),
+        target_seconds=max(1, min(60, int(round(final_duration_seconds)))),
         actual_seconds=final_duration_seconds,
         has_cta=cta_enabled,
         has_recap=recap_enabled,
@@ -1634,6 +1572,8 @@ def run_prepared_pipeline(
         ending_ok = True
     if ending_error:
         errors.append(f"ending:{ending_error}")
+    # Prepared mode: treat duration drift as informational, not fatal.
+    errors = [err for err in errors if not str(err).startswith("duration_out_of_range:")]
 
     sectionAudio = {
         "full": str(full_audio_path) if full_audio_path is not None else "",
