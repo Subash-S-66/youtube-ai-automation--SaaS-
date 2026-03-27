@@ -1648,8 +1648,11 @@ def run_prepared_pipeline(
     print(f"PIPELINE_OUTPUT_JSON:{json.dumps(result_payload, ensure_ascii=False)}")
     if notify_webhook:
         try:
+            resolved_job_id = str(
+                payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")
+            ).strip()
             send_pipeline_complete({
-                "jobId": str(payload.get("jobId", "") or payload.get("job_id", "")).strip(),
+                "jobId": resolved_job_id,
                 "status": "completed",
                 "result": result_payload,
             })
@@ -1759,7 +1762,7 @@ def run_full_pipeline(
             uploaded_video_url = f"https://www.youtube.com/watch?v={uploaded_video_id}"
 
     final_payload = {
-        "jobId": str(payload.get("jobId", "") or payload.get("job_id", "")).strip(),
+        "jobId": str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip(),
         "status": "completed",
         "result": {
             **prepared_payload,

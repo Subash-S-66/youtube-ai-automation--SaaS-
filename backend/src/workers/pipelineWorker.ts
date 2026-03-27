@@ -672,11 +672,12 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       const encryptedYoutubeToken = youtubeToken ? encrypt(youtubeToken) : '';
 
       // Setup payload configuring environment variables for the container run
-      const runtimeMode = String((settings as any)?.mode || (settings as any)?.executionMode || process.env.PIPELINE_DEFAULT_MODE || 'full')
+      const requestedMode = String((settings as any)?.mode || (settings as any)?.executionMode || process.env.PIPELINE_DEFAULT_MODE || 'full')
         .trim()
-        .toLowerCase() === 'prepared'
-        ? 'prepared'
-        : 'full';
+        .toLowerCase();
+      const runtimeMode = requiresUpload
+        ? 'full'
+        : (requestedMode === 'prepared' ? 'prepared' : 'full');
       const envVars = [
         { name: "USER_ID", value: userId },
         { name: "PIPELINE_PAYLOAD", value: JSON.stringify(pipelinePayload) },
