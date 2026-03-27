@@ -1579,10 +1579,24 @@ def run_prepared_pipeline(
     # Prepared mode: treat duration drift as informational, not fatal.
     errors = [err for err in errors if not str(err).startswith("duration_out_of_range:")]
 
-    timed_lines = build_timed_lines(best_package["script"])
+    timed_lines_raw = build_timed_lines(best_package["script"])
+    total_line_duration = sum(float(row.get("duration", 0.0) or 0.0) for row in timed_lines_raw)
+    target_line_total = max(0.1, float(final_duration_seconds))
+    if timed_lines_raw and total_line_duration > 0:
+        scale = target_line_total / total_line_duration
+        timed_lines = []
+        for row in timed_lines_raw:
+            text = str(row.get("text", "")).strip()
+            base_dur = float(row.get("duration", 0.0) or 0.0)
+            timed_lines.append({"text": text, "duration": round(max(0.5, base_dur * scale), 2)})
+        drift = round(target_line_total - sum(float(x["duration"]) for x in timed_lines), 2)
+        timed_lines[-1]["duration"] = round(max(0.5, float(timed_lines[-1]["duration"]) + drift), 2)
+    else:
+        timed_lines = timed_lines_raw
+
     subtitle_file = create_subtitles_from_script(
         script=best_package["script"],
-        estimated_duration_seconds=estimated_duration,
+        estimated_duration_seconds=target_line_total,
         subtitle_path=SUBTITLE_PATH,
         max_words=4,
         highlight_words=_extract_highlight_words(topic, best_package["sections"].get("hook", "")),
