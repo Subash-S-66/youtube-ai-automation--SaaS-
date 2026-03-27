@@ -6,7 +6,7 @@ export interface AIGenerationResult {
   provider: 'jules' | 'fallback';
 }
 
-const callJules = async (prompt: string, timeoutMs = 45000): Promise<string> => {
+const callJules = async (prompt: string, timeoutMs = 15000): Promise<string> => {
   const julesUrl = process.env.JULES_API_URL || '';
   const julesKey = process.env.JULES_API_KEY || '';
   if (!julesUrl || !julesKey) {
@@ -42,13 +42,13 @@ const callJules = async (prompt: string, timeoutMs = 45000): Promise<string> => 
   }
 };
 
-const callFallbackModel = async (prompt: string, timeoutMs = 45000): Promise<string> => {
+const callFallbackModel = async (prompt: string, timeoutMs = 15000): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
     throw new Error('Fallback model key is not configured');
   }
 
-  const modelName = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-preview').trim();
+  const modelName = (process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim();
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
@@ -71,6 +71,20 @@ const callFallbackModel = async (prompt: string, timeoutMs = 45000): Promise<str
   }
 };
 
+const validateAIOutput = (text: string): void => {
+  if (!text || text.trim().length === 0) {
+    throw new Error('AI output is empty');
+  }
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length < 3) {
+    throw new Error('AI output is too short (less than 3 lines)');
+  }
+  const lowerText = text.toLowerCase();
+  if (lowerText.includes('you are an elite') || lowerText.includes('you are a') || lowerText.includes('your task is')) {
+    throw new Error('AI output contains prompt instructions instead of generated content');
+  }
+};
+
 export const generateFromAI = async (prompt: string): Promise<AIGenerationResult> => {
   const normalizedPrompt = String(prompt || '').trim();
   if (!normalizedPrompt) {
@@ -79,10 +93,12 @@ export const generateFromAI = async (prompt: string): Promise<AIGenerationResult
 
   try {
     const text = await callJules(normalizedPrompt);
+    validateAIOutput(text);
     return { text, provider: 'jules' };
   } catch (julesError: any) {
     try {
       const text = await callFallbackModel(normalizedPrompt);
+      validateAIOutput(text);
       return { text, provider: 'fallback' };
     } catch (fallbackError: any) {
       throw new AppError(

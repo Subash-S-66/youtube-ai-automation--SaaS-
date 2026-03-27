@@ -398,6 +398,7 @@ export const enqueuePipelineJob = async ({
         type: 'exponential',
         delay: 5000,
       },
+      removeOnFail: true,
     }
   );
 

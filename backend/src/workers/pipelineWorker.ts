@@ -670,12 +670,12 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           youtubeToken = (await ensureValidYouTubeToken(settings.channelId, userId)).accessToken;
         } catch (error: any) {
           error.stage = 'TOKEN';
-          throw error;
+          throw new UnrecoverableError(error.message || 'YouTube token failure');
         }
         if (!youtubeToken) {
           const err: any = new Error('Failed to obtain a valid YouTube token');
           err.stage = 'TOKEN';
-          throw err;
+          throw new UnrecoverableError(err.message || 'YouTube token failure');
         }
       } else {
         await appendLogSafe(jobId, 'Upload not requested for this job. Skipping YouTube token validation.\n');
@@ -1160,8 +1160,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
   },
   {
     connection: connection as any, // Cast to any to bypass strict type matching
-    concurrency: 5, // Limit concurrency to 5 jobs at a time to improve performance
-    lockDuration: 60000,
+    concurrency: 2, // Limit concurrency to 2 jobs at a time to improve performance
+    lockDuration: 300000, // 5 minutes
     stalledInterval: 30000,
     maxStalledCount: 2,
   }

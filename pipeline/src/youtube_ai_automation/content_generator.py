@@ -400,42 +400,95 @@ def _call_anthropic(prompt: str, api_key: str, model: str) -> str:
     return text
 
 
-def _call_model(prompt: str, provider: str, gemini_api_key: str, gemini_model: str,
-                openai_api_key: str, openai_model: str,
-                anthropic_api_key: str, anthropic_model: str) -> str:
-    # Jules routing (highest priority)
+def _validate_ai_output(text: str) -> None:
+    if not text or not text.strip():
+        raise ValueError("AI output is empty")
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    if len(lines) < 3:
+        raise ValueError("AI output is too short (less than 3 lines)")
+    lower_text = text.lower()
+    if "you are an elite" in lower_text or "you are a" in lower_text or "your task is" in lower_text:
+        raise ValueError("AI output contains prompt instructions instead of generated content")
+
+
+def _call_model(prompt: str, gemini_api_key: str, gemini_model: str) -> str:
+    # 1. Jules routing (primary)
     jules_url = os.getenv("JULES_API_URL")
     jules_key = os.getenv("JULES_API_KEY")
+    jules_error = None
+
     if jules_url and jules_key:
+        LOGGER.info(json.dumps({
+            "event": "ai_request_start",
+            "provider": "jules",
+            "timeout": 15
+        }))
         try:
             resp = requests.post(
                 jules_url,
                 headers={"Authorization": f"Bearer {jules_key}", "Content-Type": "application/json"},
                 json={"prompt": prompt},
-                timeout=60,
+                timeout=15,
             )
-            if resp.ok:
-                data = resp.json()
-                out = data.get("output_text") or data.get("response") or data.get("text")
-                if out:
-                    return str(out).strip()
+            resp.raise_for_status()
+            data = resp.json()
+            out = data.get("output_text") or data.get("response") or data.get("text")
+            if out:
+                out = str(out).strip()
+                _validate_ai_output(out)
+                LOGGER.info(json.dumps({
+                    "event": "ai_request_success",
+                    "provider": "jules"
+                }))
+                return out
+            else:
+                jules_error = ValueError("Jules returned an empty response.")
+                LOGGER.error(json.dumps({
+                    "event": "ai_request_error",
+                    "provider": "jules",
+                    "error": "empty_response"
+                }))
         except Exception as e:
-            LOGGER.warning("Jules API failed: %s", e)
+            LOGGER.error(json.dumps({
+                "event": "ai_request_error",
+                "provider": "jules",
+                "error": str(e)
+            }))
+            jules_error = e
+    else:
+        LOGGER.warning(json.dumps({
+            "event": "ai_request_skipped",
+            "provider": "jules",
+            "reason": "missing_credentials"
+        }))
+        jules_error = ValueError("Jules config missing")
 
-    norm = provider.strip().lower()
-    if norm in {"gemini", "google"}:
-        if not gemini_api_key:
-            raise ValueError("GEMINI_API_KEY is missing.")
-        return _call_gemini(prompt, gemini_api_key, gemini_model)
-    if norm == "openai":
-        if not openai_api_key:
-            raise ValueError("OPENAI_API_KEY is missing.")
-        return _call_openai(prompt, openai_api_key, openai_model)
-    if norm in {"anthropic", "claude"}:
-        if not anthropic_api_key:
-            raise ValueError("ANTHROPIC_API_KEY is missing.")
-        return _call_anthropic(prompt, anthropic_api_key, anthropic_model)
-    raise ValueError(f"Unsupported provider: {provider}")
+    # 2. Fallback to Gemini ONCE
+    LOGGER.info(json.dumps({
+        "event": "ai_fallback_start",
+        "provider": "gemini",
+        "model": gemini_model
+    }))
+    if not gemini_api_key:
+        raise RuntimeError("Jules failed and GEMINI_API_KEY is missing. Stop.")
+
+    try:
+        fallback_text = _call_gemini(prompt, gemini_api_key, gemini_model)
+        _validate_ai_output(fallback_text)
+        LOGGER.info(json.dumps({
+            "event": "ai_request_success",
+            "provider": "gemini",
+            "model": gemini_model
+        }))
+        return fallback_text
+    except Exception as e:
+        LOGGER.error(json.dumps({
+            "event": "ai_request_error",
+            "provider": "gemini",
+            "model": gemini_model,
+            "error": str(e)
+        }))
+        raise RuntimeError(f"Both Jules and Gemini failed. Jules Error: {jules_error}. Gemini Error: {e}") from e
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -445,32 +498,17 @@ def _generate_with_retry(
     model_prompt: str,
     topic: str,
     target_duration: int,
-    provider: str,
     gemini_api_key: str,
     gemini_model: str,
-    openai_api_key: str,
-    openai_model: str,
-    anthropic_api_key: str,
-    anthropic_model: str,
 ) -> GeneratedContent:
-    MAX_RETRIES = 3
-    last_error: Exception | None = None
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            raw_text = _call_model(
-                model_prompt, provider, gemini_api_key, gemini_model,
-                openai_api_key, openai_model, anthropic_api_key, anthropic_model,
-            )
-            payload = _extract_json(raw_text)
-            return _normalise_output(payload, target_duration)
-        except Exception as exc:
-            last_error = exc
-            LOGGER.warning("Content gen attempt %s/%s failed: %s", attempt, MAX_RETRIES, str(exc)[:120])
-            if attempt < MAX_RETRIES:
-                time.sleep(attempt * 1.5)
-
-    raise RuntimeError(f"Content generation failed after {MAX_RETRIES} attempts: {last_error}")
+    # No more endless loops. Just run the single fast Jules -> Gemini pipeline.
+    try:
+        raw_text = _call_model(model_prompt, gemini_api_key, gemini_model)
+        payload = _extract_json(raw_text)
+        return _normalise_output(payload, target_duration)
+    except Exception as exc:
+        LOGGER.error("Content generation failed: %s", exc)
+        raise RuntimeError(f"Content generation failed: {exc}") from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -562,13 +600,8 @@ def generate_content(
             model_prompt=model_prompt,
             topic=topic,
             target_duration=target_duration,
-            provider=norm_provider,
             gemini_api_key=gemini_api_key,
             gemini_model=gemini_model,
-            openai_api_key=openai_api_key,
-            openai_model=openai_model,
-            anthropic_api_key=anthropic_api_key,
-            anthropic_model=anthropic_model,
         )
     except Exception as exc:
         LOGGER.error("All content generation attempts failed. Using fallback. Error: %s", exc)
