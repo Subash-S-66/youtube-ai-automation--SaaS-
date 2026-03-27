@@ -1,3 +1,4 @@
+import { connection } from '../config/redis';
 import { AppError } from '../middleware/errorHandler';
 import Prompt from '../models/Prompt';
 import StoryProgress from '../models/StoryProgress';
@@ -152,7 +153,31 @@ export const enqueuePipelineJob = async ({
   promptId,
   settings,
   acceptedYouTubeLimitWarning = false,
-}: EnqueuePipelineParams): Promise<EnqueuePipelineResult> => {
+  idempotencyKey,
+}: EnqueuePipelineParams & { idempotencyKey?: string }): Promise<EnqueuePipelineResult> => {
+
+  if (idempotencyKey && connection) {
+    const existingJobId = await connection.get(`idempotency:job:${idempotencyKey}`);
+    if (existingJobId) {
+      const existingJob = await Job.findById(existingJobId);
+      if (existingJob) {
+        return {
+          jobId: existingJob._id.toString(),
+          plan: existingJob.pipelineConfig?.plan || 'free',
+          remainingUploads: 0, // Mocked for cached response
+          uploadsOnHold: 0,
+          standardizedPrompt: existingJob.generatedPrompt || '',
+          generatedScript: existingJob.generatedScript || [],
+          metadata: {
+            title: existingJob.title || '',
+            description: existingJob.description || '',
+            hashtags: existingJob.hashtags || [],
+          },
+        };
+      }
+    }
+  }
+
   const inputAudit = normalizePipelineSettings(settings as Record<string, any>);
   const finalSettings = inputAudit.normalizedSettings;
 
@@ -385,6 +410,10 @@ export const enqueuePipelineJob = async ({
   jobData.queuedAt = new Date();
 
   const job = await Job.create(jobData);
+
+  if (idempotencyKey && connection) {
+    await connection.set(`idempotency:job:${idempotencyKey}`, job._id.toString(), 'EX', 24 * 60 * 60); // 24 hour expiry
+  }
 
   const planPriorities: Record<string, number> = {
     premium: 1,
