@@ -677,7 +677,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "GEMINI_AUDIO_ENABLED", value: "true" },
         { name: "GEMINI_AUDIO_ONLY", value: "true" },
         { name: "FORCE_GOOGLE_AUDIO_ONLY", value: "true" },
-        { name: "GEMINI_AUDIO_MODEL", value: process.env.GEMINI_AUDIO_MODEL || "gemini-2.5-flash-native-audio-dialog" },
+        { name: "GEMINI_AUDIO_MODEL", value: process.env.GEMINI_AUDIO_MODEL || "gemini-2.5-flash-native-audio-latest" },
         { name: "ALLOW_SILENT_AUDIO_FALLBACK", value: "false" },
         { name: "MONGO_URI", value: process.env.MONGO_URI || "" },
         { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },

@@ -14,7 +14,7 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Puck")
 GEMINI_VOICE_OPTIONS = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
-GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash-native-audio-dialog").strip()
+GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash-native-audio-latest").strip()
 GEMINI_AUDIO_MODELS = [GEMINI_AUDIO_MODEL]
 
 
