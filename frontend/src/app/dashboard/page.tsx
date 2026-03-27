@@ -101,6 +101,10 @@ function Dashboard() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const paymentConfirmingRef = useRef(false);
+  const allYouTubeChannels = Array.isArray(user?.youtubeChannels) ? user.youtubeChannels : [];
+  const activeYouTubeChannels = allYouTubeChannels.filter((channel: any) => channel?.status !== 'disabled_due_to_plan');
+  const validYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid !== false);
+  const invalidYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid === false);
 
   useEffect(() => {
     if (searchParams.get('payment') === 'success') {
@@ -342,10 +346,6 @@ function Dashboard() {
   const canUseFormatSelection = planFeatures.format_selection ?? isPaidPlan;
   const canUseTemplateCustomization = planFeatures.template_customization ?? false;
   const canUseCustomMedia = planFeatures.custom_media ?? false;
-  const allYouTubeChannels = Array.isArray(user?.youtubeChannels) ? user.youtubeChannels : [];
-  const activeYouTubeChannels = allYouTubeChannels.filter((channel: any) => channel?.status !== 'disabled_due_to_plan');
-  const validYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid !== false);
-  const invalidYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid === false);
   const effectiveStoryMode = canUseStoryMode && storyMode;
   const uploadLimitPerDay = user?.uploadLimitPerDay ?? user?.uploadLimit ?? 0;
   const remainingUploads = user?.remainingUploads ?? 0;
