@@ -6,12 +6,33 @@ const api = axios.create({
   withCredentials: true,
 });
 
+let csrfFetchPromise: Promise<void> | null = null;
+
+const ensureCsrfToken = async () => {
+  if (typeof window === 'undefined') return;
+  const existing = sessionStorage.getItem('csrf_token');
+  if (existing) return;
+  if (!csrfFetchPromise) {
+    csrfFetchPromise = fetchCsrfToken().finally(() => {
+      csrfFetchPromise = null;
+    });
+  }
+  await csrfFetchPromise;
+};
+
 api.interceptors.request.use(
-  (config) => {
+  async (config) => {
     if (typeof window !== 'undefined') {
-      const csrfToken = sessionStorage.getItem('csrf_token');
-      if (csrfToken && config.headers && config.method !== 'get' && config.method !== 'head' && config.method !== 'options') {
-        config.headers['x-csrf-token'] = csrfToken;
+      const method = (config.method || 'get').toLowerCase();
+      const isSafeMethod = method === 'get' || method === 'head' || method === 'options';
+      const requestPath = String(config.url || '');
+      const isCsrfBootstrapCall = requestPath.includes('/csrf-token');
+      if (!isSafeMethod && !isCsrfBootstrapCall) {
+        await ensureCsrfToken();
+        const csrfToken = sessionStorage.getItem('csrf_token');
+        if (csrfToken && config.headers) {
+          config.headers['x-csrf-token'] = csrfToken;
+        }
       }
     }
     return config;
@@ -45,8 +66,30 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
+    const status = error?.response?.status;
+    const message = String(error?.response?.data?.message || '').toLowerCase();
+    const originalRequest = error?.config || {};
+
+    // Auto-heal CSRF mismatch (common after login/session changes)
+    if (
+      typeof window !== 'undefined' &&
+      status === 403 &&
+      message.includes('invalid csrf token') &&
+      !originalRequest._csrfRetried
+    ) {
+      originalRequest._csrfRetried = true;
+      sessionStorage.removeItem('csrf_token');
+      return fetchCsrfToken().then(() => {
+        const refreshed = sessionStorage.getItem('csrf_token');
+        if (refreshed) {
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers['x-csrf-token'] = refreshed;
+        }
+        return api(originalRequest);
+      });
+    }
+
     if (typeof window !== 'undefined') {
-      const status = error?.response?.status;
       if (!status || status >= 500) {
         window.dispatchEvent(new CustomEvent('api-offline'));
       }
