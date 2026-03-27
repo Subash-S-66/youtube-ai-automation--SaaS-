@@ -102,6 +102,7 @@ from youtube_ai_automation.trend_engine import get_trending_topics
 from youtube_ai_automation.news_fetcher import get_latest_news
 from youtube_ai_automation.video_creator import create_subtitles_from_script, render_vertical_video
 from youtube_ai_automation.video_fetcher import download_scene_videos
+from youtube_ai_automation.image_fetcher import fetch_images
 from youtube_ai_automation.viral_pattern_engine import ViralPatternScore, estimate_viral_probability
 from youtube_ai_automation.voice_generator import generate_voice, pick_voice_profile
 from youtube_ai_automation.youtube_uploader import SHORTS_MAX_DURATION_SECONDS, upload_video
@@ -1687,6 +1688,72 @@ def _collect_media_paths_for_full_mode(payload: dict, target_dir: Path) -> list[
     return _download_custom_media(media_urls, target_dir)
 
 
+def _derive_scene_queries_for_stock(payload: dict, prepared_payload: dict) -> list[str]:
+    queries: list[str] = []
+
+    # 1) Explicit search queries from payload metadata if available
+    youtube_cfg = payload.get("youtube", {}) if isinstance(payload, dict) else {}
+    raw_queries = youtube_cfg.get("search_queries", []) if isinstance(youtube_cfg, dict) else []
+    if isinstance(raw_queries, list):
+        queries.extend([str(x).strip() for x in raw_queries if str(x).strip()])
+
+    # 2) Script line texts from pipeline payload
+    raw_script = payload.get("script", []) if isinstance(payload, dict) else []
+    if isinstance(raw_script, list):
+        for row in raw_script:
+            if isinstance(row, dict):
+                text = str(row.get("text", "")).strip()
+                if text:
+                    queries.append(text)
+            elif isinstance(row, str) and row.strip():
+                queries.append(row.strip())
+
+    # 3) Timed caption text from prepared payload
+    timed = ((prepared_payload.get("captions", {}) or {}).get("timed", [])) if isinstance(prepared_payload, dict) else []
+    if isinstance(timed, list):
+        for row in timed:
+            if isinstance(row, dict):
+                text = str(row.get("text", "")).strip()
+                if text:
+                    queries.append(text)
+
+    # Normalize/dedupe and keep short search-friendly strings
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in queries:
+        clean = " ".join(str(item).split()).strip()
+        if not clean:
+            continue
+        key = clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(clean[:90])
+        if len(out) >= 8:
+            break
+    return out
+
+
+def _plan_stock_asset_counts(target_seconds: float) -> tuple[int, int]:
+    """
+    Plan how many stock videos/images to download so total visual inventory is close to target.
+    Images are fixed 3s each; clips are mixed 2-6s (approx 4s average).
+    """
+    target = max(15.0, min(60.0, float(target_seconds or 60.0)))
+    # Keep image share moderate for pace; cap to 6 images.
+    image_seconds = min(18.0, round(target * 0.30, 1))
+    image_count = int(image_seconds // 3.0)
+    remaining = max(0.0, target - (image_count * 3.0))
+    # Clip average around 4s.
+    clip_count = int(max(1, round(remaining / 4.0))) if remaining > 0 else 0
+    # Safety cap on total media requests to avoid over-downloading.
+    max_assets = 16
+    if clip_count + image_count > max_assets:
+        overflow = (clip_count + image_count) - max_assets
+        clip_count = max(1, clip_count - overflow)
+    return clip_count, image_count
+
+
 def run_full_pipeline(
     payload: dict,
     upload: bool,
@@ -1730,6 +1797,72 @@ def run_full_pipeline(
 
     media_dir = output_dir / "media_full"
     media_paths = _collect_media_paths_for_full_mode(payload, media_dir)
+    scene_queries = _derive_scene_queries_for_stock(payload, prepared_payload)
+    has_custom_media = len(media_paths) > 0
+
+    # Always auto-download stock media when no custom media is provided by user.
+    if scene_queries and (PEXELS_API_KEY or PIXABAY_API_KEY) and not has_custom_media:
+        planned_clips, planned_images = _plan_stock_asset_counts(target_duration)
+        if planned_clips <= 0 and planned_images <= 0:
+            planned_clips, planned_images = 10, 4
+
+        stock_dir = media_dir / "stock_video"
+        clip_queries = scene_queries[:max(1, planned_clips)]
+        scene_duration = max(2.5, float(target_duration) / max(1, len(clip_queries)))
+        stock_paths = download_scene_videos(
+            scenes=clip_queries,
+            output_dir=stock_dir,
+            pexels_key=PEXELS_API_KEY or "",
+            pixabay_key=PIXABAY_API_KEY or "",
+            scene_duration=scene_duration,
+            clips_per_scene_min=1,
+            clips_per_scene_max=1,
+        )
+        if stock_paths:
+            media_paths.extend(stock_paths)
+        LOGGER.info(
+            json.dumps(
+                {
+                    "event": "auto_media_download",
+                    "type": "video",
+                    "downloaded": len(stock_paths),
+                    "planned": planned_clips,
+                    "targetSeconds": round(float(target_duration), 2),
+                },
+                ensure_ascii=False,
+            )
+        )
+
+        image_downloads: list[Path] = []
+        image_dir = media_dir / "stock_image"
+        image_queries = scene_queries[:max(1, planned_images)]
+        for idx, query in enumerate(image_queries, start=1):
+            try:
+                files = fetch_images(
+                    query=query,
+                    output_dir=image_dir / f"q{idx:02d}",
+                    count=1,
+                    pexels_key=PEXELS_API_KEY or "",
+                    pixabay_key=PIXABAY_API_KEY or "",
+                )
+                image_downloads.extend(files)
+            except Exception as exc:
+                LOGGER.debug("stock_image_fetch_failed query=%s error=%s", query, str(exc)[:180])
+        if image_downloads:
+            media_paths.extend(image_downloads)
+        LOGGER.info(
+            json.dumps(
+                {
+                    "event": "auto_media_download",
+                    "type": "image",
+                    "downloaded": len(image_downloads),
+                    "planned": planned_images,
+                    "targetSeconds": round(float(target_duration), 2),
+                },
+                ensure_ascii=False,
+            )
+        )
+
     output_video_path = output_dir / "final_full.mp4"
     render_vertical_video(
         media_paths=media_paths,
@@ -1770,6 +1903,7 @@ def run_full_pipeline(
             "video_path": str(output_video_path),
             "uploadRequested": upload_requested,
             "uploadSkipped": not upload_requested,
+            "uploadSkipReason": "" if upload_requested else "upload_not_requested",
             "youtubeVideoId": uploaded_video_id,
             "videoUrl": uploaded_video_url,
         },

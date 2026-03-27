@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import subprocess
 import tempfile
+import random
 import re
 from typing import Iterable
 
@@ -211,6 +212,33 @@ def _is_video(path: Path) -> bool:
     return path.suffix.lower() in _VIDEO_EXTS
 
 
+def _allocate_mixed_clip_durations(video_count: int, total_for_videos: float) -> list[float]:
+    """
+    Allocate per-clip durations with mixed values in [2, 6] seconds.
+    """
+    if video_count <= 0:
+        return []
+    base = [float(random.choice([2, 3, 4, 5, 6])) for _ in range(video_count)]
+    base_sum = max(1.0, sum(base))
+    scale = max(0.4, float(total_for_videos) / base_sum)
+    scaled = [max(2.0, min(6.0, round(v * scale, 2))) for v in base]
+
+    target = max(2.0 * video_count, float(total_for_videos))
+    current = sum(scaled)
+    idx = 0
+    # Fine-tune to get closer to target while preserving 2..6 bounds.
+    while abs(current - target) > 0.15 and idx < 400:
+        i = idx % video_count
+        if current < target and scaled[i] < 6.0:
+            scaled[i] = round(min(6.0, scaled[i] + 0.1), 2)
+            current += 0.1
+        elif current > target and scaled[i] > 2.0:
+            scaled[i] = round(max(2.0, scaled[i] - 0.1), 2)
+            current -= 0.1
+        idx += 1
+    return scaled
+
+
 def render_vertical_video(
     *,
     media_paths: list[Path],
@@ -243,12 +271,20 @@ def render_vertical_video(
 
     with tempfile.TemporaryDirectory(prefix="cf_render_", dir=str(output_path.parent)) as tmpdir:
         tmp = Path(tmpdir)
-        seg_duration = max(0.7, duration / max(1, len(usable_media)))
+        image_count = sum(1 for p in usable_media if _is_image(p))
+        video_count = sum(1 for p in usable_media if _is_video(p))
+        image_duration = 3.0  # product requirement: each image stays for exactly 3 seconds
+        reserved_for_images = image_count * image_duration
+        remaining_for_videos = max(2.0 * max(1, video_count), duration - reserved_for_images)
+        clip_durations = _allocate_mixed_clip_durations(video_count, remaining_for_videos)
         segments: list[Path] = []
+        segment_durations: list[float] = []
+        video_idx = 0
 
         for idx, media in enumerate(usable_media, start=1):
             seg = tmp / f"seg_{idx:04d}.mp4"
             if _is_image(media):
+                seg_duration = image_duration
                 _run_ffmpeg([
                     "ffmpeg", "-y",
                     "-loop", "1",
@@ -262,6 +298,8 @@ def render_vertical_video(
                     str(seg),
                 ])
             else:
+                seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
+                video_idx += 1
                 _run_ffmpeg([
                     "ffmpeg", "-y",
                     "-stream_loop", "-1",
@@ -275,18 +313,46 @@ def render_vertical_video(
                     str(seg),
                 ])
             segments.append(seg)
+            segment_durations.append(seg_duration)
 
-        concat_file = tmp / "concat.txt"
-        concat_file.write_text("\n".join([f"file '{p.as_posix()}'" for p in segments]), encoding="utf-8")
         visual_track = tmp / "visual_track.mp4"
-        _run_ffmpeg([
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_file),
-            "-c", "copy",
-            str(visual_track),
-        ])
+        if len(segments) == 1:
+            _run_ffmpeg([
+                "ffmpeg", "-y",
+                "-i", str(segments[0]),
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                str(visual_track),
+            ])
+        else:
+            # Join animation: cross-fade transitions between segments.
+            transition = 0.35
+            cmd = ["ffmpeg", "-y"]
+            for seg in segments:
+                cmd.extend(["-i", str(seg)])
+
+            filters: list[str] = []
+            previous_label = "[0:v]"
+            cumulative = float(segment_durations[0])
+            for i in range(1, len(segments)):
+                out_label = f"[v{i}]"
+                # Offset is measured on current composed timeline.
+                offset = max(0.0, cumulative - transition)
+                filters.append(
+                    f"{previous_label}[{i}:v]xfade=transition=fade:duration={transition:.2f}:offset={offset:.2f}{out_label}"
+                )
+                previous_label = out_label
+                cumulative += float(segment_durations[i]) - transition
+
+            filter_complex = ";".join(filters)
+            cmd.extend([
+                "-filter_complex", filter_complex,
+                "-map", previous_label,
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                str(visual_track),
+            ])
+            _run_ffmpeg(cmd)
 
         muxed_no_sub = tmp / "muxed_no_sub.mp4"
         _run_ffmpeg([
