@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 import random
+import wave
 
 import requests
 
@@ -35,8 +36,23 @@ def pick_voice_profile(voice: str = "", rate: str = "") -> tuple[str, str]:
 
 
 def _validate_audio_file(path: Path) -> None:
-    if not path.exists() or path.stat().st_size < 500:
-        raise RuntimeError(f"Audio file missing or too small: {path}")
+    if not path.exists():
+        raise RuntimeError(f"Audio file missing: {path}")
+    duration = get_audio_duration_seconds(path)
+    if duration < 1.0:
+        raise RuntimeError("Invalid audio output")
+
+
+def get_audio_duration_seconds(audio_path: Path) -> float:
+    try:
+        with wave.open(str(audio_path), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if rate <= 0:
+                return 0.0
+            return frames / float(rate)
+    except Exception:
+        return 0.0
 
 
 def _uses_live_native_audio(model_name: str) -> bool:

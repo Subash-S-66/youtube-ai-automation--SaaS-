@@ -43,6 +43,10 @@ def allocate_section_budget(
     hook + main_content + recap + cta == target_seconds exactly.
     """
     target = max(15, min(60, int(target_seconds)))
+    if target < 25:
+        has_recap = False
+    if target < 20:
+        has_cta = False
     hook = max(3, int(target * 0.12))
     cta = max(5, int(target * 0.12)) if has_cta else 0
     recap = max(4, int(target * 0.10)) if has_recap else 0

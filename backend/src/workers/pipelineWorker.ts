@@ -280,6 +280,9 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
   'pipelineQueue',
   async (job: BullJob<PipelineJobPayload>) => {
     const { userId, jobId, settings: rawSettings } = job.data;
+    if (job.attemptsMade > 1) {
+      console.warn(`[PipelineWorker] Retry detected for job: ${job.id} (attemptsMade=${job.attemptsMade})`);
+    }
     const inputAudit = normalizePipelineSettings(rawSettings || {});
     let settings = inputAudit.normalizedSettings;
     console.log(`Processing job ${jobId} for user ${userId}`);
@@ -545,6 +548,9 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         script: payloadScript,
         captions: payloadCaptions.length > 0 ? payloadCaptions : fallbackCaptions,
         videoConfig: payloadVideoConfig,
+        targetDuration: settings.targetDuration || settings.duration || 40,
+        ctaEnabled: !!settings.ctaEnabled,
+        recapEnabled: !!settings.recapEnabled,
         youtube: {
           title: executionJob.title || String(firstPreparedItem.title || ''),
           description: executionJob.description || String(firstPreparedItem.description || ''),

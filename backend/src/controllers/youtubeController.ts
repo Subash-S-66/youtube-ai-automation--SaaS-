@@ -158,18 +158,31 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
 
     // Save tokens in MongoDB
     const existingChannelIndex = user.youtubeChannels.findIndex(c => c.channelId === channelId);
+    const reconnectChannelIndex = reconnectChannelId
+      ? user.youtubeChannels.findIndex(c => c.channelId === reconnectChannelId)
+      : -1;
     const newTokens = {
         access_token: tokens.access_token || undefined,
         refresh_token: tokens.refresh_token || undefined,
         expiry_date: tokens.expiry_date || undefined,
     };
 
-    if (reconnectChannelId && reconnectChannelId !== channelId) {
-      const frontendUrl = resolveFrontendBaseUrl(req);
-      return res.redirect(`${frontendUrl}/dashboard?error=reconnect_channel_mismatch`);
-    }
+    // Reconnect flow: always repair the requested channel entry, even if returned channelId changed.
+    if (reconnectChannelIndex !== -1 && user.youtubeChannels[reconnectChannelIndex]) {
+      user.youtubeChannels[reconnectChannelIndex].tokens = {
+        ...user.youtubeChannels[reconnectChannelIndex].tokens,
+        ...newTokens
+      };
+      user.youtubeChannels[reconnectChannelIndex].channelName = channelName;
+      user.youtubeChannels[reconnectChannelIndex].channelId = channelId;
+      user.youtubeChannels[reconnectChannelIndex].isValid = true;
 
-    if (existingChannelIndex !== -1) {
+      // De-duplicate any additional stale entries for the same resolved channelId.
+      user.youtubeChannels = user.youtubeChannels.filter((channel, idx) => {
+        if (idx === reconnectChannelIndex) return true;
+        return channel.channelId !== channelId;
+      });
+    } else if (existingChannelIndex !== -1) {
        // Update existing channel
        if (user.youtubeChannels[existingChannelIndex]) {
            user.youtubeChannels[existingChannelIndex].tokens = {

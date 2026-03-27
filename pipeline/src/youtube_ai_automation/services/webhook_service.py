@@ -1,6 +1,7 @@
 import os
 import requests
 import logging
+import time
 
 LOGGER = logging.getLogger("webhook_service")
 _JOB_STATUS_PATH = "/api/webhook/job-status"
@@ -16,6 +17,26 @@ def _normalize_webhook_candidates(webhook_url: str) -> list[str]:
     parsed = urlparse(base)
     origin = f"{parsed.scheme}://{parsed.netloc}"
     return [origin + _JOB_STATUS_PATH]
+
+
+def send_with_retry(url: str, payload: dict, headers: dict) -> None:
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=10
+            )
+            response.raise_for_status()
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            raise
 
 def send_job_status(
     job_id: str,
@@ -48,13 +69,7 @@ def send_job_status(
     last_error: Exception | None = None
     for candidate_url in _normalize_webhook_candidates(webhook_url):
         try:
-            response = requests.post(
-                candidate_url,
-                json=payload,
-                headers=headers,
-                timeout=10
-            )
-            response.raise_for_status()
+            send_with_retry(candidate_url, payload, headers)
             return
         except requests.HTTPError as e:
             last_error = e

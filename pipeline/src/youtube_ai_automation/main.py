@@ -1173,15 +1173,32 @@ def validate_ending(script: str) -> bool:
     if tail.split()[-1] in bad_tail:
         return False
     return True
-    try:
-        with wave.open(str(file_path), "rb") as wav_file:
-            frames = wav_file.getnframes()
-            frame_rate = wav_file.getframerate()
-            if frame_rate <= 0:
-                return 0.0
-            return float(frames) / float(frame_rate)
-    except Exception:
-        return 0.0
+
+
+def repair_section_ending_with_context(
+    section_name: str,
+    sections: dict[str, str],
+    section_budget: dict[str, int],
+    topic: str,
+    story_mode: bool,
+) -> str:
+    ordered = [
+        sections.get("hook", ""),
+        sections.get("main_content", ""),
+        sections.get("recap", ""),
+        sections.get("cta", ""),
+    ]
+    context = " ".join([part.strip() for part in ordered[:-1] if part.strip()][-2:]).strip()
+    base = sections.get(section_name, "").strip()
+    seed = f"{context} {base}".strip() if context else base
+    repaired = adjust_script_to_duration(
+        script=seed,
+        target_seconds=max(1, int(section_budget.get(section_name, 1))),
+        section_name="main" if section_name == "main_content" else section_name,
+        topic_hint=topic,
+        story_mode=story_mode,
+    )
+    return repair_section_ending(repaired, "main" if section_name == "main_content" else section_name)
 
 
 def run_prepared_pipeline(
@@ -1227,6 +1244,7 @@ def run_prepared_pipeline(
     subtitle_color = str(video_config.get("templateConfig", {}).get("subtitleColor", "#FFFFFF")).strip() or "#FFFFFF"
 
     best_script = ""
+    last_valid_script = script_text
     best_sections: dict[str, str] = {"hook": "", "main_content": "", "recap": "", "cta": ""}
     best_section_budget: dict[str, int] = {"hook": 0, "main_content": 0, "recap": 0, "cta": 0}
     last_errors: list[str] = []
@@ -1252,7 +1270,16 @@ def run_prepared_pipeline(
             section_scripts["cta"],
         ]
         full_script = " ".join(p for p in ordered_parts if p).strip()
+        if full_script:
+            last_valid_script = full_script
         estimated = estimate_script_duration_seconds(full_script)
+        LOGGER.info(
+            "prepared_attempt=%s words=%s estimated=%.2fs target=%ss",
+            attempt,
+            len(full_script.split()),
+            estimated,
+            target_duration,
+        )
         lower_bound = max(10, target_duration - 5)
         upper_bound = min(60, target_duration + 5)
 
@@ -1294,7 +1321,15 @@ def run_prepared_pipeline(
         best_section_budget = section_budget
 
     if not best_script:
-        raise RuntimeError("Failed to build script within duration bounds")
+        best_script = last_valid_script
+        best_sections = {
+            "hook": best_sections.get("hook", ""),
+            "main_content": best_sections.get("main_content", best_script),
+            "recap": best_sections.get("recap", ""),
+            "cta": best_sections.get("cta", ""),
+        }
+        best_section_budget = best_section_budget or {"hook": 0, "main_content": 0, "recap": 0, "cta": 0}
+        last_errors.append("fallback_script_used_after_attempt_exhaustion")
 
     section_validation_errors = validate_sections(best_section_budget, best_sections)
     if section_validation_errors:
@@ -1358,55 +1393,73 @@ def run_prepared_pipeline(
 
     full_audio_path: Path | None = None
     actual_audio_seconds = 0.0
-    for audio_attempt in range(1, 4):
-        full_audio_path, _ = generate_voice(
-            script=best_package["script"],
-            voice=voice_name,
-            rate=voice_rate,
-            output_path=(output_dir / "voice_full.wav"),
-            rotate_profile=False,
-        )
-        actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
-        if actual_audio_seconds <= 0:
-            raise RuntimeError("Unable to measure generated audio duration.")
-        drift = actual_audio_seconds - target_duration
-        if abs(drift) <= 3 or audio_attempt >= 3:
-            break
-        if drift > 0:
-            best_package["sections"]["main_content"] = adjust_script_to_duration(
-                script=best_package["sections"].get("main_content", ""),
-                target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) - drift)),
-                section_name="main",
-                topic_hint=topic,
-                story_mode=story_mode,
+    audio_retry_count = 0
+    audio_failed = False
+    try:
+        for audio_attempt in range(1, 4):
+            full_audio_path, _ = generate_voice(
+                script=best_package["script"],
+                voice=voice_name,
+                rate=voice_rate,
+                output_path=(output_dir / "voice_full.wav"),
+                rotate_profile=False,
             )
-        else:
-            best_package["sections"]["main_content"] = expand_meaningfully(
-                best_package["sections"].get("main_content", ""),
-                max(8, int(abs(drift) * 2.5)),
+            actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
+            if actual_audio_seconds <= 0:
+                raise RuntimeError("Unable to measure generated audio duration.")
+            drift = actual_audio_seconds - target_duration
+            LOGGER.info(
+                "audio_attempt=%s actual=%.2fs target=%ss drift=%.2fs",
+                audio_attempt,
+                actual_audio_seconds,
+                target_duration,
+                drift,
             )
-            best_package["sections"]["main_content"] = adjust_script_to_duration(
-                script=best_package["sections"]["main_content"],
-                target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) + abs(drift))),
-                section_name="main",
-                topic_hint=topic,
-                story_mode=story_mode,
-            )
-        best_package["script"] = " ".join(
-            p for p in [
-                best_package["sections"].get("hook", ""),
-                best_package["sections"].get("main_content", ""),
-                best_package["sections"].get("recap", ""),
-                best_package["sections"].get("cta", ""),
-            ] if p
-        ).strip()
+            if abs(drift) <= 2:
+                break
+            # Regenerate only if drift is materially high
+            if abs(drift) <= 3:
+                break
+            if audio_attempt >= 3:
+                break
+            audio_retry_count += 1
+            if drift > 3:
+                best_package["sections"]["main_content"] = adjust_script_to_duration(
+                    script=best_package["sections"].get("main_content", ""),
+                    target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) - drift)),
+                    section_name="main",
+                    topic_hint=topic,
+                    story_mode=story_mode,
+                )
+            else:
+                best_package["sections"]["main_content"] = expand_meaningfully(
+                    best_package["sections"].get("main_content", ""),
+                    max(8, int(abs(drift) * 2.5)),
+                )
+                best_package["sections"]["main_content"] = adjust_script_to_duration(
+                    script=best_package["sections"]["main_content"],
+                    target_seconds=max(5, int(best_package["sections_budget"].get("main_content", 5) + abs(drift))),
+                    section_name="main",
+                    topic_hint=topic,
+                    story_mode=story_mode,
+                )
+            best_package["script"] = " ".join(
+                p for p in [
+                    best_package["sections"].get("hook", ""),
+                    best_package["sections"].get("main_content", ""),
+                    best_package["sections"].get("recap", ""),
+                    best_package["sections"].get("cta", ""),
+                ] if p
+            ).strip()
+    except Exception as exc:
+        audio_failed = True
+        last_errors.append(f"audio_fallback:{str(exc)[:120]}")
 
-    if full_audio_path is None:
-        raise RuntimeError("Audio generation failed in prepared pipeline.")
-    created.append(full_audio_path)
+    if full_audio_path is not None:
+        created.append(full_audio_path)
 
     estimated_duration = estimate_audio_duration(best_package["script"])
-    actual_audio_seconds = get_audio_duration_seconds(full_audio_path)
+    actual_audio_seconds = get_audio_duration_seconds(full_audio_path) if full_audio_path is not None else estimated_duration
     if abs(actual_audio_seconds - estimated_duration) > 2:
         LOGGER.warning(
             "Audio/script sync drift detected. actual=%.2fs estimated=%.2fs",
@@ -1464,13 +1517,16 @@ def run_prepared_pipeline(
     )
     if not validate_ending(best_package["script"]):
         if best_package["sections"].get("cta", "").strip():
-            best_package["sections"]["cta"] = repair_section_ending(best_package["sections"]["cta"], "cta")
+            best_package["sections"]["cta"] = repair_section_ending_with_context(
+                "cta", best_package["sections"], best_package["sections_budget"], topic, story_mode
+            )
         elif best_package["sections"].get("recap", "").strip():
-            best_package["sections"]["recap"] = repair_section_ending(best_package["sections"]["recap"], "recap")
+            best_package["sections"]["recap"] = repair_section_ending_with_context(
+                "recap", best_package["sections"], best_package["sections_budget"], topic, story_mode
+            )
         else:
-            best_package["sections"]["main_content"] = repair_section_ending(
-                best_package["sections"].get("main_content", ""),
-                "main",
+            best_package["sections"]["main_content"] = repair_section_ending_with_context(
+                "main_content", best_package["sections"], best_package["sections_budget"], topic, story_mode
             )
         best_package["script"] = " ".join(
             p for p in [
@@ -1485,7 +1541,7 @@ def run_prepared_pipeline(
         errors.append(f"ending:{ending_error}")
 
     sectionAudio = {
-        "full": str(full_audio_path),
+        "full": str(full_audio_path) if full_audio_path is not None else "",
         "hook": round(estimate_duration_from_script(best_package["sections"].get("hook", "")), 2),
         "main_content": round(estimate_duration_from_script(best_package["sections"].get("main_content", "")), 2),
         "recap": round(estimate_duration_from_script(best_package["sections"].get("recap", "")), 2),
@@ -1503,7 +1559,7 @@ def run_prepared_pipeline(
         "duration_estimated": estimated_duration,
         "duration_actual": round(actual_audio_seconds or estimated_duration, 2),
         "validation_passed": bool(valid and ending_ok),
-        "audio_path": str(full_audio_path),
+        "audio_path": str(full_audio_path) if full_audio_path is not None else "",
         "subtitle_path": str(subtitle_file),
         "captions": {
             "text": "\n".join([str(row.get("text", "")).strip() for row in timed_lines if str(row.get("text", "")).strip()]),
@@ -1528,8 +1584,13 @@ def run_prepared_pipeline(
         },
         "sectionAudio": sectionAudio,
         "uploadSkipped": True,
+        "retry_count": audio_retry_count,
         "validationErrors": errors,
     }
+    if audio_failed:
+        result_payload["warning"] = "Used fallback due to retries"
+        result_payload["duration"] = estimated_duration
+        result_payload["validation_passed"] = False
     result_file = output_dir / "prepared_result.json"
     result_file.write_text(json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"PIPELINE_OUTPUT_JSON:{json.dumps(result_payload, ensure_ascii=False)}")

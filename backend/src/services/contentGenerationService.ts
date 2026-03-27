@@ -263,6 +263,33 @@ const generateStructuredContentWithAI = async (prompt: string): Promise<any> => 
   return extractFirstJsonObject(output);
 };
 
+const generateWithRetry = async (
+  modelPrompt: string,
+  topic: string,
+  targetDurationSeconds: number
+): Promise<PreparedContentItem> => {
+  const MAX_RETRIES = 3;
+  const minWords = Math.floor((targetDurationSeconds - 5) * 2.5);
+  let lastError: unknown = null;
+  for (let i = 0; i < MAX_RETRIES; i += 1) {
+    try {
+      const raw = await generateStructuredContentWithAI(modelPrompt);
+      const result = normalizePreparedItem(raw, topic, targetDurationSeconds);
+      const words = result.script.split(/\s+/).filter(Boolean).length;
+      if (words < minWords) {
+        throw new Error(`Script too short: ${words} < ${minWords}`);
+      }
+      return result;
+    } catch (err) {
+      lastError = err;
+      if (i === MAX_RETRIES - 1) {
+        throw err;
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Content generation retries exhausted.');
+};
+
 const deterministicFallback = (
   topic: string,
   generatedPrompt: string,
@@ -322,8 +349,7 @@ export const generateContent = async (input: ContentGenerationInput): Promise<Co
     );
 
     try {
-      const raw = await generateStructuredContentWithAI(modelPrompt);
-      preparedContent.push(normalizePreparedItem(raw, topic, targetDuration));
+      preparedContent.push(await generateWithRetry(modelPrompt, topic, targetDuration));
     } catch (error) {
       // deterministic fallback keeps the pipeline executable when model response is malformed
       preparedContent.push(deterministicFallback(topic, generatedPrompt, i));
