@@ -48,7 +48,22 @@ export const generatePrompt = asyncHandler(
     if (tone !== undefined) promptOptions.tone = tone;
     if (safeTemplateConfig !== undefined) promptOptions.templateConfig = safeTemplateConfig;
 
-    const generated_prompt = await generateAIPrompt(user_prompt, promptOptions);
+    let generated_prompt = '';
+    try {
+      generated_prompt = await generateAIPrompt(user_prompt, promptOptions);
+    } catch (error: any) {
+      const message = String(error?.message || 'Prompt generation failed');
+      const normalized = message.toLowerCase();
+      if (
+        normalized.includes('429') ||
+        normalized.includes('too many requests') ||
+        normalized.includes('quota') ||
+        normalized.includes('rate limit')
+      ) {
+        throw new AppError(`Prompt generation rate-limited by Gemini. ${message}`, 429);
+      }
+      throw new AppError(message, 502);
+    }
 
     // Save prompt pair to DB
     const newPrompt = await Prompt.create({

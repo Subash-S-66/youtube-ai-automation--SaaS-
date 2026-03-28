@@ -121,7 +121,17 @@ export const generatePromptDirect = async (user_prompt: string): Promise<string>
     console.log('[PromptService] Successfully generated prompt using native-gemini');
     return resultText.trim();
   } catch (error: any) {
-    throw new Error(`Prompt generation failed (native-gemini): ${error?.message || 'unknown error'}`);
+    const message = `Prompt generation failed (native-gemini): ${error?.message || 'unknown error'}`;
+    const normalized = String(error?.message || '').toLowerCase();
+    const err: any = new Error(message);
+    err.statusCode =
+      normalized.includes('429') ||
+      normalized.includes('too many requests') ||
+      normalized.includes('quota') ||
+      normalized.includes('rate limit')
+        ? 429
+        : 502;
+    throw err;
   }
 };
 

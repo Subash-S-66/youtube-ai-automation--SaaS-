@@ -1,82 +1,16 @@
-import base64
-import json
+﻿from __future__ import annotations
+
 import logging
 import os
+import sys
 from pathlib import Path
-
-import time
 
 import requests
 
-from youtube_ai_automation.config import (
-    AI_PROVIDER,
-    DEFAULT_NICHE,
-    GEMINI_API_KEY,
-    GEMINI_MODEL,
-    TOKEN_PATH,
-    YOUTUBE_CLIENT_SECRET_FILE,
-)
-from youtube_ai_automation.main import (
-    _run_network_preflight,
-    _setup_logging,
-    reset_upload_report,
-    run_full_pipeline,
-    run_prepared_pipeline,
-    update_upload_report_metadata,
-    UPLOAD_REPORT_FILE,
-)
-from youtube_ai_automation.core.orchestrator import run_orchestrated_pipeline
-from youtube_ai_automation.notification_utils import build_upload_summary_message, load_upload_report, send_telegram_message
-
+from youtube_ai_automation.config import TOKEN_PATH, YOUTUBE_CLIENT_SECRET_FILE
+from youtube_ai_automation.run_azure import main as run_azure_main
 
 LOGGER = logging.getLogger("azure_job_runner")
-
-
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name, "").strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "y", "on"}
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        return default
-    return max(1, value)
-
-
-def _normalize_mode(value: str) -> str:
-    cleaned = value.strip().strip('"').strip("'").lower()
-    if not cleaned:
-        return ""
-    token = cleaned.replace(",", " ").split()[0]
-    aliases = {
-        "news": "news",
-        "gnews": "news",
-        "breaking": "news",
-        "auto": "auto",
-        "optimized": "optimized",
-        "opt": "optimized",
-        "manual": "manual",
-        "single": "single",
-        "prepared": "prepared",
-        "execution": "full",
-        "full": "full",
-        "production": "full",
-    }
-    return aliases.get(token, token)
-
-
-def _resolve_mode() -> str:
-    explicit = _normalize_mode(os.getenv("RUN_MODE", ""))
-    if explicit:
-        return explicit
-    return "full"
 
 
 def _safe_write_text(path: Path, content: str) -> None:
@@ -88,6 +22,8 @@ def _decode_b64(raw: str) -> str | None:
     if not raw:
         return None
     try:
+        import base64
+
         return base64.b64decode(raw).decode("utf-8")
     except Exception:
         return None
@@ -127,7 +63,7 @@ def _prepare_youtube_credentials() -> None:
     client_secret_json = os.getenv("YOUTUBE_CLIENT_SECRET_JSON", "").strip()
     token_b64 = os.getenv("YOUTUBE_TOKEN_B64", "").strip()
     token_json = os.getenv("YOUTUBE_TOKEN_JSON", "").strip()
-    token_json_encrypted = os.getenv("YOUTUBE_TOKEN_JSON_ENCRYPTED", "").strip()
+    token_json_encrypted = os.getenv("YOUTUBE_TOKEN_JSON_ENCRYPTED", "").strip() or os.getenv("YOUTUBE_TOKEN_ENCRYPTED", "").strip()
     encryption_key = os.getenv("ENCRYPTION_KEY", "").strip()
 
     decoded_client_secret = _decode_b64(client_secret_b64)
@@ -145,50 +81,6 @@ def _prepare_youtube_credentials() -> None:
             _safe_write_text(token_path, decrypted_token_json)
     elif token_json:
         _safe_write_text(token_path, token_json)
-
-
-from youtube_ai_automation.services.webhook_service import send_job_status
-
-def _notify_telegram(message: str) -> None:
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "").strip()
-    if not token or not chat_id:
-        return
-    try:
-        send_telegram_message(token, chat_id, message)
-    except Exception as exc:
-        LOGGER.warning("Telegram notify failed: %s", exc, exc_info=True)
-        return
-
-def _notify_backend(
-    status: str,
-    logs: str = "",
-    video_url: str = "",
-    youtube_video_id: str = "",
-    error_message: str = "",
-    error_stage: str = "",
-) -> None:
-    job_id = os.getenv("JOB_ID", "").strip()
-    if job_id:
-        send_job_status(
-            job_id,
-            status,
-            logs,
-            video_url=video_url,
-            youtube_video_id=youtube_video_id,
-            error_message=error_message,
-            error_stage=error_stage,
-        )
-
-
-def _extract_video_result(report: dict) -> tuple[str, str]:
-    uploads = report.get("uploads", []) if isinstance(report, dict) else []
-    if not isinstance(uploads, list) or not uploads:
-        return "", ""
-    latest = uploads[-1] if isinstance(uploads[-1], dict) else {}
-    youtube_video_id = str(latest.get("video_id", "")).strip()
-    video_url = f"https://www.youtube.com/watch?v={youtube_video_id}" if youtube_video_id else ""
-    return video_url, youtube_video_id
 
 
 def _acquire_arm_token(tenant_id: str, client_id: str, client_secret: str) -> str:
@@ -246,7 +138,8 @@ def _update_containerapps_job_secret(
 
 
 def _sync_token_to_azure_job(token_path: Path, initial_token: str | None) -> None:
-    if not _env_flag("AZURE_SYNC_TOKEN_TO_JOB", False):
+    raw_flag = str(os.getenv("AZURE_SYNC_TOKEN_TO_JOB", "")).strip().lower()
+    if raw_flag not in {"1", "true", "yes", "on"}:
         return
     if not token_path.exists():
         LOGGER.warning("Token sync skipped: token file missing at %s", token_path)
@@ -300,102 +193,15 @@ def _sync_token_to_azure_job(token_path: Path, initial_token: str | None) -> Non
         LOGGER.warning("Failed to sync token to Azure secret: %s", exc)
 
 
-def main() -> None:
-    _setup_logging()
-    reset_upload_report(UPLOAD_REPORT_FILE)
-
-    run_mode_raw = os.getenv("RUN_MODE", "")
-    run_mode = _resolve_mode()
-    if run_mode not in {"prepared", "full"}:
-        raise SystemExit(
-            f"Pipeline supports only prepared/full mode "
-            f"(RUN_MODE raw={run_mode_raw!r}, normalized={run_mode!r})"
-        )
-    count = _env_int("RUN_COUNT", 1)
-    upload = _env_flag("UPLOAD", True) or _env_flag("RUN_UPLOAD", True)
-    topic = os.getenv("TOPIC", "").strip()
-    niche = os.getenv("NICHE", DEFAULT_NICHE).strip()
-    publish_at = os.getenv("PUBLISH_AT", "").strip() or None
-
-    update_upload_report_metadata(UPLOAD_REPORT_FILE, requested_count=count)
+def main(argv: list[str] | None = None) -> dict:
     _prepare_youtube_credentials()
     token_path = Path(os.getenv("TOKEN_PATH", str(TOKEN_PATH)))
     initial_token = token_path.read_text(encoding="utf-8") if token_path.exists() else None
-
-    LOGGER.info("Azure job starting. mode=%s count=%s upload=%s", run_mode, count, upload)
-    LOGGER.info(
-        "Pipeline config: AI_PROVIDER=%s GEMINI_MODEL=%s GEMINI_API_KEY=%s",
-        AI_PROVIDER,
-        GEMINI_MODEL,
-        "configured" if GEMINI_API_KEY else "MISSING",
-    )
-    _notify_telegram(f"Azure job starting. mode={run_mode} count={count} upload={upload}")
-    _notify_backend("running", f"Job started in mode={run_mode} model={GEMINI_MODEL}")
-
-    _run_network_preflight(check_trend_sources=run_mode in {"auto", "optimized"}, upload=upload)
-
     try:
-        payload_raw = os.getenv("PIPELINE_PAYLOAD", "{}").strip() or "{}"
-        try:
-            payload = json.loads(payload_raw)
-        except Exception as exc:
-            raise SystemExit(f"RUN_MODE={run_mode} received invalid PIPELINE_PAYLOAD JSON: {exc}")
-
-        pipeline_start = time.time()
-        LOGGER.info("Pipeline execution starting: mode=%s", run_mode)
-
-        use_orchestrator = str(os.getenv("PIPELINE_ORCHESTRATOR_V2", "true")).strip().lower() in {"1", "true", "yes"}
-        if use_orchestrator:
-            LOGGER.info("Dispatching orchestrated pipeline (mode=%s)", run_mode)
-            timeout_seconds = int(os.getenv("PIPELINE_TIMEOUT_SECONDS", "480"))
-            run_orchestrated_pipeline(
-                payload=payload if isinstance(payload, dict) else {},
-                upload=upload,
-                mode=run_mode,
-                publish_at=publish_at,
-                timeout_seconds=timeout_seconds,
-            )
-        elif run_mode == "full":
-            LOGGER.info("Dispatching run_full_pipeline (render + upload)")
-            run_full_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
-        else:
-            LOGGER.info("Dispatching run_prepared_pipeline (audio + captions only)")
-            run_prepared_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
-
-        elapsed = round(time.time() - pipeline_start, 2)
-        LOGGER.info("Pipeline execution completed in %.2fs (mode=%s)", elapsed, run_mode)
-
-        report = load_upload_report(UPLOAD_REPORT_FILE)
-        _notify_telegram(build_upload_summary_message(report))
-        video_url, youtube_video_id = _extract_video_result(report)
-        _notify_backend("SUCCESS", f"Pipeline completed in {elapsed}s.", video_url=video_url, youtube_video_id=youtube_video_id)
-        return
-    except Exception as exc:
-        LOGGER.exception("Azure job failed: %s", exc)
-        _notify_telegram(f"Azure job failed: {exc}")
-
-        # Determine if failed due to YouTube limits
-        err_str = str(exc).lower()
-        if "quota" in err_str or "upload limit" in err_str or "daily limit" in err_str:
-            _notify_backend(
-                "YOUTUBE_REJECTED",
-                f"PIPELINE_STATUS:YOUTUBE_REJECTED\nAzure job failed: {exc}",
-                error_message=str(exc),
-                error_stage="UPLOAD",
-            )
-        else:
-            _notify_backend(
-                "FAILED",
-                f"PIPELINE_STATUS:FAILED\nAzure job failed: {exc}",
-                error_message=str(exc),
-                error_stage="RENDER",
-            )
-
-        raise
+        return run_azure_main(argv if argv is not None else sys.argv[1:])
     finally:
         _sync_token_to_azure_job(token_path, initial_token)
 
 
 if __name__ == "__main__":
     main()
-

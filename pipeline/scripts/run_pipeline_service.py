@@ -1,6 +1,6 @@
 """
 Lightweight HTTP service that accepts backend dispatch requests and runs the
-prepared pipeline runner asynchronously.
+pipeline runner asynchronously.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _run_job(job_id: str, env_updates: dict[str, str]) -> None:
     env = os.environ.copy()
     env.update(env_updates)
     env["PYTHONPATH"] = str(ROOT_DIR / "src")
-    env["RUN_MODE"] = env.get("RUN_MODE", "prepared")
+    env["RUN_MODE"] = env.get("RUN_MODE", "full")
 
     result = subprocess.run(
         [PYTHON_CMD, "-m", "youtube_ai_automation.azure_job_runner"],
@@ -117,4 +117,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

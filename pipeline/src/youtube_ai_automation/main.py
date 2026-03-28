@@ -392,6 +392,54 @@ def _create_silent_audio(output_dir: Path, duration_seconds: float) -> Path | No
     return None
 
 
+def _runtime_used_clips_file(default_path: Path) -> Path:
+    user_id = str(os.getenv("USER_ID", "")).strip()
+    if user_id:
+        return default_path.parent / "users" / user_id / "used_clips.json"
+    return default_path
+
+
+def _delete_file_quiet(path: Path) -> None:
+    try:
+        if path.exists() and path.is_file():
+            path.unlink()
+    except Exception as exc:
+        LOGGER.warning("cleanup_failed file=%s reason=%s", path, str(exc)[:180])
+
+
+def _cleanup_after_successful_upload(
+    *,
+    media_paths: list[Path],
+    audio_path: Path,
+    subtitle_path: Path | None,
+    output_video_path: Path,
+) -> None:
+    # Delete only generated artifacts from current run.
+    for media in media_paths:
+        _delete_file_quiet(media)
+    _delete_file_quiet(audio_path)
+    if subtitle_path is not None:
+        _delete_file_quiet(subtitle_path)
+    _delete_file_quiet(output_video_path)
+
+    # Also clear generated stock/orchestrated media folders to avoid buildup between jobs.
+    cleanup_dirs = [
+        CLIPS_DIR / "orchestrated",
+        CLIPS_DIR / "stock_video",
+        CLIPS_DIR / "stock_image",
+        CLIPS_DIR / "full_mode",
+    ]
+    for folder in cleanup_dirs:
+        try:
+            if not folder.exists() or not folder.is_dir():
+                continue
+            for item in folder.rglob("*"):
+                if item.is_file():
+                    _delete_file_quiet(item)
+        except Exception as exc:
+            LOGGER.warning("cleanup_failed dir=%s reason=%s", folder, str(exc)[:180])
+
+
 def _extract_highlight_words(topic: str, hook: str) -> list[str]:
     words = []
     for source in (topic, hook):
@@ -782,7 +830,7 @@ def _build_video_from_content(
                             pixabay_keys=PIXABAY_API_KEYS,
                             scene_duration=scene_duration,
                             min_resolution=720,
-                            used_clips_file=USED_CLIPS_FILE,
+                            used_clips_file=_runtime_used_clips_file(USED_CLIPS_FILE),
                             clips_per_scene_min=1,
                             clips_per_scene_max=1,
                             job_id=str(os.getenv("JOB_ID", "")).strip(),
@@ -2209,8 +2257,17 @@ def run_full_pipeline(
         except Exception as exc:
             _log_job_stage(payload, "upload", f"upload failed but pipeline continuing: {str(exc)[:220]}", level="warning")
 
-    # Keep artifacts for debugging/auditing and reuse in later runs.
-    LOGGER.info("Stage: Post-upload cleanup skipped (artifacts retained)")
+    # Cleanup local artifacts after successful upload (if enabled).
+    if upload_requested and uploaded_video_id and CLEANUP_LOCAL_FILES_AFTER_UPLOAD:
+        _cleanup_after_successful_upload(
+            media_paths=media_paths,
+            audio_path=audio_path,
+            subtitle_path=subtitle_path,
+            output_video_path=output_video_path,
+        )
+        LOGGER.info("Stage: Post-upload cleanup completed (local artifacts deleted)")
+    else:
+        LOGGER.info("Stage: Post-upload cleanup skipped (artifacts retained)")
 
     final_payload = {
         "jobId": str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip(),

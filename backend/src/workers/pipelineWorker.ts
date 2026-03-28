@@ -16,7 +16,7 @@ import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { generateContent } from '../services/contentGenerationService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
-import { triggerLocalPipeline, LocalPipelineCallbacks } from './localPipelineTrigger';
+import { triggerLocalPipeline } from './localPipelineTrigger';
 import { triggerRemotePipeline } from './remotePipelineTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -144,7 +144,7 @@ const updateProgressSafe = async (
   }
 };
 
-const shouldRequireYouTubeUpload = (settings: Record<string, any>): boolean => {
+const shouldRequireYouTubeUpload = (settings: Record<string, any>, uploadTargetId?: string): boolean => {
   if (!settings || typeof settings !== 'object') return false;
   if (settings.upload === false) return false;
   return Boolean(
@@ -154,21 +154,72 @@ const shouldRequireYouTubeUpload = (settings: Record<string, any>): boolean => {
     settings.scheduleEnabled === true ||
     settings.publishNow === true ||
     // Immediate dashboard runs usually provide a channelId without explicit upload flags.
-    (typeof settings.channelId === 'string' && settings.channelId.trim().length > 0)
+    (typeof settings.channelId === 'string' && settings.channelId.trim().length > 0) ||
+    (typeof uploadTargetId === 'string' && uploadTargetId.trim().length > 0)
   );
+};
+
+const resolveYouTubeUploadTarget = (
+  settings: Record<string, any>,
+  executionJob: Record<string, any>
+): string => {
+  const candidates = [
+    settings?.youtubeAccountId,
+    settings?.channelId,
+    settings?.accountId,
+    executionJob?.youtubeAccountId,
+    executionJob?.channelId,
+  ];
+  for (const raw of candidates) {
+    const value = typeof raw === 'string' ? raw.trim() : '';
+    if (value) return value;
+  }
+  return '';
 };
 
 const extractPipelineOutputJson = (stdout: string): Record<string, any> | null => {
   const marker = 'PIPELINE_OUTPUT_JSON:';
   const index = stdout.lastIndexOf(marker);
   if (index === -1) return null;
-  const payload = stdout.slice(index + marker.length).trim();
-  if (!payload) return null;
-  try {
-    return JSON.parse(payload);
-  } catch {
-    return null;
+  const tail = stdout.slice(index + marker.length);
+  if (!tail.trim()) return null;
+
+  // Robust extraction: parse first balanced JSON object after marker
+  // (stdout may contain extra lines after the JSON payload).
+  const start = tail.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < tail.length; i++) {
+    const ch = tail[i]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        const candidate = tail.slice(start, i + 1).trim();
+        try {
+          return JSON.parse(candidate);
+        } catch {
+          return null;
+        }
+      }
+    }
   }
+  return null;
 };
 
 const parseBaseUrl = (value: string): string => {
@@ -581,6 +632,11 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         voiceName: (settings.voices && settings.voices[0]) || '',
       });
 
+      const uploadTargetChannelId = resolveYouTubeUploadTarget(
+        settings as Record<string, any>,
+        executionJob as Record<string, any>
+      );
+
       const pipelinePayload = sanitizePayloadValue({
         jobId,
         mode: String((settings as any)?.mode || (settings as any)?.executionMode || process.env.PIPELINE_DEFAULT_MODE || 'full')
@@ -601,7 +657,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           hashtags: Array.isArray(executionJob.hashtags) && executionJob.hashtags.length > 0
             ? executionJob.hashtags
             : (Array.isArray(firstPreparedItem.hashtags) ? firstPreparedItem.hashtags : []),
-          accountId: executionJob.youtubeAccountId || settings.channelId,
+          accountId: uploadTargetChannelId,
         },
       });
       if (!Array.isArray(pipelinePayload?.script) || pipelinePayload.script.length === 0) {
@@ -662,52 +718,36 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       }
 
       // 3. Ensure valid YouTube token only if this run requires upload.
-      const requiresUpload = shouldRequireYouTubeUpload(settings as Record<string, any>);
+      const requiresUpload = shouldRequireYouTubeUpload(settings as Record<string, any>, uploadTargetChannelId);
+      await appendLogSafe(
+        jobId,
+        `${JSON.stringify({
+          event: 'upload_decision',
+          requiresUpload,
+          uploadTargetChannelId,
+          uploadFlag: (settings as any).upload,
+          autoUpload: (settings as any).autoUpload,
+          publishNow: (settings as any).publishNow,
+        })}\n`
+      );
       let youtubeToken = '';
-      let youtubeAuthorizedUserJson = '';
       if (requiresUpload) {
+        if (!uploadTargetChannelId) {
+          const err: any = new Error('Upload requested but no YouTube channel/account id was resolved.');
+          err.stage = 'UPLOAD';
+          throw err;
+        }
         await updateProgressSafe(job, 60, 'token_validation', 'Validating YouTube token');
         try {
-          youtubeToken = (await ensureValidYouTubeToken(settings.channelId, userId)).accessToken;
+          youtubeToken = (await ensureValidYouTubeToken(uploadTargetChannelId, userId)).accessToken;
         } catch (error: any) {
           error.stage = 'TOKEN';
-          throw new UnrecoverableError(error.message || 'YouTube token failure');
+          throw error;
         }
         if (!youtubeToken) {
           const err: any = new Error('Failed to obtain a valid YouTube token');
           err.stage = 'TOKEN';
-          throw new UnrecoverableError(err.message || 'YouTube token failure');
-        }
-        try {
-          const tokenUser = await User.findById(userId);
-          const channel = tokenUser?.youtubeChannels?.find((c: any) => c?.channelId === settings.channelId);
-          const accessToken = String(channel?.tokens?.access_token || youtubeToken || '').trim();
-          const refreshToken = String(channel?.tokens?.refresh_token || '').trim();
-          const expiryDate = Number(channel?.tokens?.expiry_date || 0) || undefined;
-          const clientId = String(process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '').trim();
-          const clientSecret = String(process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || '').trim();
-          if (accessToken && refreshToken && clientId && clientSecret) {
-            youtubeAuthorizedUserJson = JSON.stringify({
-              type: 'authorized_user',
-              client_id: clientId,
-              client_secret: clientSecret,
-              refresh_token: refreshToken,
-              access_token: accessToken,
-              token_uri: 'https://oauth2.googleapis.com/token',
-              expiry_date: expiryDate,
-            });
-            await appendLogSafe(jobId, 'Prepared refreshable YouTube OAuth payload from DB channel tokens.\n');
-          } else {
-            await appendLogSafe(
-              jobId,
-              'YouTube DB token payload incomplete; fallback to access-token-only runtime auth.\n'
-            );
-          }
-        } catch (payloadErr: any) {
-          await appendLogSafe(
-            jobId,
-            `Failed to build DB-backed YouTube OAuth payload: ${payloadErr?.message || String(payloadErr)}\n`
-          );
+          throw err;
         }
       } else {
         await appendLogSafe(jobId, 'Upload not requested for this job. Skipping YouTube token validation.\n');
@@ -737,7 +777,6 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
       // We will encrypt the token using the same ENCRYPTION_KEY used for DB storage.
       const encryptedYoutubeToken = youtubeToken ? encrypt(youtubeToken) : '';
-      const encryptedYoutubeTokenJson = youtubeAuthorizedUserJson ? encrypt(youtubeAuthorizedUserJson) : '';
 
       // Setup payload configuring environment variables for the container run
       // Production hardening: always execute full video generation runtime.
@@ -747,7 +786,6 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "PIPELINE_PAYLOAD", value: JSON.stringify(pipelinePayload) },
         { name: "RUN_MODE", value: runtimeMode },
         { name: "YOUTUBE_TOKEN_ENCRYPTED", value: encryptedYoutubeToken },
-        { name: "YOUTUBE_TOKEN_JSON_ENCRYPTED", value: encryptedYoutubeTokenJson },
         { name: "ENCRYPTION_KEY", value: process.env.ENCRYPTION_KEY || "" },
         { name: "UPLOAD", value: requiresUpload ? "true" : "false" },
         { name: "JOB_ID", value: jobId },
@@ -761,11 +799,6 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "ALLOW_SILENT_AUDIO_FALLBACK", value: "false" },
         { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },
         { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
-        { name: "GEMINI_MODEL", value: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite-preview" },
-        { name: "PEXELS_API_KEY", value: process.env.PEXELS_API_KEY || '' },
-        { name: "PEXELS_API_KEY_2", value: process.env.PEXELS_API_KEY_2 || process.env.PEXELS_API_KEY_SECONDARY || '' },
-        { name: "PIXABAY_API_KEY", value: process.env.PIXABAY_API_KEY || '' },
-        { name: "PIXABAY_API_KEY_2", value: process.env.PIXABAY_API_KEY_2 || process.env.PIXABAY_API_KEY_SECONDARY || '' },
       ];
 
       if (pipelineRunner === 'remote') {
@@ -781,31 +814,17 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       if (pipelineRunner === 'local') {
         await appendLogSafe(jobId, `\nDispatching local pipeline process for job ${jobId}...\n`);
-
-        // Stream pipeline stdout/stderr to job logs in real-time
-        const streamCallbacks: LocalPipelineCallbacks = {
-          onStdout: (chunk: string) => {
-            const lines = chunk.split('\n').filter((l: string) => l.trim());
-            for (const line of lines) {
-              appendLogSafe(jobId, `[Pipeline] ${line}\n`).catch(() => {});
-            }
-          },
-          onStderr: (chunk: string) => {
-            const lines = chunk.split('\n').filter((l: string) => l.trim());
-            for (const line of lines) {
-              appendLogSafe(jobId, `[Pipeline][stderr] ${line}\n`).catch(() => {});
-            }
-          },
-        };
-
-        const result = await triggerLocalPipeline(envVars, streamCallbacks);
+        const result = await triggerLocalPipeline(envVars);
         const stdoutTail = (result.stdout || '').slice(-2000);
         const stderrTail = (result.stderr || '').slice(-2000);
         const outputJson = extractPipelineOutputJson(result.stdout || '');
+        if (stdoutTail) {
+          await appendLogSafe(jobId, `\n[LocalPipeline][stdout-tail]\n${stdoutTail}\n`);
+        }
+        if (stderrTail) {
+          await appendLogSafe(jobId, `\n[LocalPipeline][stderr-tail]\n${stderrTail}\n`);
+        }
         if (!result.success) {
-          if (stderrTail) {
-            await appendLogSafe(jobId, `\n[LocalPipeline][stderr-tail]\n${stderrTail}\n`);
-          }
           const err: any = new Error(`Local pipeline process failed with exit code ${result.exitCode ?? 'unknown'}`);
           err.stderrTail = stderrTail;
           err.stdoutTail = stdoutTail;
@@ -1213,8 +1232,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
   },
   {
     connection: connection as any, // Cast to any to bypass strict type matching
-    concurrency: 2, // Limit concurrency to 2 jobs at a time to improve performance
-    lockDuration: 300000, // 5 minutes
+    concurrency: 5, // Limit concurrency to 5 jobs at a time to improve performance
+    lockDuration: 60000,
     stalledInterval: 30000,
     maxStalledCount: 2,
   }
@@ -1224,27 +1243,8 @@ pipelineWorker.on('completed', (job) => {
   console.log(`[PipelineWorker] BullMQ completed job ${job.id}.`);
 });
 
-pipelineWorker.on('failed', async (job, err) => {
+pipelineWorker.on('failed', (job, err) => {
   console.error(`[PipelineWorker] Job ${job?.id} has failed in BullMQ with error: ${err.message}`, err);
-  const dbJobId = job?.data?.jobId || (job?.data as any)?.job_id;
-  if (dbJobId) {
-    try {
-      await JobModel.updateOne(
-        { _id: dbJobId, status: { $in: ['pending', 'processing'] } },
-        {
-          $set: {
-            status: 'failed',
-            completedAt: new Date(),
-            errorMessage: err.message || 'Worker timeout, crashed or stalled',
-            error: err.message,
-            errorStage: 'RENDER',
-          }
-        }
-      );
-    } catch (dbErr) {
-      console.error(`[PipelineWorker] Failed to update DB on BullMQ worker failure for job ${dbJobId}:`, dbErr);
-    }
-  }
 });
 
 pipelineWorker.on('stalled', (jobId) => {

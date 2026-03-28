@@ -230,6 +230,30 @@ def _run_ffmpeg(args: list[str]) -> None:
         raise RuntimeError(f"ffmpeg failed: {proc.stderr[-600:]}")
 
 
+def _probe_duration_seconds(path: Path) -> float:
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return 0.0
+        return float((proc.stdout or "").strip() or 0.0)
+    except Exception:
+        return 0.0
+
+
 def _is_image(path: Path) -> bool:
     return path.suffix.lower() in _IMAGE_EXTS
 
@@ -391,17 +415,34 @@ def render_vertical_video(
             ])
             _run_ffmpeg(cmd)
 
+        # Guarantee visual timeline is long enough; prevents accidental early cuts
+        # when stock clips are fewer than target duration.
+        audio_duration = _probe_duration_seconds(audio_path)
+        final_duration = max(duration, audio_duration if audio_duration > 0 else 0.0)
+        visual_padded = tmp / "visual_padded.mp4"
+        _run_ffmpeg([
+            "ffmpeg", "-y",
+            "-stream_loop", "-1",
+            "-t", f"{final_duration:.2f}",
+            "-i", str(visual_track),
+            "-an",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            str(visual_padded),
+        ])
+
         muxed_no_sub = tmp / "muxed_no_sub.mp4"
         _run_ffmpeg([
             "ffmpeg", "-y",
-            "-i", str(visual_track),
+            "-i", str(visual_padded),
             "-i", str(audio_path),
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
-            "-shortest",
+            "-af", f"apad=whole_dur={final_duration:.2f}",
+            "-t", f"{final_duration:.2f}",
             str(muxed_no_sub),
         ])
 

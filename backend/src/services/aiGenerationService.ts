@@ -6,6 +6,18 @@ export interface AIGenerationResult {
   provider: 'gemini';
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isQuotaOrRateLimit = (message: string): boolean => {
+  const lower = String(message || '').toLowerCase();
+  return (
+    lower.includes('429') ||
+    lower.includes('quota') ||
+    lower.includes('rate limit') ||
+    lower.includes('too many requests')
+  );
+};
+
 const callNativeGemini = async (prompt: string, timeoutMs = 15000): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
@@ -63,19 +75,37 @@ export const generateFromAI = async (prompt: string): Promise<AIGenerationResult
   if (!normalizedPrompt) {
     throw new AppError('Prompt is required for AI generation.', 400);
   }
+
+  const retryDelaysMs = [2000, 5000, 10000];
+  let lastError: any = null;
+  for (let attempt = 1; attempt <= retryDelaysMs.length + 1; attempt++) {
+    try {
+      const text = await callNativeGemini(normalizedPrompt);
+      validateAIOutput(text);
+      console.log('[AIService] Successfully generated content using native-gemini');
+      return { text, provider: 'gemini' };
+    } catch (error: any) {
+      lastError = error;
+      const message = String(error?.message || 'unknown error');
+      if (!isQuotaOrRateLimit(message) || attempt > retryDelaysMs.length) {
+        break;
+      }
+      const delay = retryDelaysMs[attempt - 1] ?? 2000;
+      console.warn(`[AIService] Gemini rate-limited (attempt ${attempt}). Retrying in ${delay}ms...`);
+      await sleep(delay);
+    }
+  }
+
   try {
-    const text = await callNativeGemini(normalizedPrompt);
-    validateAIOutput(text);
-    console.log('[AIService] Successfully generated content using native-gemini');
-    return { text, provider: 'gemini' };
-  } catch (error: any) {
-    const message = String(error?.message || 'unknown error');
-    if (message.includes('429') || message.toLowerCase().includes('quota')) {
+    const message = String(lastError?.message || 'unknown error');
+    if (isQuotaOrRateLimit(message)) {
       throw new AppError(
         `AI generation failed (gemini quota/rate limit): ${message}`,
-        502
+        429
       );
     }
     throw new AppError(`AI generation failed (native-gemini): ${message}`, 502);
+  } catch (error) {
+    throw error;
   }
 };

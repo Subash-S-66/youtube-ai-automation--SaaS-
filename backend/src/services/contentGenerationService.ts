@@ -53,8 +53,10 @@ export interface ContentGenerationResult {
 // ─────────────────────────────────────────────────────────────────────────────
 const WORDS_PER_SECOND = 3.6;
 const VALIDATION_WPS = 2.5;
+const PRE_CONTENT_GEN_DELAY_MS = 2000;
 
 const clean = (value: unknown): string => String(value ?? '').trim();
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getWordBudget = (targetDurationSeconds: number): { minWords: number; maxWords: number } => {
   const target = Math.max(15, Math.min(60, targetDurationSeconds));
@@ -435,6 +437,10 @@ export const generateContent = async (input: ContentGenerationInput): Promise<Co
   }
 
   const preparedContent: PreparedContentItem[] = [];
+
+  // Guard against immediate back-to-back Gemini calls:
+  // frontend prompt generation often happens right before content generation.
+  await sleep(PRE_CONTENT_GEN_DELAY_MS);
 
   for (let i = 1; i <= count; i++) {
     const modelPrompt = buildContentPrompt(

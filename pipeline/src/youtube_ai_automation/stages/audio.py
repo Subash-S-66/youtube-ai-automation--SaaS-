@@ -21,11 +21,9 @@ def _audio_duration_seconds(path: Path) -> float:
 
 
 def _build_atempo_chain(factor: float) -> str:
-    value = max(0.25, min(4.0, float(factor)))
+    """Build ffmpeg atempo filter chain. Only used for speeding up (factor > 1.0)."""
+    value = max(1.0, min(4.0, float(factor)))  # Never slow down (never < 1.0)
     parts: list[float] = []
-    while value < 0.5:
-        parts.append(0.5)
-        value /= 0.5
     while value > 2.0:
         parts.append(2.0)
         value /= 2.0
@@ -33,11 +31,15 @@ def _build_atempo_chain(factor: float) -> str:
     return ",".join(f"atempo={p:.6f}" for p in parts)
 
 
-def _speed_adjust(input_path: Path, output_path: Path, target_seconds: float) -> float:
+def _speed_up_audio(input_path: Path, output_path: Path, max_duration: float) -> float:
+    """Speed up audio to fit within max_duration. Never slows down."""
     current = _audio_duration_seconds(input_path)
-    if current <= 0 or target_seconds <= 0:
+    if current <= 0 or current <= max_duration:
         return current
-    factor = current / float(target_seconds)
+    factor = current / float(max_duration)
+    if factor < 1.05:
+        # Too small a difference to bother; use as-is
+        return current
     cmd = [
         "ffmpeg",
         "-y",
@@ -51,7 +53,7 @@ def _speed_adjust(input_path: Path, output_path: Path, target_seconds: float) ->
     ]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0 or not output_path.exists():
-        raise RuntimeError(f"audio_speed_adjust_failed:{(proc.stderr or '')[-200:]}")
+        return current  # Failed — return original duration, don't crash
     return _audio_duration_seconds(output_path)
 
 
@@ -78,15 +80,25 @@ def generate_audio(lines: list[str], output_dir: Path, target_duration: float, l
     try:
         generated_path, _ = generate_voice(script=text, voice="", rate="", output_path=first_path, rotate_profile=False)
         duration = _audio_duration_seconds(generated_path)
-        logger.info("audio", f"generated once duration={duration:.2f}s")
-        if duration < 50.0 or duration > 70.0:
-            adjusted_target = max(50.0, min(70.0, float(target_duration)))
+        logger.info("audio", f"generated duration={duration:.2f}s target={target_duration:.2f}s")
+
+        # Only speed UP if significantly over limit (> 70s). Never slow down.
+        if duration > 70.0:
             adjusted_path = output_dir / "voice_adjusted.wav"
-            duration = _speed_adjust(generated_path, adjusted_path, adjusted_target)
-            final_path = adjusted_path
-            warnings.append("audio_speed_adjusted_once")
-            logger.warn("audio", f"duration out-of-window; speed-adjusted once to {duration:.2f}s")
+            new_duration = _speed_up_audio(generated_path, adjusted_path, max_duration=68.0)
+            if new_duration > 0 and adjusted_path.exists():
+                final_path = adjusted_path
+                duration = new_duration
+                warnings.append(f"audio_speed_up_applied from={duration:.1f}s to=68s")
+                logger.warn("audio", f"audio too long ({duration:.1f}s), sped up to {new_duration:.1f}s")
+        elif duration < 15.0:
+            warnings.append(f"audio_very_short duration={duration:.2f}s")
+            logger.warn("audio", f"audio is very short ({duration:.2f}s) but using as-is — do not slow down")
+        else:
+            logger.info("audio", f"audio duration {duration:.2f}s is acceptable, using as-is")
+
         return AudioStageResult(path=str(final_path), duration=round(duration, 2), warnings=warnings)
+
     except Exception as exc:
         warnings.append(f"audio_error:{str(exc)[:180]}")
         logger.warn("audio", f"audio generation failed; using silent fallback ({str(exc)[:120]})")
@@ -96,4 +108,3 @@ def generate_audio(lines: list[str], output_dir: Path, target_duration: float, l
             return AudioStageResult(path="", duration=0.0, warnings=warnings)
         warnings.append("audio_silent_fallback")
         return AudioStageResult(path=str(silent), duration=round(float(target_duration), 2), warnings=warnings)
-

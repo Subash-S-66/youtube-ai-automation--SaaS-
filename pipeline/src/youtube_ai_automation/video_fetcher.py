@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,6 +18,15 @@ import requests
 from youtube_ai_automation.clip_manager import choose_candidates, filter_candidates, mark_clip_as_used
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _resolve_used_clips_file(output_dir: Path, explicit: Path | None = None) -> Path:
+    if explicit is not None:
+        return explicit
+    user_id = str(os.getenv("USER_ID", "")).strip()
+    if user_id:
+        return output_dir.parent / "users" / user_id / "used_clips.json"
+    return output_dir.parent / "used_clips.json"
 
 
 @dataclass
@@ -62,65 +72,12 @@ def _probe_video_duration_seconds(path: Path) -> float:
         return 0.0
 
 
-def _trim_clip_to_max_duration(path: Path, max_duration: float) -> bool:
-    tmp_out = path.with_name(f"{path.stem}_trimmed{path.suffix}")
-    try:
-        # Fast path: stream-copy trim
-        proc = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(path),
-                "-t",
-                f"{max_duration:.2f}",
-                "-c",
-                "copy",
-                str(tmp_out),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        if proc.returncode != 0 or not tmp_out.exists() or tmp_out.stat().st_size <= 0:
-            # Fallback: re-encode trim for files where stream-copy trim is invalid.
-            proc = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    str(path),
-                    "-t",
-                    f"{max_duration:.2f}",
-                    "-c:v",
-                    "libx264",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-an",
-                    str(tmp_out),
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-        if proc.returncode != 0 or not tmp_out.exists() or tmp_out.stat().st_size <= 0:
-            return False
-        try:
-            path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        tmp_out.replace(path)
-        return True
-    except Exception:
-        return False
-
-
 def _build_fallback_scene_clips(
     scenes: list[str],
     output_dir: Path,
     scene_duration: float,
     min_duration: float = 2.0,
-    max_duration: float = 7.0,
+    max_duration: float = 10.0,
 ) -> list[Path]:
     local_pool = sorted(
         [
@@ -178,7 +135,7 @@ def _create_placeholder_video(output_dir: Path, name: str, duration_seconds: flo
 
 def fallback_media(scene: str, output_dir: Path, scene_idx: int) -> list[Path]:
     # 1) Reuse local clips if possible.
-    local = _build_fallback_scene_clips([scene], output_dir=output_dir, scene_duration=3.0, min_duration=2.0, max_duration=7.0)
+    local = _build_fallback_scene_clips([scene], output_dir=output_dir, scene_duration=3.0, min_duration=2.0, max_duration=10.0)
     if local:
         return local[:1]
     # 2) Create a deterministic placeholder video.
@@ -314,7 +271,8 @@ def _search_pexels_candidates(
     seen_urls: set[str] = set()
     for video in videos:
         duration = float(video.get("duration", 0) or 0)
-        if duration and (duration < min_duration or duration > max(12.0, max_duration * 2)):
+        # Enforce source-side duration policy strictly; do not download long clips for trimming.
+        if duration <= 0 or duration < min_duration or duration > max_duration:
             continue
         selected = _best_pexels_file(video.get("video_files", []), min_resolution=min_resolution)
         if not selected:
@@ -389,7 +347,8 @@ def _search_pixabay_candidates(
     seen_urls: set[str] = set()
     for item in hits:
         duration = float(item.get("duration", 0) or 0)
-        if duration and (duration < min_duration or duration > max(12.0, max_duration * 2)):
+        # Enforce source-side duration policy strictly; do not download long clips for trimming.
+        if duration <= 0 or duration < min_duration or duration > max_duration:
             continue
         best = _best_pixabay_file(item, min_resolution=min_resolution)
         if not best:
@@ -443,12 +402,12 @@ def download_scene_videos(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     batch_tag = str(int(time.time() * 1000))
-    used_file = used_clips_file or (output_dir.parent / "used_clips.json")
+    used_file = _resolve_used_clips_file(output_dir=output_dir, explicit=used_clips_file)
     all_paths: list[Path] = []
     selected_urls: set[str] = set()
-    # Hard policy: only download short b-roll clips (2s to 7s).
+    # Hard policy: only download short b-roll clips (2s to 10s).
     min_duration = 2.0
-    max_duration = 7.0
+    max_duration = 10.0
     effective_min_resolution = max(720, int(min_resolution))
     min_per_scene = max(1, int(clips_per_scene_min))
     max_per_scene = max(min_per_scene, int(clips_per_scene_max))
@@ -547,36 +506,6 @@ def download_scene_videos(
             try:
                 clip_url = str(selected.get("url", ""))
                 _download_file(clip_url, out_path)
-                real_duration = _probe_video_duration_seconds(out_path)
-                if real_duration > 0 and real_duration > max_duration:
-                    trimmed = _trim_clip_to_max_duration(out_path, max_duration=max_duration)
-                    if trimmed:
-                        real_duration = _probe_video_duration_seconds(out_path)
-                if real_duration > 0 and real_duration < min_duration:
-                    try:
-                        out_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    LOGGER.debug(
-                        "Clip rejected (too short) scene=%s duration=%.2fs min=%.2f",
-                        idx,
-                        real_duration,
-                        min_duration,
-                    )
-                    continue
-                if real_duration > 0 and real_duration > max_duration:
-                    try:
-                        out_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                    LOGGER.debug(
-                        "Clip rejected (trim failed) scene=%s duration=%.2fs max=%.2f",
-                        idx,
-                        real_duration,
-                        max_duration,
-                    )
-                    continue
-
                 with lock:
                     clip_tracker.mark_clip_used(_url_key(clip_url))
                     mark_clip_as_used(
