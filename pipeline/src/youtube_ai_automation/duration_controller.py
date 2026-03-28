@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-WORDS_PER_SECOND = 2.5
+WORDS_PER_SECOND = 3.6
 MAX_DURATION_SECONDS = 60
 MIN_DURATION_SECONDS = 15
 ALLOWED_DRIFT_SECONDS = 10
@@ -23,12 +23,12 @@ class SectionBudget:
 
 def _word_bounds(target_duration: int) -> tuple[int, int]:
     """
-    Compute min/max word counts based on 2.5 WPS average TTS speed.
-    The +/-5 s window maps to +/-12-13 words.
+    Compute min/max word counts based on 3.6 WPS average TTS speed.
+    The +/-5 s window maps to +/-18 words.
     """
     target = max(15, min(60, int(target_duration)))
-    min_words = max(30, int((target - 5) * 2.5))
-    max_words = int(min(60, target + 5) * 2.5)
+    min_words = max(30, int((target - 5) * 3.6))
+    max_words = int(min(60, target + 5) * 3.6)
     return min_words, max_words
 
 
@@ -88,9 +88,9 @@ def allocate_section_budget(
 
 
 def estimate_duration_from_script(script: str) -> float:
-    """2.5 words per second is the standard TTS speed for Shorts."""
+    """3.6 words per second is the standard TTS speed for Shorts."""
     words = max(1, len(str(script or '').split()))
-    return round(words / 2.5, 2)
+    return round(words / 3.6, 2)
 
 
 def estimate_script_duration_seconds(script: str) -> float:

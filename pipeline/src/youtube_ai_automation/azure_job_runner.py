@@ -4,9 +4,18 @@ import logging
 import os
 from pathlib import Path
 
+import time
+
 import requests
 
-from youtube_ai_automation.config import DEFAULT_NICHE, TOKEN_PATH, YOUTUBE_CLIENT_SECRET_FILE
+from youtube_ai_automation.config import (
+    AI_PROVIDER,
+    DEFAULT_NICHE,
+    GEMINI_API_KEY,
+    GEMINI_MODEL,
+    TOKEN_PATH,
+    YOUTUBE_CLIENT_SECRET_FILE,
+)
 from youtube_ai_automation.main import (
     _run_network_preflight,
     _setup_logging,
@@ -281,8 +290,14 @@ def main() -> None:
     initial_token = token_path.read_text(encoding="utf-8") if token_path.exists() else None
 
     LOGGER.info("Azure job starting. mode=%s count=%s upload=%s", run_mode, count, upload)
+    LOGGER.info(
+        "Pipeline config: AI_PROVIDER=%s GEMINI_MODEL=%s GEMINI_API_KEY=%s",
+        AI_PROVIDER,
+        GEMINI_MODEL,
+        "configured" if GEMINI_API_KEY else "MISSING",
+    )
     _notify_telegram(f"Azure job starting. mode={run_mode} count={count} upload={upload}")
-    _notify_backend("running", f"Job started in mode={run_mode}")
+    _notify_backend("running", f"Job started in mode={run_mode} model={GEMINI_MODEL}")
 
     _run_network_preflight(check_trend_sources=run_mode in {"auto", "optimized"}, upload=upload)
 
@@ -292,14 +307,24 @@ def main() -> None:
             payload = json.loads(payload_raw)
         except Exception as exc:
             raise SystemExit(f"RUN_MODE={run_mode} received invalid PIPELINE_PAYLOAD JSON: {exc}")
+
+        pipeline_start = time.time()
+        LOGGER.info("Pipeline execution starting: mode=%s", run_mode)
+
         if run_mode == "full":
+            LOGGER.info("Dispatching run_full_pipeline (render + upload)")
             run_full_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
         else:
+            LOGGER.info("Dispatching run_prepared_pipeline (audio + captions only)")
             run_prepared_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
+
+        elapsed = round(time.time() - pipeline_start, 2)
+        LOGGER.info("Pipeline execution completed in %.2fs (mode=%s)", elapsed, run_mode)
+
         report = load_upload_report(UPLOAD_REPORT_FILE)
         _notify_telegram(build_upload_summary_message(report))
         video_url, youtube_video_id = _extract_video_result(report)
-        _notify_backend("SUCCESS", "Pipeline completed successfully.", video_url=video_url, youtube_video_id=youtube_video_id)
+        _notify_backend("SUCCESS", f"Pipeline completed in {elapsed}s.", video_url=video_url, youtube_video_id=youtube_video_id)
         return
     except Exception as exc:
         LOGGER.exception("Azure job failed: %s", exc)

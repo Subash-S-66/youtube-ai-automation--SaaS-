@@ -8,8 +8,14 @@ export interface LocalPipelineResult {
   stderr: string;
 }
 
+export interface LocalPipelineCallbacks {
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+}
+
 export const triggerLocalPipeline = async (
-  envVars: Array<{ name: string; value: string }>
+  envVars: Array<{ name: string; value: string }>,
+  callbacks?: LocalPipelineCallbacks
 ): Promise<LocalPipelineResult> => {
   const pythonCmd = process.env.PIPELINE_PYTHON_CMD || 'python';
   const repoRoot = path.resolve(__dirname, '../../..');
@@ -27,6 +33,11 @@ export const triggerLocalPipeline = async (
   env.GEMINI_AUDIO_ONLY = env.GEMINI_AUDIO_ONLY || 'true';
   env.ALLOW_SILENT_AUDIO_FALLBACK = env.ALLOW_SILENT_AUDIO_FALLBACK || 'false';
 
+  // Ensure GEMINI_MODEL is forwarded
+  if (!env.GEMINI_MODEL && process.env.GEMINI_MODEL) {
+    env.GEMINI_MODEL = process.env.GEMINI_MODEL;
+  }
+
   return await new Promise<LocalPipelineResult>((resolve, reject) => {
     const child = spawn(
       pythonCmd,
@@ -41,10 +52,14 @@ export const triggerLocalPipeline = async (
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      callbacks?.onStdout?.(text);
     });
     child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      callbacks?.onStderr?.(text);
     });
     child.on('error', reject);
     child.on('close', (exitCode) => {

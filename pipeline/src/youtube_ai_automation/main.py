@@ -40,6 +40,7 @@ from youtube_ai_automation.config import (
     GEMINI_MODEL,
     GENERATED_IDEAS_FILE,
     HOOKS_PER_TOPIC,
+    IMAGES_DIR,
     LOG_LEVEL,
     MAX_VIDEO_LENGTH,
     MIN_VIDEO_LENGTH,
@@ -47,6 +48,7 @@ from youtube_ai_automation.config import (
     MIN_SCRIPT_SECONDS,
     OPENAI_API_KEY,
     OPENAI_MODEL,
+    OUTPUT_DIR,
     PEXELS_API_KEY,
     PIXABAY_API_KEY,
     NEWS_QUERY,
@@ -148,6 +150,13 @@ def _setup_logging() -> None:
     logging.basicConfig(
         level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
         format="%(asctime)s | %(levelname)s | %(message)s",
+    )
+    # Ensure output directories exist at startup
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    CLIPS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGGER.info(
+        "Pipeline initialized: AI_PROVIDER=%s GEMINI_MODEL=%s",
+        AI_PROVIDER, GEMINI_MODEL,
     )
 
 
@@ -1113,9 +1122,9 @@ def _build_section_scripts(
 
 
 def estimate_audio_duration(script: str) -> float:
-    """Estimate TTS audio length from word count at 2.5 WPS."""
+    """Estimate TTS audio length from word count at 3.6 WPS (Gemini Flash)."""
     words = max(1, len(str(script or "").split()))
-    return round(words / 2.5, 2)
+    return round(words / 3.6, 2)
 
 
 def get_audio_duration_seconds(audio_path: Path) -> float:
@@ -1839,6 +1848,7 @@ def run_full_pipeline(
             )
         )
 
+    LOGGER.info("Stage: Rendering vertical video")
     output_video_path = output_dir / "final_full.mp4"
     render_vertical_video(
         media_paths=media_paths,
@@ -1847,12 +1857,26 @@ def run_full_pipeline(
         output_path=output_video_path,
         target_duration_seconds=max(1.0, target_duration),
     )
+    LOGGER.info("Video rendered successfully: %s", output_video_path)
+
+    # Collect used media info for backend reporting
+    used_clips_info = []
+    used_images_info = []
+    for mp in media_paths:
+        mp_str = str(mp)
+        entry = {"filename": mp.name, "path": mp_str, "size": mp.stat().st_size if mp.exists() else 0}
+        if mp.suffix.lower() in {".mp4", ".mov", ".avi", ".webm", ".mkv"}:
+            used_clips_info.append(entry)
+        else:
+            used_images_info.append(entry)
+    LOGGER.info("Used media: %d clips, %d images", len(used_clips_info), len(used_images_info))
 
     youtube_cfg = payload.get("youtube", {}) if isinstance(payload.get("youtube"), dict) else {}
     upload_requested = bool(upload)
     uploaded_video_id = ""
     uploaded_video_url = ""
     if upload_requested:
+        LOGGER.info("Stage: Uploading to YouTube")
         upload_result = upload_video(
             video_path=output_video_path,
             title=str(youtube_cfg.get("title", "Untitled Short")).strip()[:100] or "Untitled Short",
@@ -1869,6 +1893,33 @@ def run_full_pipeline(
         uploaded_video_id = str(upload_result.get("id", "")).strip()
         if uploaded_video_id:
             uploaded_video_url = f"https://www.youtube.com/watch?v={uploaded_video_id}"
+            LOGGER.info("YouTube upload successful: %s", uploaded_video_url)
+
+    # After upload (or skip), clean up output and clips directories
+    if uploaded_video_id or not upload_requested:
+        LOGGER.info("Stage: Post-upload cleanup")
+        import shutil
+        # Clean output directory (generated video, audio, subtitles)
+        for f in output_dir.iterdir():
+            try:
+                if f.is_file():
+                    f.unlink()
+                elif f.is_dir():
+                    shutil.rmtree(f)
+            except Exception as exc:
+                LOGGER.warning("Cleanup failed for %s: %s", f, exc)
+        LOGGER.info("Cleaned output directory: %s", output_dir)
+        # Clean clips directory
+        if CLIPS_DIR.exists():
+            for f in CLIPS_DIR.iterdir():
+                try:
+                    if f.is_file():
+                        f.unlink()
+                    elif f.is_dir():
+                        shutil.rmtree(f)
+                except Exception as exc:
+                    LOGGER.warning("Cleanup failed for %s: %s", f, exc)
+            LOGGER.info("Cleaned clips directory: %s", CLIPS_DIR)
 
     final_payload = {
         "jobId": str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip(),
@@ -1882,10 +1933,17 @@ def run_full_pipeline(
             "uploadSkipReason": "" if upload_requested else "upload_not_requested",
             "youtubeVideoId": uploaded_video_id,
             "videoUrl": uploaded_video_url,
+            "usedClips": used_clips_info,
+            "usedImages": used_images_info,
         },
     }
+    
+    # Critical: Required by pipelineWorker.ts to extract pipeline output JSON in local mode
+    import json
+    print(f"PIPELINE_OUTPUT_JSON:{json.dumps(final_payload, ensure_ascii=False)}")
+    
     send_pipeline_complete(final_payload)
-    LOGGER.info(json.dumps({"event": "full_mode_complete", "videoPath": str(output_video_path), "uploaded": bool(uploaded_video_id)}, ensure_ascii=False))
+    LOGGER.info(json.dumps({"event": "full_mode_complete", "videoPath": str(output_video_path), "uploaded": bool(uploaded_video_id), "usedClips": len(used_clips_info), "usedImages": len(used_images_info)}, ensure_ascii=False))
     return [output_video_path]
 
 
@@ -1974,4 +2032,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    LOGGER.info(json.dumps({"event": "full_mode_start", "uploadRequested": bool(upload)}, ensure_ascii=False))

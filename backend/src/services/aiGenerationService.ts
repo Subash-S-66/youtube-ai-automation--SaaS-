@@ -48,7 +48,8 @@ const callFallbackModel = async (prompt: string, timeoutMs = 15000): Promise<str
     throw new Error('Fallback model key is not configured');
   }
 
-  const modelName = (process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim();
+  const modelName = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview').trim();
+  console.log(`[AIService] Using fallback model: ${modelName}`);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
@@ -80,7 +81,15 @@ const validateAIOutput = (text: string): void => {
     throw new Error('AI output is too short (less than 3 lines)');
   }
   const lowerText = text.toLowerCase();
-  if (lowerText.includes('you are an elite') || lowerText.includes('you are a') || lowerText.includes('your task is')) {
+  // Detect when AI echoes back the system prompt instead of generating content
+  const promptLeakPatterns = [
+    'you are an elite youtube',
+    'you are a premium youtube shorts director',
+    'return only valid json',
+    'your task is to convert a raw user topic',
+    'narration brief (this is what the video is about',
+  ];
+  if (promptLeakPatterns.some(p => lowerText.includes(p))) {
     throw new Error('AI output contains prompt instructions instead of generated content');
   }
 };
@@ -91,18 +100,23 @@ export const generateFromAI = async (prompt: string): Promise<AIGenerationResult
     throw new AppError('Prompt is required for AI generation.', 400);
   }
 
+  // Always try Jules first
   try {
+    console.log('[AIService] Trying Jules API...');
     const text = await callJules(normalizedPrompt);
     validateAIOutput(text);
+    console.log('[AIService] Jules API succeeded.');
     return { text, provider: 'jules' };
   } catch (julesError: any) {
+    console.warn(`[AIService] Jules failed: ${julesError?.message}. Falling back to Gemini...`);
     try {
       const text = await callFallbackModel(normalizedPrompt);
       validateAIOutput(text);
+      console.log('[AIService] Gemini fallback succeeded.');
       return { text, provider: 'fallback' };
     } catch (fallbackError: any) {
       throw new AppError(
-        `AI generation failed. Jules: ${julesError?.message || 'unknown'} | Fallback: ${fallbackError?.message || 'unknown'}`,
+        `AI generation failed. Jules: ${julesError?.message || 'unknown'} | Gemini: ${fallbackError?.message || 'unknown'}`,
         502
       );
     }

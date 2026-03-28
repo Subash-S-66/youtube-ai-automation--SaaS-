@@ -1,10 +1,10 @@
 import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
-import { generateGeminiPrompt } from '../services/geminiService';
+import { generatePrompt as generateAIPrompt } from '../services/promptGenerationService';
 import Prompt from '../models/Prompt';
 import { GeneratePromptInput } from '../utils/validators/promptValidators';
 import { AppError } from '../middleware/errorHandler';
-import type { PromptGenerationOptions } from '../services/geminiService';
+import type { PromptGenerationOptions } from '../services/promptGenerationService';
 
 // @desc    Generate a new script prompt via Gemini
 // @route   POST /api/prompt/generate
@@ -29,7 +29,7 @@ export const generatePrompt = asyncHandler(
       throw new AppError('Not authorized', 401);
     }
 
-    // Call Gemini Service
+    // Call AI Prompt Service (Jules first → Gemini fallback)
     const safeTemplateConfig = templateConfig
       ? {
           ...(templateConfig.fontStyle ? { fontStyle: templateConfig.fontStyle } : {}),
@@ -48,18 +48,18 @@ export const generatePrompt = asyncHandler(
     if (tone !== undefined) promptOptions.tone = tone;
     if (safeTemplateConfig !== undefined) promptOptions.templateConfig = safeTemplateConfig;
 
-    const gemini_prompt = await generateGeminiPrompt(user_prompt, promptOptions);
+    const generated_prompt = await generateAIPrompt(user_prompt, promptOptions);
 
     // Save prompt pair to DB
     const newPrompt = await Prompt.create({
       userId: req.user.id,
       user_prompt,
-      gemini_prompt,
+      gemini_prompt: generated_prompt,
     });
 
     res.status(201).json({
       promptId: newPrompt._id,
-      gemini_prompt,
+      gemini_prompt: generated_prompt,
     });
   }
 );

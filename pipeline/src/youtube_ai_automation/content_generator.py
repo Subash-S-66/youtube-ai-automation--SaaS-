@@ -155,15 +155,15 @@ def _build_content_prompt(
             story_note = f"STORY MODE Part {current_part}: Open the story arc. Frame as episode 1 of a series."
 
     recap_line = (
-        f"• Recap (second-to-last line): ~{recap_words} words — one sentence summarising the key takeaway."
+        f"• Recap (second-to-last line): ~{recap_words} words — one sentence crystallising the key insight."
         if recap_enabled else "• NO recap section."
     )
     cta_line = (
         f"• CTA (last line): ~{cta_words} words — a direct action call (follow, subscribe, save, share, etc.)."
-        if cta_enabled else "• NO call-to-action. End with a strong closing statement or thought."
+        if cta_enabled else "• NO call-to-action. End with a powerful, memorable closing statement that lingers."
     )
 
-    return f"""You are an elite YouTube Shorts content engine. Return ONLY valid JSON — no markdown, no extra text.
+    return f"""You are a premium YouTube Shorts director creating CINEMATIC, viral short-form content. Return ONLY valid JSON — no markdown, no extra text.
 
 NARRATION BRIEF (this IS what the video is about — follow it exactly):
 "{narration_brief}"
@@ -173,44 +173,61 @@ TARGET DURATION: {target} seconds
 TOTAL WORD BUDGET: {min_words}–{max_words} words (entire script must stay in this range)
 
 SECTION BREAKDOWN (each section's words add to the total budget):
-• Hook (first line): ~{hook_words} words — strong curiosity/shock/question opening. MUST be the first sentence.
-• Main body: ~{main_words} words — deliver the core insight. Plain, punchy, spoken sentences.
+• Hook (first line): ~{hook_words} words — a BOLD STATEMENT, dramatic fact, or cinematic scene-setter. NEVER a question.
+• Main body: ~{main_words} words — deliver the revelation like a documentary narrator. Vivid, confident, authoritative.
 {recap_line}
 {cta_line}
 
 {variation_note}
 {story_note}
 
-SCRIPT RULES (critical):
-1. Every line will be spoken aloud by a TTS voice. Write for the ear.
-2. Split the script into SHORT lines — one sentence per line, max 15 words per line.
-3. NEVER start a line with: "In this video", "Welcome back", "Today we", "Here are", "Let me tell you".
-4. NO labels in the script (do NOT write "Hook:", "CTA:", "Main:", "Recap:").
-5. Hook must be first. CTA (if enabled) must be last. Recap (if enabled) must be second-to-last.
+SCRIPT QUALITY RULES (critical — these determine video quality):
+1. Write like a PREMIUM documentary voiceover, not a YouTuber. Every line sounds cinematic when read aloud.
+2. Split into SHORT lines — one sentence per line, max 15 words per line.
+3. BANNED OPENERS (never use these):
+   - "Did you know…", "What if I told you…", "Have you ever wondered…"
+   - "Here are X things…", "Here's why…", "Here's what…", "Let me tell you…"
+   - "In this video…", "Welcome back…", "Today we…", "Want to know…"
+4. GREAT OPENERS (use these patterns):
+   - Bold claim: "This single discovery just changed everything we knew about…"
+   - Dramatic fact: "In under three seconds, this molecule can rewrite your DNA."
+   - Scene-setter: "Twelve thousand feet above the Pacific, something impossible just happened."
+   - Authority: "Scientists spent forty years searching. They finally found it."
+5. NO labels in the script (no "Hook:", "CTA:", "Main:", "Recap:").
 6. Count words: total script must be {min_words}–{max_words} words. Expand main body if under. Trim if over.
+7. Use ACTIVE voice. Use SPECIFIC nouns. Replace "things" with real words. Replace "stuff" with detail.
 
-SCENE RULES:
+SCENE RULES (cinematic quality):
 - Generate exactly one scene per script line (minimum 5, maximum 12 scenes total).
-- Each scene is a stock-video search phrase: specific, visual, 4-8 words.
-  Good: "scientist examining glowing DNA strand under microscope"
-  Bad: "technology innovation"
-- Scenes must visually match what is being SAID on that line.
+- Each scene is a CINEMATIC shot description, 5–10 words, describing what the camera sees.
+  GREAT: "close-up scientist hands adjusting glowing microscope lens"
+  GREAT: "aerial drone shot of solar panel farm at golden hour"
+  GREAT: "extreme macro of water droplet hitting liquid surface slow motion"
+  BAD: "technology innovation" (too vague)
+  BAD: "person talking about science" (generic)
+- Every scene must feel like a shot from a high-budget documentary or film.
+- Scenes must visually MATCH what is being SAID on that line.
+
+TITLE RULES:
+- Max 60 characters. Make it a STATEMENT, not a question.
+- Good: "This 3-Second Trick Outperforms Billion-Dollar Tech"
+- Bad: "Did You Know About This Amazing Tech?"
 
 HASHTAG RULES:
 - 10–15 hashtags, all lowercase with #
 - Must include #shorts
-- Mix broad (#science) and specific (#spacediscovery) tags
+- Mix broad (#science) and niche-specific (#quantumphysics) tags
 
 OUTPUT — return ONLY this JSON structure:
 {{
   "topic": "string — the video topic, max 80 chars",
-  "title": "string — YouTube title, max 60 chars, curiosity-driven, includes key subject",
+  "title": "string — YouTube title, max 60 chars, STATEMENT-based, includes key subject",
   "hook": "string — the first line of the script (copied from script line 1)",
-  "description": "string — 2-3 SEO sentences, factually accurate",
+  "description": "string — 2-3 SEO sentences, factually accurate, compelling",
   "hashtags": ["#shorts", "..."],
   "script": "string — ALL lines separated by newlines, one sentence per line, total {min_words}–{max_words} words",
-  "scenes": ["scene for line 1", "scene for line 2", "..."],
-  "search_queries": ["stock video query 1", "stock video query 2", "..."]
+  "scenes": ["cinematic shot description 1", "cinematic shot description 2", "..."],
+  "search_queries": ["specific visual search query 1", "specific visual search query 2", "..."]
 }}
 
 The "scenes" and "search_queries" arrays MUST have the SAME number of items as there are lines in "script".
@@ -293,7 +310,7 @@ def _normalize_model_name(model: str) -> str:
 
 
 def _model_candidates(primary: str) -> list[str]:
-    primary = _normalize_model_name(primary) or "gemini-2.0-flash"
+    primary = _normalize_model_name(primary) or "gemini-3.1-flash-lite-preview"
     fallbacks_env = os.getenv("GEMINI_FALLBACK_MODELS", "")
     fallbacks = [_normalize_model_name(m) for m in fallbacks_env.split(",") if m.strip()]
     seen: set[str] = set()
@@ -467,7 +484,8 @@ def _call_model(prompt: str, gemini_api_key: str, gemini_model: str) -> str:
     LOGGER.info(json.dumps({
         "event": "ai_fallback_start",
         "provider": "gemini",
-        "model": gemini_model
+        "model": gemini_model,
+        "candidates": _model_candidates(gemini_model),
     }))
     if not gemini_api_key:
         raise RuntimeError("Jules failed and GEMINI_API_KEY is missing. Stop.")
@@ -555,7 +573,7 @@ def generate_content(
     topic: str,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-2.0-flash",
+    gemini_model: str = "gemini-3.1-flash-lite-preview",
     openai_api_key: str = "",
     openai_model: str = "gpt-4o-mini",
     anthropic_api_key: str = "",
@@ -575,6 +593,10 @@ def generate_content(
         raise ValueError("Topic is required for content generation.")
 
     norm_provider = provider.strip().lower()
+    LOGGER.info(
+        "Content generation started: provider=%s model=%s topic=%s target_duration=%ss",
+        norm_provider, gemini_model, topic[:80], target_duration,
+    )
     if norm_provider in {"", "none", "template"}:
         raise ValueError("An AI provider is required. Set AI_PROVIDER in environment.")
 

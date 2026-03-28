@@ -16,7 +16,7 @@ import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { generateContent } from '../services/contentGenerationService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob } from './azureJobTrigger';
-import { triggerLocalPipeline } from './localPipelineTrigger';
+import { triggerLocalPipeline, LocalPipelineCallbacks } from './localPipelineTrigger';
 import { triggerRemotePipeline } from './remotePipelineTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -727,6 +727,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "ALLOW_SILENT_AUDIO_FALLBACK", value: "false" },
         { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },
         { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
+        { name: "GEMINI_MODEL", value: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite-preview" },
+        { name: "PEXELS_API_KEY", value: process.env.PEXELS_API_KEY || '' },
+        { name: "PIXABAY_API_KEY", value: process.env.PIXABAY_API_KEY || '' },
       ];
 
       if (pipelineRunner === 'remote') {
@@ -742,17 +745,31 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       if (pipelineRunner === 'local') {
         await appendLogSafe(jobId, `\nDispatching local pipeline process for job ${jobId}...\n`);
-        const result = await triggerLocalPipeline(envVars);
+
+        // Stream pipeline stdout/stderr to job logs in real-time
+        const streamCallbacks: LocalPipelineCallbacks = {
+          onStdout: (chunk: string) => {
+            const lines = chunk.split('\n').filter((l: string) => l.trim());
+            for (const line of lines) {
+              appendLogSafe(jobId, `[Pipeline] ${line}\n`).catch(() => {});
+            }
+          },
+          onStderr: (chunk: string) => {
+            const lines = chunk.split('\n').filter((l: string) => l.trim());
+            for (const line of lines) {
+              appendLogSafe(jobId, `[Pipeline][stderr] ${line}\n`).catch(() => {});
+            }
+          },
+        };
+
+        const result = await triggerLocalPipeline(envVars, streamCallbacks);
         const stdoutTail = (result.stdout || '').slice(-2000);
         const stderrTail = (result.stderr || '').slice(-2000);
         const outputJson = extractPipelineOutputJson(result.stdout || '');
-        if (stdoutTail) {
-          await appendLogSafe(jobId, `\n[LocalPipeline][stdout-tail]\n${stdoutTail}\n`);
-        }
-        if (stderrTail) {
-          await appendLogSafe(jobId, `\n[LocalPipeline][stderr-tail]\n${stderrTail}\n`);
-        }
         if (!result.success) {
+          if (stderrTail) {
+            await appendLogSafe(jobId, `\n[LocalPipeline][stderr-tail]\n${stderrTail}\n`);
+          }
           const err: any = new Error(`Local pipeline process failed with exit code ${result.exitCode ?? 'unknown'}`);
           err.stderrTail = stderrTail;
           err.stdoutTail = stdoutTail;
@@ -1171,8 +1188,27 @@ pipelineWorker.on('completed', (job) => {
   console.log(`[PipelineWorker] BullMQ completed job ${job.id}.`);
 });
 
-pipelineWorker.on('failed', (job, err) => {
+pipelineWorker.on('failed', async (job, err) => {
   console.error(`[PipelineWorker] Job ${job?.id} has failed in BullMQ with error: ${err.message}`, err);
+  const dbJobId = job?.data?.jobId || (job?.data as any)?.job_id;
+  if (dbJobId) {
+    try {
+      await JobModel.updateOne(
+        { _id: dbJobId, status: { $in: ['pending', 'processing'] } },
+        {
+          $set: {
+            status: 'failed',
+            completedAt: new Date(),
+            errorMessage: err.message || 'Worker timeout, crashed or stalled',
+            error: err.message,
+            errorStage: 'RENDER',
+          }
+        }
+      );
+    } catch (dbErr) {
+      console.error(`[PipelineWorker] Failed to update DB on BullMQ worker failure for job ${dbJobId}:`, dbErr);
+    }
+  }
 });
 
 pipelineWorker.on('stalled', (jobId) => {

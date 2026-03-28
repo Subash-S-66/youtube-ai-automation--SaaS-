@@ -51,7 +51,7 @@ export interface ContentGenerationResult {
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-const WORDS_PER_SECOND = 2.5;
+const WORDS_PER_SECOND = 3.6;
 
 const clean = (value: unknown): string => String(value ?? '').trim();
 
@@ -80,7 +80,7 @@ const splitIntoLines = (script: string): string[] => {
   return raw.map(s => s.trim()).filter(Boolean);
 };
 
-/** Estimate how long a line takes to speak at 2.5 wps */
+/** Estimate how long a line takes to speak at 3.6 wps */
 const estimateDuration = (line: string): number => {
   const words = line.split(/\s+/).filter(Boolean).length;
   if (!words) return 1;
@@ -146,8 +146,8 @@ const buildContentPrompt = (
   lastPrompt: string,
 ): string => {
   const targetDuration = Math.max(15, Math.min(60, targetDurationSeconds));
-  const minWords = Math.floor((targetDuration - 5) * WORDS_PER_SECOND);
-  const maxWords = Math.floor((targetDuration + 5) * WORDS_PER_SECOND);
+  const minWords = Math.floor((targetDuration - 10) * WORDS_PER_SECOND);
+  const maxWords = Math.floor((targetDuration + 10) * WORDS_PER_SECOND);
 
   // Tightly computed section budgets
   const hookWords = Math.round(minWords * 0.18);                   // ~18% for hook
@@ -163,7 +163,7 @@ const buildContentPrompt = (
     ? `STORY MODE Part ${currentPart}: ${currentPart > 1 && lastPrompt ? `Continue from: "${lastPrompt.slice(0, 120)}"` : 'Open the story arc.'} Frame as an ongoing series.`
     : '';
 
-  return `You are an elite YouTube Shorts content engine. Return ONLY valid JSON — no markdown, no extra text.
+  return `You are a premium YouTube Shorts director creating CINEMATIC, viral short-form content. Return ONLY valid JSON — no markdown, no extra text.
 
 NARRATION BRIEF (this IS what the video is about — follow it exactly):
 "${narrationBrief}"
@@ -173,44 +173,61 @@ TARGET DURATION: ${targetDuration} seconds
 TOTAL WORD BUDGET: ${minWords}–${maxWords} words (the entire script must stay in this range)
 
 SECTION BREAKDOWN (every section's words add up to the total budget):
-• Hook (first line): ~${hookWords} words — strong curiosity/shock/question opening. MUST be the first sentence of script.
-• Main body: ~${mainWords} words — deliver the core insight. Plain, punchy, spoken sentences.
-${recapEnabled ? `• Recap (second-to-last): ~${recapWords} words — one sentence summarising the key takeaway.` : '• NO recap section.'}
-${ctaEnabled ? `• CTA (last line): ~${ctaWords} words — a direct action call (follow, subscribe, save, share, etc.).` : '• NO call-to-action. End with a strong closing statement or thought.'}
+• Hook (first line): ~${hookWords} words — a BOLD STATEMENT, dramatic fact, or cinematic scene-setter. NEVER a question.
+• Main body: ~${mainWords} words — deliver the revelation like a documentary narrator. Vivid, confident, authoritative.
+${recapEnabled ? `• Recap (second-to-last): ~${recapWords} words — one sentence crystallising the key insight.` : '• NO recap section.'}
+${ctaEnabled ? `• CTA (last line): ~${ctaWords} words — a direct action call (follow, subscribe, save, share, etc.).` : '• NO call-to-action. End with a powerful, memorable closing statement that lingers.'}
 
 ${variationNote}
 ${storyNote}
 
-SCRIPT RULES (critical):
-1. Every line of the script will be spoken aloud by a TTS voice. Write for the ear.
-2. Split the script into SHORT lines — one sentence per line, max 15 words per line.
-3. NEVER start a line with: "In this video", "Welcome back", "Today we", "Here are", "Let me tell you".
-4. NO labels in the script (don't write "Hook:", "CTA:", "Main:", "Recap:").
-5. The hook must come first. CTA (if enabled) must be last. Recap (if enabled) must be second-to-last.
-6. Count words: total script must be ${minWords}–${maxWords} words. If you're under, expand the main body. If over, trim it.
+SCRIPT QUALITY RULES (critical — these determine video quality):
+1. Write like a PREMIUM documentary voiceover, not a YouTuber. Every line sounds cinematic when read aloud.
+2. Split into SHORT lines — one sentence per line, max 15 words per line.
+3. BANNED OPENERS (never use these):
+   - "Did you know…", "What if I told you…", "Have you ever wondered…"
+   - "Here are X things…", "Here's why…", "Here's what…", "Let me tell you…"
+   - "In this video…", "Welcome back…", "Today we…", "Want to know…"
+4. GREAT OPENERS (use these patterns):
+   - Bold claim: "This single discovery just changed everything we knew about…"
+   - Dramatic fact: "In under three seconds, this molecule can rewrite your DNA."
+   - Scene-setter: "Twelve thousand feet above the Pacific, something impossible just happened."
+   - Authority: "Scientists spent forty years searching. They finally found it."
+5. NO labels in the script (no "Hook:", "CTA:", "Main:", "Recap:").
+6. Count words: total script must be ${minWords}–${maxWords} words. Expand main body if under. Trim if over.
+7. Use ACTIVE voice. Use SPECIFIC nouns. Replace "things" with real words. Replace "stuff" with detail.
 
-SCENE RULES:
+SCENE RULES (cinematic quality):
 - Generate exactly one scene per script line (minimum 5, maximum 12 scenes total).
-- Each scene is a stock-video search phrase: specific, visual, 4-8 words.
-  Good: "scientist examining glowing DNA strand under microscope"
-  Bad: "technology innovation"
-- Scenes must visually match what is being SAID on that line.
+- Each scene is a CINEMATIC shot description, 5–10 words, describing what the camera sees.
+  GREAT: "close-up scientist hands adjusting glowing microscope lens"
+  GREAT: "aerial drone shot of solar panel farm at golden hour"
+  GREAT: "extreme macro of water droplet hitting liquid surface slow motion"
+  BAD: "technology innovation" (too vague)
+  BAD: "person talking about science" (generic)
+- Every scene must feel like a shot from a high-budget documentary or film.
+- Scenes must visually MATCH what is being SAID on that line.
+
+TITLE RULES:
+- Max 60 characters. Make it a STATEMENT, not a question.
+- Good: "This 3-Second Trick Outperforms Billion-Dollar Tech"
+- Bad: "Did You Know About This Amazing Tech?"
 
 HASHTAG RULES:
 - 10–15 hashtags, all lowercase with #
 - Must include #shorts
-- Mix broad (#science) and specific (#spacediscovery) tags
+- Mix broad (#science) and niche-specific (#quantumphysics) tags
 
 OUTPUT — return exactly this JSON structure (no other keys):
 {
   "topic": "string — the video topic, max 80 chars",
-  "title": "string — YouTube title, max 60 chars, curiosity-driven, includes key subject",
+  "title": "string — YouTube title, max 60 chars, STATEMENT-based, includes key subject",
   "hook": "string — the first line of the script (copied from script[0])",
-  "description": "string — 2-3 SEO sentences about the video, factually accurate",
+  "description": "string — 2-3 SEO sentences about the video, factually accurate, compelling",
   "hashtags": ["#shorts", "..."],
   "script": "string — ALL lines joined by newlines, one sentence per line, total ${minWords}–${maxWords} words",
-  "scenes": ["scene for line 1", "scene for line 2", "..."],
-  "search_queries": ["stock video query 1", "stock video query 2", "..."]
+  "scenes": ["cinematic shot description 1", "cinematic shot description 2", "..."],
+  "search_queries": ["specific visual search query 1", "specific visual search query 2", "..."]
 }
 
 The "scenes" and "search_queries" arrays must have the SAME number of items as there are lines in "script".
@@ -229,8 +246,8 @@ const normalizeContentItem = (
   const title = clean(raw?.title).slice(0, 100);
   const description = clean(raw?.description);
   const rawScript = clean(raw?.script);
-  const minWords = Math.floor((targetDurationSeconds - 5) * WORDS_PER_SECOND);
-  const maxWords = Math.floor((targetDurationSeconds + 5) * WORDS_PER_SECOND);
+  const minWords = Math.floor((targetDurationSeconds - 10) * WORDS_PER_SECOND);
+  const maxWords = Math.floor((targetDurationSeconds + 10) * WORDS_PER_SECOND);
 
   if (!topic || !title || !description) {
     throw new AppError('AI content missing required fields (topic/title/description).', 502);
@@ -333,35 +350,35 @@ const deterministicFallback = (
   targetDurationSeconds: number
 ): PreparedContentItem => {
   const safeTopic = clean(topic) || 'This Topic';
-  const shortBrief = narrationBrief.slice(0, 200);
+  const briefSentence = (narrationBrief.split('.')[0] || safeTopic).trim();
   const lines = [
-    `Did you know this about ${safeTopic}?`,
-    `${shortBrief.split('.')[0] || safeTopic}.`,
-    `Most people overlook this key detail.`,
-    `It changes everything once you see it.`,
-    `Follow for more fast facts like this.`,
+    `${briefSentence}.`,
+    `Most people have never heard about this.`,
+    `The evidence behind it is staggering.`,
+    `Once you understand, you cannot unsee it.`,
+    `Save this before it disappears from your feed.`,
   ];
   return {
     topic: safeTopic,
-    title: `${safeTopic} — What You Need to Know`.slice(0, 60),
+    title: `${safeTopic} — The Truth Revealed`.slice(0, 60),
     hook: lines[0]!,
-    description: `Quick breakdown of ${safeTopic} in under a minute.`,
-    hashtags: ['#shorts', '#facts', '#viral', '#youtube'],
+    description: `A deep dive into ${safeTopic} that changes how you see the world.`,
+    hashtags: ['#shorts', '#facts', '#mindblown', '#viral', '#education', '#science', '#documentary'],
     script: lines.join('\n'),
     captions: buildCaptions(lines, targetDurationSeconds),
     scenes: [
-      'person looking surprised at smartphone screen',
-      'technology concept abstract background',
-      'close-up of person thinking',
-      'modern office technology setup',
-      'person tapping subscribe button on phone',
+      `cinematic close-up revealing ${safeTopic.toLowerCase().slice(0, 30)} detail`,
+      'dramatic slow motion reveal of hidden detail',
+      'aerial drone shot of dramatic landscape at golden hour',
+      'extreme close-up of eye reflecting light in wonder',
+      'hand reaching toward glowing screen saving content',
     ],
     searchQueries: [
-      'surprised person technology',
-      'technology abstract background',
-      'person thinking close up',
-      'modern office technology',
-      'phone subscribe button',
+      `cinematic ${safeTopic.toLowerCase().slice(0, 20)} close up`,
+      'dramatic slow motion reveal cinematic',
+      'aerial drone dramatic landscape golden hour',
+      'eye close up reflecting light wonder',
+      'hand saving content on phone screen',
     ],
   };
 };
@@ -402,8 +419,10 @@ export const generateContent = async (input: ContentGenerationInput): Promise<Co
     try {
       preparedContent.push(await generateWithRetry(modelPrompt, topic, targetDuration));
     } catch (error) {
-      console.error(`[ContentGen] Video ${i}/${count} failed, using fallback:`, error);
-      preparedContent.push(deterministicFallback(topic, narrationBrief, targetDuration));
+      // TODO: Re-enable deterministic fallback later
+      // console.error(`[ContentGen] Video ${i}/${count} failed, using fallback:`, error);
+      // preparedContent.push(deterministicFallback(topic, narrationBrief, targetDuration));
+      throw error;
     }
   }
 
