@@ -6,6 +6,7 @@ import time
 LOGGER = logging.getLogger("webhook_service")
 _JOB_STATUS_PATH = "/api/webhook/job-status"
 _PIPELINE_COMPLETE_PATH = "/api/webhook/pipeline-complete"
+_JOB_RESULT_PATH = "/webhook/job-result"
 
 
 def _normalize_webhook_candidates(webhook_url: str) -> list[str]:
@@ -42,12 +43,12 @@ def _normalize_pipeline_complete_candidates(webhook_url: str) -> list[str]:
     base = (webhook_url or "").strip().rstrip("/")
     if not base:
         return []
-    if base.endswith(_PIPELINE_COMPLETE_PATH):
+    if base.endswith(_PIPELINE_COMPLETE_PATH) or base.endswith(_JOB_RESULT_PATH):
         return [base]
     from urllib.parse import urlparse
     parsed = urlparse(base)
     origin = f"{parsed.scheme}://{parsed.netloc}"
-    return [origin + _PIPELINE_COMPLETE_PATH]
+    return [origin + _PIPELINE_COMPLETE_PATH, origin + _JOB_RESULT_PATH]
 
 def send_job_status(
     job_id: str,

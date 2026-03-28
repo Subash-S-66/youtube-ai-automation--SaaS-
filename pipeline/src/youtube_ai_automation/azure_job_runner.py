@@ -25,6 +25,7 @@ from youtube_ai_automation.main import (
     update_upload_report_metadata,
     UPLOAD_REPORT_FILE,
 )
+from youtube_ai_automation.core.orchestrator import run_orchestrated_pipeline
 from youtube_ai_automation.notification_utils import build_upload_summary_message, load_upload_report, send_telegram_message
 
 
@@ -343,7 +344,18 @@ def main() -> None:
         pipeline_start = time.time()
         LOGGER.info("Pipeline execution starting: mode=%s", run_mode)
 
-        if run_mode == "full":
+        use_orchestrator = str(os.getenv("PIPELINE_ORCHESTRATOR_V2", "true")).strip().lower() in {"1", "true", "yes"}
+        if use_orchestrator:
+            LOGGER.info("Dispatching orchestrated pipeline (mode=%s)", run_mode)
+            timeout_seconds = int(os.getenv("PIPELINE_TIMEOUT_SECONDS", "480"))
+            run_orchestrated_pipeline(
+                payload=payload if isinstance(payload, dict) else {},
+                upload=upload,
+                mode=run_mode,
+                publish_at=publish_at,
+                timeout_seconds=timeout_seconds,
+            )
+        elif run_mode == "full":
             LOGGER.info("Dispatching run_full_pipeline (render + upload)")
             run_full_pipeline(payload=payload, upload=upload, publish_at=publish_at, count=count)
         else:

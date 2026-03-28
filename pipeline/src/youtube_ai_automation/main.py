@@ -164,6 +164,15 @@ def _setup_logging() -> None:
     )
 
 
+def _log_job_stage(payload: dict | None, stage: str, message: str, level: str = "info") -> None:
+    job_id = ""
+    if isinstance(payload, dict):
+        job_id = str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip()
+    prefix = f"[JOB:{job_id or 'unknown'}][{str(stage or '').upper()}] "
+    log_fn = getattr(LOGGER, level, LOGGER.info)
+    log_fn("%s%s", prefix, message)
+
+
 def _build_publish_schedule(count: int, start_at: str | None, enabled: bool) -> list[str | None]:
     """
     Build a per-video publish_at schedule. If uploads are disabled, returns Nones.
@@ -328,6 +337,59 @@ def _download_custom_media(urls: list[str], output_dir: Path) -> list[Path]:
                 str(exc)[:240],
             )
     return downloaded
+
+
+def _create_placeholder_media(output_dir: Path, tag: str = "placeholder") -> list[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    placeholder_video = output_dir / f"{tag}.mp4"
+    try:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=720x1280:d=3.0",
+            "-vf",
+            "format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-an",
+            str(placeholder_video),
+        ]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode == 0 and placeholder_video.exists() and placeholder_video.stat().st_size > 0:
+            return [placeholder_video]
+        LOGGER.warning("placeholder_media_failed tag=%s reason=%s", tag, (proc.stderr or "")[-200:])
+    except Exception as exc:
+        LOGGER.warning("placeholder_media_exception tag=%s reason=%s", tag, str(exc)[:200])
+    return []
+
+
+def _create_silent_audio(output_dir: Path, duration_seconds: float) -> Path | None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out = output_dir / "voice_full_silent.wav"
+    try:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=24000:cl=mono",
+            "-t",
+            f"{max(1.0, float(duration_seconds)):.2f}",
+            "-acodec",
+            "pcm_s16le",
+            str(out),
+        ]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            return out
+        LOGGER.warning("silent_audio_failed reason=%s", (proc.stderr or "")[-200:])
+    except Exception as exc:
+        LOGGER.warning("silent_audio_exception reason=%s", str(exc)[:200])
+    return None
 
 
 def _extract_highlight_words(topic: str, hook: str) -> list[str]:
@@ -723,6 +785,7 @@ def _build_video_from_content(
                             used_clips_file=USED_CLIPS_FILE,
                             clips_per_scene_min=1,
                             clips_per_scene_max=1,
+                            job_id=str(os.getenv("JOB_ID", "")).strip(),
                         )
                         videos.extend(clips)
                     else:
@@ -1347,6 +1410,7 @@ def run_prepared_pipeline(
     created: list[Path] = []
     if not isinstance(payload, dict):
         raise ValueError("PIPELINE_PAYLOAD must be an object.")
+    _log_job_stage(payload, "audio", "run_prepared_pipeline started")
 
     script_items = payload.get("script", [])
     youtube = payload.get("youtube", {})
@@ -1528,137 +1592,62 @@ def run_prepared_pipeline(
             "Prepared script estimate exceeds 60s (estimated=%.1fs). Keeping script unchanged for audio sync.",
             best_package["estimated_duration"],
         )
-
     full_audio_path: Path | None = None
     actual_audio_seconds = 0.0
     audio_retry_count = 0
     audio_failed = False
-    best_audio_delta = float("inf")
     best_audio_path: Path | None = None
     best_audio_seconds = 0.0
     allowed_drift_seconds = 10.0
-    soft_accept_drift_seconds = 12.0
-    min_acceptable_duration = max(15.0, float(target_duration) - allowed_drift_seconds)
+    min_acceptable_duration = max(50.0, float(target_duration) - allowed_drift_seconds)
     max_acceptable_duration = min(70.0, float(target_duration) + allowed_drift_seconds)
     preferred_target_seconds = min(float(target_duration), 55.0)
-    max_audio_attempts = 2
-    max_stretch_words = int(min(80, float(target_duration) + 20.0) * WORDS_PER_SECOND)
     current_script = str(best_package["script"]).strip()
-    best_script_candidate = current_script
-    for audio_attempt in range(1, max_audio_attempts + 1):
-        try:
-            candidate_output = output_dir / f"voice_full_attempt_{audio_attempt}.wav"
-            candidate_path, _ = generate_voice(
-                script=current_script,
-                voice=voice_name,
-                rate=voice_rate,
-                output_path=candidate_output,
-                rotate_profile=False,
-            )
-            candidate_seconds = get_audio_duration_seconds(candidate_path)
-            if candidate_seconds <= 0:
-                candidate_seconds = estimate_audio_duration(current_script)
-            delta = abs(candidate_seconds - preferred_target_seconds)
-            drift_from_target = candidate_seconds - float(target_duration)
-            LOGGER.info(
-                "audio_attempt=%s actual=%.2fs estimated=%.2fs target=%ss drift=%.2fs",
-                audio_attempt,
-                candidate_seconds,
-                estimate_audio_duration(current_script),
-                target_duration,
-                drift_from_target,
-            )
-            in_acceptable_window = min_acceptable_duration <= candidate_seconds <= max_acceptable_duration
-            soft_acceptable = abs(drift_from_target) <= soft_accept_drift_seconds
-            if delta < best_audio_delta:
-                best_audio_delta = delta
-                best_audio_path = candidate_path
-                best_audio_seconds = candidate_seconds
-                best_script_candidate = current_script
-            elif audio_attempt > 1 and candidate_seconds > (max_acceptable_duration + 5.0):
-                LOGGER.info(
-                    "audio_attempt_discarded attempt=%s actual=%.2fs best=%.2fs reason=worse_than_best_overshoot",
-                    audio_attempt,
-                    candidate_seconds,
-                    best_audio_seconds,
-                )
-                break
 
-            # Done when within target window (target ±5s).
-            if in_acceptable_window:
-                if audio_attempt == 1:
-                    LOGGER.info(
-                        "audio_attempt_accepted attempt=1 actual=%.2fs within +/-%.0fs window",
-                        candidate_seconds,
-                        allowed_drift_seconds,
-                    )
-                break
-            if audio_attempt == 1 and soft_acceptable:
-                LOGGER.info(
-                    "audio_attempt_soft_accept attempt=1 actual=%.2fs drift=%.2fs; using normalization instead of risky rewrite",
-                    candidate_seconds,
-                    drift_from_target,
-                )
-                break
-            if audio_attempt > 1 and best_audio_path is not None and abs(candidate_seconds - preferred_target_seconds) > best_audio_delta:
-                LOGGER.info(
-                    "audio_attempt_discarded attempt=%s actual=%.2fs best=%.2fs reason=not_improving",
-                    audio_attempt,
-                    candidate_seconds,
-                    best_audio_seconds,
-                )
-                break
+    try:
+        candidate_output = output_dir / "voice_full_attempt_1.wav"
+        candidate_path, _ = generate_voice(
+            script=current_script,
+            voice=voice_name,
+            rate=voice_rate,
+            output_path=candidate_output,
+            rotate_profile=False,
+        )
+        candidate_seconds = get_audio_duration_seconds(candidate_path)
+        if candidate_seconds <= 0:
+            candidate_seconds = estimate_audio_duration(current_script)
+        drift_from_target = candidate_seconds - float(target_duration)
+        _log_job_stage(
+            payload,
+            "audio",
+            f"audio_attempt=1 actual={candidate_seconds:.2f}s estimated={estimate_audio_duration(current_script):.2f}s target={target_duration}s drift={drift_from_target:.2f}s",
+        )
+        best_audio_path = candidate_path
+        best_audio_seconds = candidate_seconds
 
-            if audio_attempt == max_audio_attempts:
-                break
-
-            # Adaptive script length control based on real measured TTS speed.
-            if candidate_seconds < min_acceptable_duration:
-                deficit = max(0.0, preferred_target_seconds - candidate_seconds)
-                extra_words = max(12, int(round(deficit * 5.2)))
-                current_script = expand_meaningfully(current_script, extra_words)
-                current_script = _enforce_word_cap(current_script, max_stretch_words)
-            elif candidate_seconds > max_acceptable_duration:
-                ratio = max(0.70, preferred_target_seconds / max(1.0, candidate_seconds))
-                target_words = int(max(20, round(len(current_script.split()) * ratio)))
-                current_script = _trim_script_to_words(current_script, target_words)
-        except Exception as exc:
-            last_errors.append(f"audio_attempt_{audio_attempt}_error:{str(exc)[:120]}")
-        finally:
-            audio_retry_count = audio_attempt - 1
-
-    if best_script_candidate and best_script_candidate != best_package["script"]:
-        best_package["script"] = best_script_candidate
-        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", best_script_candidate) if s.strip()]
-        best_package["sections"]["hook"] = sentences[0] if sentences else best_script_candidate
-        best_package["sections"]["main_content"] = " ".join(sentences[1:]).strip() if len(sentences) > 1 else best_script_candidate
-
-    if best_audio_path is not None and not (min_acceptable_duration <= best_audio_seconds <= max_acceptable_duration):
-        normalize_target = max(min_acceptable_duration, min(preferred_target_seconds, max_acceptable_duration))
-        try:
+        if not (min_acceptable_duration <= candidate_seconds <= max_acceptable_duration):
+            normalize_target = max(min_acceptable_duration, min(preferred_target_seconds, max_acceptable_duration))
             normalized_path = output_dir / "voice_full_normalized.wav"
             normalized_seconds = normalize_audio_duration_with_ffmpeg(
-                input_path=best_audio_path,
+                input_path=candidate_path,
                 output_path=normalized_path,
                 target_seconds=normalize_target,
             )
             if normalized_seconds > 0:
                 best_audio_path = normalized_path
                 best_audio_seconds = normalized_seconds
-                audio_retry_count += 1
-                LOGGER.info(
-                    "audio_normalized actual=%.2fs target=%.2fs window=[%.2f, %.2f]",
-                    normalized_seconds,
-                    normalize_target,
-                    min_acceptable_duration,
-                    max_acceptable_duration,
+                audio_retry_count = 1
+                _log_job_stage(
+                    payload,
+                    "audio",
+                    f"audio_speed_adjusted actual={normalized_seconds:.2f}s target={normalize_target:.2f}s window=[{min_acceptable_duration:.2f}, {max_acceptable_duration:.2f}]",
                 )
-        except Exception as exc:
-            last_errors.append(f"audio_normalize_error:{str(exc)[:160]}")
-
-    if best_audio_path is None:
+    except Exception as exc:
         audio_failed = True
-    else:
+        last_errors.append(f"audio_generation_error:{str(exc)[:160]}")
+        _log_job_stage(payload, "audio", f"audio generation failed: {str(exc)[:200]}", level="warning")
+
+    if not audio_failed and best_audio_path is not None:
         final_audio_path = output_dir / "voice_full.wav"
         try:
             if best_audio_path != final_audio_path:
@@ -1778,6 +1767,27 @@ def run_prepared_pipeline(
         "retry_count": audio_retry_count,
         "validationErrors": errors,
     }
+    resolved_job_id = str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip()
+    result_payload["contract"] = {
+        "jobId": resolved_job_id,
+        "status": "COMPLETED",
+        "content": {
+            "script": best_package["script"],
+            "captions": timed_lines,
+            "hashtags": hashtags,
+        },
+        "media": [],
+        "audio": {
+            "path": str(full_audio_path) if full_audio_path is not None else "",
+            "duration": round(float(final_duration_seconds), 2),
+            "retryCount": int(audio_retry_count),
+        },
+    }
+    result_payload["jobId"] = resolved_job_id
+    result_payload["status"] = "COMPLETED"
+    result_payload["content"] = result_payload["contract"]["content"]
+    result_payload["media"] = result_payload["contract"]["media"]
+    result_payload["audio"] = result_payload["contract"]["audio"]
     if audio_failed:
         result_payload["warning"] = "Used fallback due to retries"
         result_payload["duration"] = estimated_duration
@@ -1785,11 +1795,9 @@ def run_prepared_pipeline(
     result_file = output_dir / "prepared_result.json"
     result_file.write_text(json.dumps(result_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"PIPELINE_OUTPUT_JSON:{json.dumps(result_payload, ensure_ascii=False)}")
+    _log_job_stage(payload, "audio", f"prepared result written: {result_file}")
     if notify_webhook:
         try:
-            resolved_job_id = str(
-                payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")
-            ).strip()
             send_pipeline_complete({
                 "jobId": resolved_job_id,
                 "status": "completed",
@@ -1923,13 +1931,22 @@ def run_full_pipeline(
             raise RuntimeError(f"Strict validation failed after retries: {last_validation_error}")
 
     output_dir = AUDIO_PATH.parent
+    _log_job_stage(payload, "render", "run_full_pipeline started")
     video_config = payload.get("videoConfig", {}) if isinstance(payload.get("videoConfig"), dict) else {}
     target_duration = float(_extract_target_duration(video_config, payload))
     audio_path = Path(str(prepared_payload.get("audio_path", "")).strip())
     subtitle_path = Path(str(prepared_payload.get("subtitle_path", "")).strip()) if prepared_payload.get("subtitle_path") else None
     
     if not str(audio_path).strip() or not audio_path.exists() or not audio_path.is_file():
-        raise RuntimeError(f"Full mode cannot continue: audio file missing or invalid path ({audio_path})")
+        _log_job_stage(payload, "audio", f"prepared audio missing ({audio_path}); generating silent fallback", level="warning")
+        fallback_audio = _create_silent_audio(output_dir, duration_seconds=target_duration)
+        if fallback_audio is not None:
+            audio_path = fallback_audio
+            prepared_payload["audio_path"] = str(fallback_audio)
+            prepared_payload["duration_actual"] = float(target_duration)
+            prepared_payload["duration_estimated"] = float(target_duration)
+        else:
+            raise RuntimeError(f"Full mode cannot continue: audio file missing and silent fallback failed ({audio_path})")
 
     media_dir = CLIPS_DIR / "full_mode"
     media_paths = _collect_media_paths_for_full_mode(payload, media_dir)
@@ -1938,6 +1955,7 @@ def run_full_pipeline(
 
     # Always auto-download stock media when no custom media is provided by user.
     if scene_queries and not has_custom_media:
+        _log_job_stage(payload, "media", f"auto media download started for {len(scene_queries)} scene queries")
         planned_clips, planned_images = _plan_stock_asset_counts(target_duration)
         if planned_clips <= 0 and planned_images <= 0:
             planned_clips, planned_images = 22, 0
@@ -1966,32 +1984,42 @@ def run_full_pipeline(
             if needed <= 0:
                 break
             batch_queries = _extend_scene_queries(clip_queries, max(1, needed))
-            fetched = download_scene_videos(
-                scenes=batch_queries,
-                output_dir=stock_dir,
-                pexels_key=PEXELS_API_KEY or "",
-                pexels_keys=PEXELS_API_KEYS,
-                pixabay_key=PIXABAY_API_KEY or "",
-                pixabay_keys=PIXABAY_API_KEYS,
-                scene_duration=scene_duration,
-                min_resolution=360,
-                clips_per_scene_min=1,
-                clips_per_scene_max=1,
-            )
-            if not fetched:
-                # Fallback to broad queries when scene-specific phrases are too strict for stock APIs.
+            try:
                 fetched = download_scene_videos(
-                    scenes=["technology cinematic b-roll", "ai data center", "futuristic interface"][:max(1, min(3, needed))],
+                    scenes=batch_queries,
                     output_dir=stock_dir,
                     pexels_key=PEXELS_API_KEY or "",
                     pexels_keys=PEXELS_API_KEYS,
                     pixabay_key=PIXABAY_API_KEY or "",
                     pixabay_keys=PIXABAY_API_KEYS,
                     scene_duration=scene_duration,
-                    min_resolution=240,
+                    min_resolution=360,
                     clips_per_scene_min=1,
                     clips_per_scene_max=1,
+                    job_id=str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip(),
                 )
+            except Exception as exc:
+                LOGGER.warning("stock_video_fetch_failed attempt=%s reason=%s", attempt_idx, str(exc)[:200])
+                fetched = []
+            if not fetched:
+                # Fallback to broad queries when scene-specific phrases are too strict for stock APIs.
+                try:
+                    fetched = download_scene_videos(
+                        scenes=["technology cinematic b-roll", "ai data center", "futuristic interface"][:max(1, min(3, needed))],
+                        output_dir=stock_dir,
+                        pexels_key=PEXELS_API_KEY or "",
+                        pexels_keys=PEXELS_API_KEYS,
+                        pixabay_key=PIXABAY_API_KEY or "",
+                        pixabay_keys=PIXABAY_API_KEYS,
+                        scene_duration=scene_duration,
+                        min_resolution=240,
+                        clips_per_scene_min=1,
+                        clips_per_scene_max=1,
+                        job_id=str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip(),
+                    )
+                except Exception as exc:
+                    LOGGER.warning("stock_video_fallback_fetch_failed attempt=%s reason=%s", attempt_idx, str(exc)[:200])
+                    fetched = []
             for path in fetched:
                 key = str(path.resolve())
                 if key in seen_video_paths:
@@ -2022,6 +2050,7 @@ def run_full_pipeline(
                 ensure_ascii=False,
             )
         )
+        _log_job_stage(payload, "media", f"video assets downloaded={len(stock_paths)} planned={planned_clips}")
 
         image_downloads: list[Path] = []
         seen_image_paths: set[str] = set()
@@ -2100,6 +2129,7 @@ def run_full_pipeline(
         )
     elif not scene_queries:
         LOGGER.warning("auto_media_download skipped: no scene queries available")
+        _log_job_stage(payload, "media", "auto media download skipped (no scene queries)", level="warning")
 
     if not media_paths:
         # API quota/network failures can lead to zero downloads; reuse local assets as fallback.
@@ -2116,8 +2146,17 @@ def run_full_pipeline(
                     ensure_ascii=False,
                 )
             )
+            _log_job_stage(payload, "media", f"using local fallback media videos={len(local_videos[:16])} images={len(local_images[:8])}")
+    if not media_paths:
+        placeholders = _create_placeholder_media(CLIPS_DIR / "fallback_media", tag="job_fallback")
+        if placeholders:
+            media_paths.extend(placeholders)
+            _log_job_stage(payload, "media", "using generated placeholder media", level="warning")
+    if not media_paths:
+        _log_job_stage(payload, "media", "no media available after all fallbacks; proceeding with empty media list", level="warning")
 
     LOGGER.info("Stage: Rendering vertical video")
+    _log_job_stage(payload, "render", f"render start media_count={len(media_paths)}")
     output_video_path = output_dir / "final_full.mp4"
     render_vertical_video(
         media_paths=media_paths,
@@ -2127,6 +2166,7 @@ def run_full_pipeline(
         target_duration_seconds=max(1.0, target_duration),
     )
     LOGGER.info("Video rendered successfully: %s", output_video_path)
+    _log_job_stage(payload, "render", f"render completed video={output_video_path}")
 
     # Collect used media info for backend reporting
     used_clips_info = []
@@ -2146,23 +2186,28 @@ def run_full_pipeline(
     uploaded_video_url = ""
     if upload_requested:
         LOGGER.info("Stage: Uploading to YouTube")
-        upload_result = upload_video(
-            video_path=output_video_path,
-            title=str(youtube_cfg.get("title", "Untitled Short")).strip()[:100] or "Untitled Short",
-            description=str(youtube_cfg.get("description", "")).strip(),
-            tags=[str(x).strip() for x in (youtube_cfg.get("hashtags") or []) if str(x).strip()],
-            privacy_status="public",
-            client_secret_file=str(YOUTUBE_CLIENT_SECRET_FILE),
-            scopes=YOUTUBE_SCOPES,
-            token_path=TOKEN_PATH,
-            publish_at=publish_at,
-            validate_shorts=False,
-            strict_shorts_validation=False,
-        )
-        uploaded_video_id = str(upload_result.get("id", "")).strip()
-        if uploaded_video_id:
-            uploaded_video_url = f"https://www.youtube.com/watch?v={uploaded_video_id}"
-            LOGGER.info("YouTube upload successful: %s", uploaded_video_url)
+        _log_job_stage(payload, "upload", "upload start")
+        try:
+            upload_result = upload_video(
+                video_path=output_video_path,
+                title=str(youtube_cfg.get("title", "Untitled Short")).strip()[:100] or "Untitled Short",
+                description=str(youtube_cfg.get("description", "")).strip(),
+                tags=[str(x).strip() for x in (youtube_cfg.get("hashtags") or []) if str(x).strip()],
+                privacy_status="public",
+                client_secret_file=str(YOUTUBE_CLIENT_SECRET_FILE),
+                scopes=YOUTUBE_SCOPES,
+                token_path=TOKEN_PATH,
+                publish_at=publish_at,
+                validate_shorts=False,
+                strict_shorts_validation=False,
+            )
+            uploaded_video_id = str(upload_result.get("id", "")).strip()
+            if uploaded_video_id:
+                uploaded_video_url = f"https://www.youtube.com/watch?v={uploaded_video_id}"
+                LOGGER.info("YouTube upload successful: %s", uploaded_video_url)
+                _log_job_stage(payload, "upload", f"upload completed video_id={uploaded_video_id}")
+        except Exception as exc:
+            _log_job_stage(payload, "upload", f"upload failed but pipeline continuing: {str(exc)[:220]}", level="warning")
 
     # Keep artifacts for debugging/auditing and reuse in later runs.
     LOGGER.info("Stage: Post-upload cleanup skipped (artifacts retained)")
@@ -2183,6 +2228,24 @@ def run_full_pipeline(
             "usedImages": used_images_info,
         },
     }
+    final_payload["contract"] = {
+        "jobId": final_payload["jobId"],
+        "status": "COMPLETED",
+        "content": {
+            "script": prepared_payload.get("script", ""),
+            "captions": (prepared_payload.get("captions", {}) or {}).get("timed", []),
+            "hashtags": prepared_payload.get("hashtags", []),
+        },
+        "media": [*used_clips_info, *used_images_info],
+        "audio": {
+            "path": prepared_payload.get("audio_path", ""),
+            "duration": prepared_payload.get("duration_actual", prepared_payload.get("duration", 0)),
+        },
+    }
+    final_payload["state"] = "COMPLETED"
+    final_payload["content"] = final_payload["contract"]["content"]
+    final_payload["media"] = final_payload["contract"]["media"]
+    final_payload["audio"] = final_payload["contract"]["audio"]
     
     # Critical: Required by pipelineWorker.ts to extract pipeline output JSON in local mode
     print(f"PIPELINE_OUTPUT_JSON:{json.dumps(final_payload, ensure_ascii=False)}")
@@ -2277,3 +2340,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

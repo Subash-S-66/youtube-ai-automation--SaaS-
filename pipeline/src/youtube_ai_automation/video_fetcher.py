@@ -7,7 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-import random
 import shutil
 import subprocess
 import time
@@ -148,6 +147,87 @@ def _build_fallback_scene_clips(
         LOGGER.info("Using %s fallback clips from %s", len(reused), output_dir)
         return reused
     return []
+
+
+def _create_placeholder_video(output_dir: Path, name: str, duration_seconds: float = 3.0) -> Path | None:
+    placeholder = output_dir / f"{name}.mp4"
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s=720x1280:d={max(1.0, float(duration_seconds)):.2f}",
+            "-vf",
+            "format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-an",
+            str(placeholder),
+        ]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode == 0 and placeholder.exists() and placeholder.stat().st_size > 0:
+            return placeholder
+        LOGGER.warning("[MEDIA] placeholder video generation failed for %s: %s", placeholder, (proc.stderr or "")[-200:])
+    except Exception as exc:
+        LOGGER.warning("[MEDIA] placeholder video generation exception for %s: %s", placeholder, str(exc)[:200])
+    return None
+
+
+def fallback_media(scene: str, output_dir: Path, scene_idx: int) -> list[Path]:
+    # 1) Reuse local clips if possible.
+    local = _build_fallback_scene_clips([scene], output_dir=output_dir, scene_duration=3.0, min_duration=2.0, max_duration=7.0)
+    if local:
+        return local[:1]
+    # 2) Create a deterministic placeholder video.
+    placeholder = _create_placeholder_video(output_dir, name=f"placeholder_scene{scene_idx:03d}", duration_seconds=3.0)
+    if placeholder:
+        return [placeholder]
+    # 3) Return empty (scene skipped, pipeline continues).
+    return []
+
+
+def get_media_for_scene(
+    *,
+    scene: str,
+    scene_idx: int,
+    output_dir: Path,
+    pexels_candidates: list[dict[str, Any]],
+    pixabay_candidates: list[dict[str, Any]],
+    used_file: Path,
+    exclude_urls: set[str],
+    min_resolution: int,
+    min_duration: float,
+    max_duration: float,
+    target_clip_count: int,
+) -> list[dict[str, Any]] | list[Path]:
+    combined_candidates = _merge_candidates(pexels_candidates, pixabay_candidates)
+    available_candidates = filter_candidates(
+        candidates=combined_candidates,
+        used_clips_file=used_file,
+        exclude_urls=exclude_urls,
+        min_resolution=min_resolution,
+    )
+    if not available_candidates and combined_candidates:
+        available_candidates = filter_candidates(
+            candidates=combined_candidates,
+            used_clips_file=used_file,
+            exclude_urls=set(),
+            min_resolution=max(240, min_resolution // 2),
+        )
+    if not available_candidates:
+        return fallback_media(scene, output_dir, scene_idx)
+    return choose_candidates(
+        candidates=available_candidates,
+        used_clips_file=used_file,
+        count=max(1, int(target_clip_count)),
+        exclude_urls=exclude_urls,
+        top_k=12,
+        min_resolution=min_resolution,
+        allow_used_fallback=True,
+    )
 
 
 def _url_key(url: str) -> str:
@@ -356,6 +436,7 @@ def download_scene_videos(
     used_clips_file: Path | None = None,
     clips_per_scene_min: int = 1,
     clips_per_scene_max: int = 2,
+    job_id: str = "",
 ) -> list[Path]:
     """
     Download one clip per scene based on scene descriptions.
@@ -387,6 +468,7 @@ def download_scene_videos(
     # Need a lock for thread-safe operations on shared collections
     import threading
     lock = threading.Lock()
+    log_prefix = f"[JOB:{job_id}][MEDIA] " if job_id else "[MEDIA] "
 
     def process_scene(idx: int, scene: str) -> list[Path]:
         local_paths = []
@@ -411,7 +493,7 @@ def download_scene_videos(
                     if pexels_candidates:
                         break
                 except Exception as exc:
-                    LOGGER.warning("Pexels source unavailable for scene %s (%s): %s", idx, query, exc)
+                    LOGGER.warning("%sPexels source unavailable for scene %s (%s): %s", log_prefix, idx, query, exc)
 
         if normalized_pixabay_keys:
             start_idx = (idx - 1) % len(normalized_pixabay_keys)
@@ -430,50 +512,35 @@ def download_scene_videos(
                     if pixabay_candidates:
                         break
                 except Exception as exc:
-                    LOGGER.warning("Pixabay source unavailable for scene %s (%s): %s", idx, query, exc)
-
-        combined_candidates = _merge_candidates(pexels_candidates, pixabay_candidates)
+                    LOGGER.warning("%sPixabay source unavailable for scene %s (%s): %s", log_prefix, idx, query, exc)
 
         with lock:
             exclude_all = selected_urls.union(mongo_used_clips)
-
-        available_candidates = filter_candidates(
-            candidates=combined_candidates,
-            used_clips_file=used_file,
+        target_clip_count = min_per_scene
+        selected_or_fallback = get_media_for_scene(
+            scene=scene,
+            scene_idx=idx,
+            output_dir=output_dir,
+            pexels_candidates=pexels_candidates,
+            pixabay_candidates=pixabay_candidates,
+            used_file=used_file,
             exclude_urls=exclude_all,
             min_resolution=effective_min_resolution,
+            min_duration=min_duration,
+            max_duration=max_duration,
+            target_clip_count=target_clip_count,
         )
-        if not available_candidates and combined_candidates:
-            # Relax constraints when the history/filter layer is too strict.
-            available_candidates = filter_candidates(
-                candidates=combined_candidates,
-                used_clips_file=used_file,
-                exclude_urls=set(),
-                min_resolution=max(240, effective_min_resolution // 2),
-            )
-        if not available_candidates:
+        if not selected_or_fallback:
+            LOGGER.warning("%sNo stock media found for scene %s. Skipping scene.", log_prefix, idx)
             return local_paths
+        if isinstance(selected_or_fallback[0], Path):
+            # fallback_media already resolved a local placeholder/media path.
+            return [p for p in selected_or_fallback if isinstance(p, Path)]
 
-        target_clip_count = random.randint(min_per_scene, max_per_scene)
-
+        selected_batch = selected_or_fallback
         with lock:
-            selected_batch = choose_candidates(
-                candidates=available_candidates,
-                used_clips_file=used_file,
-                count=target_clip_count,
-                exclude_urls=selected_urls,
-                top_k=12,
-                min_resolution=effective_min_resolution,
-                allow_used_fallback=True,
-            )
-
-            # Immediately reserve URLs to prevent other threads from grabbing them
-            if selected_batch:
-                 for s in selected_batch:
-                     selected_urls.add(_url_key(str(s.get("url", ""))))
-
-        if not selected_batch:
-            return local_paths
+            for s in selected_batch:
+                selected_urls.add(_url_key(str(s.get("url", ""))))
 
         for clip_idx, selected in enumerate(selected_batch, start=1):
             out_path = output_dir / f"{batch_tag}_scene{idx:03d}_clip{clip_idx}.mp4"
@@ -535,7 +602,10 @@ def download_scene_videos(
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = [executor.submit(process_scene, idx, scene) for idx, scene in enumerate(scenes, start=1)]
         for future in futures:
-            all_paths.extend(future.result())
+            try:
+                all_paths.extend(future.result())
+            except Exception as exc:
+                LOGGER.warning("%sScene media task failed: %s", log_prefix, str(exc)[:220])
 
     # Sort the paths to ensure sequential scene ordering is preserved (since futures complete out of order).
     # Since filenames are zero-padded (e.g. scene001_clip1.mp4), lexicographical sort will be correct.
