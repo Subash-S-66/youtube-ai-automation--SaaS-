@@ -90,69 +90,100 @@ ${storyContext}
 Write the narration brief now. Remember: plain paragraph, spoken aloud, ${minWords}–${maxWords} words, no labels or formatting.`;
 };
 
-export const generatePrompt = async (user_prompt: string, options: PromptGenerationOptions = {}): Promise<string> => {
-  const fullPrompt = buildPromptWithOptions(user_prompt, options);
-  const julesUrl = process.env.JULES_API_URL;
-  const julesKey = process.env.JULES_API_KEY;
-
-  // Always try Jules first
-  if (julesUrl && julesKey) {
-    try {
-      console.log('[PromptService] Trying Jules API for prompt generation...');
-      const response = await fetch(julesUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${julesKey}`,
-        },
-        body: JSON.stringify({ prompt: fullPrompt }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        const output = data?.output_text || data?.response || data?.text;
-        if (output && String(output).trim().split(/\s+/).length >= 10) {
-          console.log('[PromptService] Jules API succeeded for prompt generation.');
-          return String(output).trim();
-        }
-      } else {
-        console.warn(`[PromptService] Jules API failed with status ${response.status}, falling back to Gemini...`);
-      }
-    } catch (e) {
-      console.warn('[PromptService] Jules API request failed, falling back to Gemini...', e);
-    }
-  } else {
-    console.warn('[PromptService] Jules API not configured (JULES_API_URL/JULES_API_KEY missing), using Gemini directly.');
+const callOpenRouterPrompt = async (prompt: string, modelName: string): Promise<string> => {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error('OPENROUTER_API_KEY is not configured.');
   }
 
-  return generatePromptDirect(fullPrompt);
+  console.log(`[PromptService] Trying OpenRouter model: ${modelName}`);
+
+  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.7,
+      max_tokens: 512,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`OpenRouter HTTP ${response.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const data = await response.json() as any;
+  const result = data?.choices?.[0]?.message?.content || '';
+  if (!result || String(result).trim().length < 10) {
+    console.error(`[PromptService] OpenRouter returned short/empty result for ${modelName}. Full payload:`, JSON.stringify(data, null, 2));
+  }
+  return result;
 };
 
-export const generatePromptDirect = async (user_prompt: string): Promise<string> => {
+const callNativeGeminiPrompt = async (prompt: string): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY;
-
   if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured. Cannot generate content.');
+    throw new Error('GEMINI_API_KEY is not configured.');
   }
 
   const modelName = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
-  console.log(`[PromptService] Using model: ${modelName}`);
+  console.log(`[PromptService] Trying Native Google Gemini model: ${modelName}`);
+  
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
   const result = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: user_prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.7,
       maxOutputTokens: 512,
     },
   });
+  return result.response.text() || '';
+};
 
-  const responseText = result.response.text();
-  if (!responseText || responseText.trim().split(/\s+/).length < 10) {
-    throw new Error('AI returned empty or too-short response.');
+export const generatePromptDirect = async (user_prompt: string): Promise<string> => {
+  const modelsToTry = [
+    { name: 'openrouter/free', type: 'openrouter' },
+    { name: 'meta-llama/llama-3.3-70b-instruct:free', type: 'openrouter' },
+    { name: 'nousresearch/hermes-3-llama-3.1-405b:free', type: 'openrouter' },
+    { name: 'native-gemini', type: 'native' }
+  ];
+
+  const errors: string[] = [];
+
+  for (const modelConfig of modelsToTry) {
+    try {
+      let resultText = '';
+      if (modelConfig.type === 'openrouter') {
+        resultText = await callOpenRouterPrompt(user_prompt, modelConfig.name);
+      } else {
+        resultText = await callNativeGeminiPrompt(user_prompt);
+      }
+
+      if (!resultText || resultText.trim().split(/\s+/).length < 10) {
+        throw new Error('AI returned empty or too-short response.');
+      }
+
+      console.log(`[PromptService] Successfully generated prompt using ${modelConfig.name}`);
+      return resultText.trim();
+    } catch (error: any) {
+      console.warn(`[PromptService] Failed using ${modelConfig.name}: ${error?.message}`);
+      errors.push(`${modelConfig.name}: ${error?.message}`);
+    }
   }
 
-  return responseText.trim();
+  throw new Error(`Prompt generation failed on all models: ${errors.join(' | ')}`);
+};
+
+export const generatePrompt = async (user_prompt: string, options: PromptGenerationOptions = {}): Promise<string> => {
+  const fullPrompt = buildPromptWithOptions(user_prompt, options);
+  return generatePromptDirect(fullPrompt);
 };
 
 // Backward-compatible aliases

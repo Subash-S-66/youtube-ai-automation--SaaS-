@@ -45,11 +45,11 @@ server.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 
   // AI Provider diagnostics
-  const julesConfigured = !!(process.env.JULES_API_URL && process.env.JULES_API_KEY);
+  const openRouterConfigured = !!process.env.OPENROUTER_API_KEY;
   const geminiConfigured = !!process.env.GEMINI_API_KEY;
   const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
-  console.log(`[AI Config] Jules API: ${julesConfigured ? '✓ configured' : '✗ not configured (will use Gemini fallback)'}`);
-  console.log(`[AI Config] Gemini API: ${geminiConfigured ? '✓ configured' : '✗ NOT configured — AI generation will fail!'}`);
+  console.log(`[AI Config] OpenRouter API: ${openRouterConfigured ? '✓ configured' : '✗ not configured (will use Native Gemini fallback)'}`);
+  console.log(`[AI Config] Native Gemini API: ${geminiConfigured ? '✓ configured' : '✗ NOT configured — final fallback will fail!'}`);
   console.log(`[AI Config] Model: ${geminiModel}`);
   console.log(`[AI Config] Pipeline Worker: ✓ started (BullMQ consumer active)`);
 });

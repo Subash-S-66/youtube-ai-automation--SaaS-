@@ -199,6 +199,15 @@ _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 
 
 def _run_ffmpeg(args: list[str]) -> None:
+    # Diagnostic: check -i arguments to ensure they are valid files
+    for i, arg in enumerate(args):
+        if arg == "-i" and i + 1 < len(args):
+            input_file = Path(args[i+1])
+            if not input_file.exists():
+                raise RuntimeError(f"ffmpeg failed: Input file does not exist: {input_file}")
+            if input_file.is_dir():
+                raise RuntimeError(f"ffmpeg failed: Input path is a directory, not a file: {input_file}")
+
     proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {proc.stderr[-600:]}")

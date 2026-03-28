@@ -170,6 +170,8 @@ async def _save_gemini_voice_live_async(
         async for response in session.receive():
             server_content = getattr(response, "server_content", None)
             if not server_content:
+                # Log non-content responses for debugging (e.g. setup, turn_complete)
+                LOGGER.debug("Gemini Live received response without server_content: %s", response)
                 continue
 
             model_turn = getattr(server_content, "model_turn", None)
@@ -188,6 +190,7 @@ async def _save_gemini_voice_live_async(
                         chunks.append(bytes(data))
 
             if getattr(server_content, "turn_complete", False):
+                LOGGER.debug("Gemini Live turn complete. Received %d audio chunks.", len(chunks))
                 break
 
     if not chunks:

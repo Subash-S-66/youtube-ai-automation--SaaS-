@@ -120,6 +120,7 @@ from youtube_ai_automation.duration_controller import (
     validate_ending as validate_section_ending,
     validate_output,
     validate_section_limits,
+    WORDS_PER_SECOND,
 )
 
 LOGGER = logging.getLogger("youtube_ai_automation")
@@ -1295,7 +1296,7 @@ def run_prepared_pipeline(
         raise ValueError("videoConfig.customImageUrls must be an array when provided.")
 
     target_duration = _extract_target_duration(video_config, payload)
-    hard_max_words = int(min(60, target_duration) * 2.5)
+    hard_max_words = int(min(60, target_duration) * WORDS_PER_SECOND)
     # Hard cap early so oversized generated scripts don't start at ~70s for a 60s request.
     script_text = _enforce_word_cap(script_text, hard_max_words)
     cta_enabled = bool(video_config.get("ctaEnabled", video_config.get("enableCTA", False)))
@@ -1366,7 +1367,7 @@ def run_prepared_pipeline(
 
         if estimated < lower_bound:
             deficit = lower_bound - estimated
-            extra_words = int(deficit * 2.5)
+            extra_words = int(deficit * WORDS_PER_SECOND)
             section_scripts["main_content"] = expand_meaningfully(
                 section_scripts["main_content"],
                 max(8, extra_words),
@@ -1777,8 +1778,9 @@ def run_full_pipeline(
     target_duration = float(prepared_payload.get("duration_actual") or prepared_payload.get("duration") or 0.0)
     audio_path = Path(str(prepared_payload.get("audio_path", "")).strip())
     subtitle_path = Path(str(prepared_payload.get("subtitle_path", "")).strip()) if prepared_payload.get("subtitle_path") else None
-    if not audio_path.exists():
-        raise RuntimeError("Full mode cannot continue: audio file missing.")
+    
+    if not str(audio_path).strip() or not audio_path.exists() or not audio_path.is_file():
+        raise RuntimeError(f"Full mode cannot continue: audio file missing or invalid path ({audio_path})")
 
     media_dir = output_dir / "media_full"
     media_paths = _collect_media_paths_for_full_mode(payload, media_dir)
@@ -1939,7 +1941,6 @@ def run_full_pipeline(
     }
     
     # Critical: Required by pipelineWorker.ts to extract pipeline output JSON in local mode
-    import json
     print(f"PIPELINE_OUTPUT_JSON:{json.dumps(final_payload, ensure_ascii=False)}")
     
     send_pipeline_complete(final_payload)

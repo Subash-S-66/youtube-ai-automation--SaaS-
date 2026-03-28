@@ -16,7 +16,7 @@ import scheduleRoutes from './routes/scheduleRoutes';
 import mediaRoutes from './routes/mediaRoutes';
 import webhookRoutes from './routes/webhookRoutes';
 import planRoutes from './routes/planRoutes';
-import julesRoutes from './routes/julesRoutes';
+
 import { errorHandler, AppError } from './middleware/errorHandler';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -113,7 +113,7 @@ app.get('/api/csrf-token', (req: Request, res: Response) => {
 });
 
 // Pipeline-compatible endpoint (Bearer JULES_API_KEY), intentionally outside CSRF middleware.
-app.use('/api/jules', julesRoutes);
+// app.use('/api/jules', julesRoutes); // Jules removed
 
 // Apply CSRF to all following routes except Webhooks which we mapped above
 app.use(doubleCsrfProtection);

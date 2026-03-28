@@ -6,50 +6,59 @@ export interface AIGenerationResult {
   provider: 'jules' | 'fallback';
 }
 
-const callJules = async (prompt: string, timeoutMs = 15000): Promise<string> => {
-  const julesUrl = process.env.JULES_API_URL || '';
-  const julesKey = process.env.JULES_API_KEY || '';
-  if (!julesUrl || !julesKey) {
-    throw new Error('Jules API is not configured');
+const callOpenRouter = async (prompt: string, modelName: string, timeoutMs = 15000): Promise<string> => {
+  const apiKey = process.env.OPENROUTER_API_KEY || '';
+  if (!apiKey) {
+    throw new Error('OPENROUTER_API_KEY is not configured');
   }
+
+  console.log(`[AIService] Trying OpenRouter model: ${modelName}`);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const response = await fetch(julesUrl, {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${julesKey}`,
       },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({
+        model: modelName,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+      }),
       signal: controller.signal,
     });
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Jules HTTP ${response.status}: ${body.slice(0, 300)}`);
+    const data = await response.json() as any;
+
+    if (!response.ok || data?.error) {
+      const errorMsg = data?.error?.message || await response.text();
+      console.error(`[aiGenerationService] API error for ${modelName}:`, errorMsg);
+      throw new Error(`OpenRouter HTTP ${response.status}: ${errorMsg}`);
     }
 
-    const data = await response.json() as any;
-    const out = (data?.output_text || data?.response || data?.text || '').toString().trim();
-    if (!out) {
-      throw new Error('Jules returned empty response');
+    const result = (data?.choices?.[0]?.message?.content || '').toString().trim();
+    if (!result) {
+        console.error(`[aiGenerationService] OpenRouter returned short/empty result`, JSON.stringify(data).slice(0, 200));
+        throw new Error(`OpenRouter empty response (data payload: ${JSON.stringify(data).slice(0, 50)})`);
     }
-    return out;
+    return result;
   } finally {
     clearTimeout(timer);
   }
 };
 
-const callFallbackModel = async (prompt: string, timeoutMs = 15000): Promise<string> => {
+const callNativeGemini = async (prompt: string, timeoutMs = 15000): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
-    throw new Error('Fallback model key is not configured');
+    throw new Error('GEMINI_API_KEY is not configured');
   }
 
-  const modelName = (process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview').trim();
-  console.log(`[AIService] Using fallback model: ${modelName}`);
+  const modelName = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
+  console.log(`[AIService] Trying Native Google Gemini model: ${modelName}`);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
@@ -64,7 +73,7 @@ const callFallbackModel = async (prompt: string, timeoutMs = 15000): Promise<str
     });
     const out = (result.response.text() || '').trim();
     if (!out) {
-      throw new Error('Fallback model returned empty response');
+      throw new Error('Native Gemini returned empty response');
     }
     return out;
   } finally {
@@ -100,25 +109,32 @@ export const generateFromAI = async (prompt: string): Promise<AIGenerationResult
     throw new AppError('Prompt is required for AI generation.', 400);
   }
 
-  // Always try Jules first
-  try {
-    console.log('[AIService] Trying Jules API...');
-    const text = await callJules(normalizedPrompt);
-    validateAIOutput(text);
-    console.log('[AIService] Jules API succeeded.');
-    return { text, provider: 'jules' };
-  } catch (julesError: any) {
-    console.warn(`[AIService] Jules failed: ${julesError?.message}. Falling back to Gemini...`);
+  const modelsToTry = [
+    { name: 'openrouter/free', type: 'openrouter' },
+    { name: 'meta-llama/llama-3.3-70b-instruct:free', type: 'openrouter' },
+    { name: 'nousresearch/hermes-3-llama-3.1-405b:free', type: 'openrouter' },
+    { name: 'native-gemini', type: 'native' }
+  ];
+
+  const errors: string[] = [];
+
+  for (const modelConfig of modelsToTry) {
     try {
-      const text = await callFallbackModel(normalizedPrompt);
+      let text = '';
+      if (modelConfig.type === 'openrouter') {
+        text = await callOpenRouter(normalizedPrompt, modelConfig.name);
+      } else {
+        text = await callNativeGemini(normalizedPrompt);
+      }
+      
       validateAIOutput(text);
-      console.log('[AIService] Gemini fallback succeeded.');
-      return { text, provider: 'fallback' };
-    } catch (fallbackError: any) {
-      throw new AppError(
-        `AI generation failed. Jules: ${julesError?.message || 'unknown'} | Gemini: ${fallbackError?.message || 'unknown'}`,
-        502
-      );
+      console.log(`[AIService] Successfully generated content using ${modelConfig.name}`);
+      return { text, provider: 'fallback' }; // provider string doesn't matter anymore, keeping as default 'fallback'
+    } catch (error: any) {
+      console.warn(`[AIService] Failed using ${modelConfig.name}: ${error?.message}`);
+      errors.push(`${modelConfig.name}: ${error?.message}`);
     }
   }
+
+  throw new AppError(`AI generation failed on all models: ${errors.join(' | ')}`, 502);
 };
