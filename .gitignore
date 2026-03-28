@@ -67,6 +67,10 @@ assets/clips/
 output/clips/
 data/assets/clips/
 pipeline/data/assets/clips/
+data/assets/images/
+pipeline/data/assets/images/
+pipeline/pipeline/data/assets/clips/stock_image/
+pipeline/pipeline/data/assets/clips/stock_image/a01_q01/
 
 # Cache files
 .cache/

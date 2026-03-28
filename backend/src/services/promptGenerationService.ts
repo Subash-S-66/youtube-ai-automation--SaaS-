@@ -90,41 +90,6 @@ ${storyContext}
 Write the narration brief now. Remember: plain paragraph, spoken aloud, ${minWords}–${maxWords} words, no labels or formatting.`;
 };
 
-const callOpenRouterPrompt = async (prompt: string, modelName: string): Promise<string> => {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY is not configured.');
-  }
-
-  console.log(`[PromptService] Trying OpenRouter model: ${modelName}`);
-
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: modelName,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-      max_tokens: 512,
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`OpenRouter HTTP ${response.status}: ${errText.slice(0, 300)}`);
-  }
-
-  const data = await response.json() as any;
-  const result = data?.choices?.[0]?.message?.content || '';
-  if (!result || String(result).trim().length < 10) {
-    console.error(`[PromptService] OpenRouter returned short/empty result for ${modelName}. Full payload:`, JSON.stringify(data, null, 2));
-  }
-  return result;
-};
-
 const callNativeGeminiPrompt = async (prompt: string): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -148,37 +113,16 @@ const callNativeGeminiPrompt = async (prompt: string): Promise<string> => {
 };
 
 export const generatePromptDirect = async (user_prompt: string): Promise<string> => {
-  const modelsToTry = [
-    { name: 'openrouter/free', type: 'openrouter' },
-    { name: 'meta-llama/llama-3.3-70b-instruct:free', type: 'openrouter' },
-    { name: 'nousresearch/hermes-3-llama-3.1-405b:free', type: 'openrouter' },
-    { name: 'native-gemini', type: 'native' }
-  ];
-
-  const errors: string[] = [];
-
-  for (const modelConfig of modelsToTry) {
-    try {
-      let resultText = '';
-      if (modelConfig.type === 'openrouter') {
-        resultText = await callOpenRouterPrompt(user_prompt, modelConfig.name);
-      } else {
-        resultText = await callNativeGeminiPrompt(user_prompt);
-      }
-
-      if (!resultText || resultText.trim().split(/\s+/).length < 10) {
-        throw new Error('AI returned empty or too-short response.');
-      }
-
-      console.log(`[PromptService] Successfully generated prompt using ${modelConfig.name}`);
-      return resultText.trim();
-    } catch (error: any) {
-      console.warn(`[PromptService] Failed using ${modelConfig.name}: ${error?.message}`);
-      errors.push(`${modelConfig.name}: ${error?.message}`);
+  try {
+    const resultText = await callNativeGeminiPrompt(user_prompt);
+    if (!resultText || resultText.trim().split(/\s+/).length < 10) {
+      throw new Error('AI returned empty or too-short response.');
     }
+    console.log('[PromptService] Successfully generated prompt using native-gemini');
+    return resultText.trim();
+  } catch (error: any) {
+    throw new Error(`Prompt generation failed (native-gemini): ${error?.message || 'unknown error'}`);
   }
-
-  throw new Error(`Prompt generation failed on all models: ${errors.join(' | ')}`);
 };
 
 export const generatePrompt = async (user_prompt: string, options: PromptGenerationOptions = {}): Promise<string> => {

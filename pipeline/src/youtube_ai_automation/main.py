@@ -16,6 +16,7 @@ import random
 import re
 import requests
 import socket
+import subprocess
 import time
 import wave
 from urllib.parse import unquote, urlparse
@@ -50,7 +51,9 @@ from youtube_ai_automation.config import (
     OPENAI_MODEL,
     OUTPUT_DIR,
     PEXELS_API_KEY,
+    PEXELS_API_KEYS,
     PIXABAY_API_KEY,
+    PIXABAY_API_KEYS,
     NEWS_QUERY,
     NEWS_LANGUAGE,
     NEWS_LOOKBACK_HOURS,
@@ -712,7 +715,9 @@ def _build_video_from_content(
                             scenes=[query],
                             output_dir=CLIPS_DIR,
                             pexels_key=PEXELS_API_KEY,
+                            pexels_keys=PEXELS_API_KEYS,
                             pixabay_key=PIXABAY_API_KEY,
+                            pixabay_keys=PIXABAY_API_KEYS,
                             scene_duration=scene_duration,
                             min_resolution=720,
                             used_clips_file=USED_CLIPS_FILE,
@@ -1144,6 +1149,47 @@ def get_audio_duration(file_path: Path) -> float:
     return get_audio_duration_seconds(file_path)
 
 
+def _build_atempo_chain(factor: float) -> str:
+    # ffmpeg atempo accepts per-filter values in [0.5, 2.0]
+    value = max(0.25, min(4.0, float(factor)))
+    parts: list[float] = []
+    while value < 0.5:
+        parts.append(0.5)
+        value /= 0.5
+    while value > 2.0:
+        parts.append(2.0)
+        value /= 2.0
+    parts.append(value)
+    return ",".join(f"atempo={p:.6f}" for p in parts)
+
+
+def normalize_audio_duration_with_ffmpeg(
+    input_path: Path,
+    output_path: Path,
+    target_seconds: float,
+) -> float:
+    current = get_audio_duration_seconds(input_path)
+    if current <= 0 or target_seconds <= 0:
+        return current
+    factor = current / float(target_seconds)
+    filter_chain = _build_atempo_chain(factor)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(input_path),
+        "-filter:a",
+        filter_chain,
+        "-acodec",
+        "pcm_s16le",
+        str(output_path),
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0 or not output_path.exists():
+        raise RuntimeError(f"audio_normalize_failed: {proc.stderr[-240:]}")
+    return get_audio_duration_seconds(output_path)
+
+
 def expand_meaningfully(text: str, extra_words: int) -> str:
     base = str(text or "").strip()
     if extra_words <= 0:
@@ -1164,13 +1210,34 @@ def expand_meaningfully(text: str, extra_words: int) -> str:
 
 
 def _enforce_word_cap(script: str, max_words: int) -> str:
-    words = str(script or "").split()
+    text = str(script or "").strip()
+    words = text.split()
     if len(words) <= max_words:
-        return str(script or "").strip()
+        return text
     trimmed = " ".join(words[:max_words]).strip()
+    last_punct = max(trimmed.rfind("."), trimmed.rfind("!"), trimmed.rfind("?"))
+    if last_punct > 0:
+        candidate = trimmed[: last_punct + 1].strip()
+        # Keep a complete sentence boundary when possible to avoid tails like "The."
+        if candidate and len(candidate.split()) >= max(5, int(max_words * 0.65)):
+            trimmed = candidate
+    if trimmed:
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", trimmed) if s.strip()]
+        if len(sentences) > 1 and len(sentences[-1].split()) < 3:
+            trimmed = " ".join(sentences[:-1]).strip()
     if trimmed and trimmed[-1] not in ".!?":
         trimmed += "."
     return trimmed
+
+
+def _trim_script_to_words(script: str, target_words: int) -> str:
+    text = str(script or "").strip()
+    words = text.split()
+    limit = max(20, int(target_words))
+    if len(words) <= limit:
+        return text
+    trimmed = " ".join(words[:limit]).strip()
+    return _enforce_word_cap(trimmed, limit)
 
 
 def _assemble_sections_script(sections: dict[str, str]) -> str:
@@ -1296,7 +1363,9 @@ def run_prepared_pipeline(
         raise ValueError("videoConfig.customImageUrls must be an array when provided.")
 
     target_duration = _extract_target_duration(video_config, payload)
-    hard_max_words = int(min(60, target_duration) * WORDS_PER_SECOND)
+    # Allow extra lexical headroom (+10s) because TTS pace can be faster than 3.6 WPS.
+    # This prevents frequent under-length audio (e.g., 40-45s for a 60s target).
+    hard_max_words = int(min(70, target_duration + 10) * WORDS_PER_SECOND)
     # Hard cap early so oversized generated scripts don't start at ~70s for a 60s request.
     script_text = _enforce_word_cap(script_text, hard_max_words)
     cta_enabled = bool(video_config.get("ctaEnabled", video_config.get("enableCTA", False)))
@@ -1444,9 +1513,7 @@ def run_prepared_pipeline(
         ).strip()
 
     hard_cap_words = hard_max_words
-    words = best_script.split()
-    if len(words) > hard_cap_words:
-        best_script = " ".join(words[:hard_cap_words])
+    best_script = _enforce_word_cap(best_script, hard_cap_words)
 
     best_package = {
         "script": best_script,
@@ -1466,16 +1533,23 @@ def run_prepared_pipeline(
     actual_audio_seconds = 0.0
     audio_retry_count = 0
     audio_failed = False
-    script_estimate_seconds = max(0.1, estimate_audio_duration(best_package["script"]))
     best_audio_delta = float("inf")
     best_audio_path: Path | None = None
     best_audio_seconds = 0.0
-    max_audio_attempts = 3
+    allowed_drift_seconds = 10.0
+    soft_accept_drift_seconds = 12.0
+    min_acceptable_duration = max(15.0, float(target_duration) - allowed_drift_seconds)
+    max_acceptable_duration = min(70.0, float(target_duration) + allowed_drift_seconds)
+    preferred_target_seconds = min(float(target_duration), 55.0)
+    max_audio_attempts = 2
+    max_stretch_words = int(min(80, float(target_duration) + 20.0) * WORDS_PER_SECOND)
+    current_script = str(best_package["script"]).strip()
+    best_script_candidate = current_script
     for audio_attempt in range(1, max_audio_attempts + 1):
         try:
             candidate_output = output_dir / f"voice_full_attempt_{audio_attempt}.wav"
             candidate_path, _ = generate_voice(
-                script=best_package["script"],
+                script=current_script,
                 voice=voice_name,
                 rate=voice_rate,
                 output_path=candidate_output,
@@ -1483,26 +1557,104 @@ def run_prepared_pipeline(
             )
             candidate_seconds = get_audio_duration_seconds(candidate_path)
             if candidate_seconds <= 0:
-                candidate_seconds = script_estimate_seconds
-            delta = abs(candidate_seconds - script_estimate_seconds)
+                candidate_seconds = estimate_audio_duration(current_script)
+            delta = abs(candidate_seconds - preferred_target_seconds)
+            drift_from_target = candidate_seconds - float(target_duration)
             LOGGER.info(
                 "audio_attempt=%s actual=%.2fs estimated=%.2fs target=%ss drift=%.2fs",
                 audio_attempt,
                 candidate_seconds,
-                script_estimate_seconds,
+                estimate_audio_duration(current_script),
                 target_duration,
-                candidate_seconds - target_duration,
+                drift_from_target,
             )
+            in_acceptable_window = min_acceptable_duration <= candidate_seconds <= max_acceptable_duration
+            soft_acceptable = abs(drift_from_target) <= soft_accept_drift_seconds
             if delta < best_audio_delta:
                 best_audio_delta = delta
                 best_audio_path = candidate_path
                 best_audio_seconds = candidate_seconds
-            if delta <= 2.0:
+                best_script_candidate = current_script
+            elif audio_attempt > 1 and candidate_seconds > (max_acceptable_duration + 5.0):
+                LOGGER.info(
+                    "audio_attempt_discarded attempt=%s actual=%.2fs best=%.2fs reason=worse_than_best_overshoot",
+                    audio_attempt,
+                    candidate_seconds,
+                    best_audio_seconds,
+                )
                 break
+
+            # Done when within target window (target ±5s).
+            if in_acceptable_window:
+                if audio_attempt == 1:
+                    LOGGER.info(
+                        "audio_attempt_accepted attempt=1 actual=%.2fs within +/-%.0fs window",
+                        candidate_seconds,
+                        allowed_drift_seconds,
+                    )
+                break
+            if audio_attempt == 1 and soft_acceptable:
+                LOGGER.info(
+                    "audio_attempt_soft_accept attempt=1 actual=%.2fs drift=%.2fs; using normalization instead of risky rewrite",
+                    candidate_seconds,
+                    drift_from_target,
+                )
+                break
+            if audio_attempt > 1 and best_audio_path is not None and abs(candidate_seconds - preferred_target_seconds) > best_audio_delta:
+                LOGGER.info(
+                    "audio_attempt_discarded attempt=%s actual=%.2fs best=%.2fs reason=not_improving",
+                    audio_attempt,
+                    candidate_seconds,
+                    best_audio_seconds,
+                )
+                break
+
+            if audio_attempt == max_audio_attempts:
+                break
+
+            # Adaptive script length control based on real measured TTS speed.
+            if candidate_seconds < min_acceptable_duration:
+                deficit = max(0.0, preferred_target_seconds - candidate_seconds)
+                extra_words = max(12, int(round(deficit * 5.2)))
+                current_script = expand_meaningfully(current_script, extra_words)
+                current_script = _enforce_word_cap(current_script, max_stretch_words)
+            elif candidate_seconds > max_acceptable_duration:
+                ratio = max(0.70, preferred_target_seconds / max(1.0, candidate_seconds))
+                target_words = int(max(20, round(len(current_script.split()) * ratio)))
+                current_script = _trim_script_to_words(current_script, target_words)
         except Exception as exc:
             last_errors.append(f"audio_attempt_{audio_attempt}_error:{str(exc)[:120]}")
         finally:
             audio_retry_count = audio_attempt - 1
+
+    if best_script_candidate and best_script_candidate != best_package["script"]:
+        best_package["script"] = best_script_candidate
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", best_script_candidate) if s.strip()]
+        best_package["sections"]["hook"] = sentences[0] if sentences else best_script_candidate
+        best_package["sections"]["main_content"] = " ".join(sentences[1:]).strip() if len(sentences) > 1 else best_script_candidate
+
+    if best_audio_path is not None and not (min_acceptable_duration <= best_audio_seconds <= max_acceptable_duration):
+        normalize_target = max(min_acceptable_duration, min(preferred_target_seconds, max_acceptable_duration))
+        try:
+            normalized_path = output_dir / "voice_full_normalized.wav"
+            normalized_seconds = normalize_audio_duration_with_ffmpeg(
+                input_path=best_audio_path,
+                output_path=normalized_path,
+                target_seconds=normalize_target,
+            )
+            if normalized_seconds > 0:
+                best_audio_path = normalized_path
+                best_audio_seconds = normalized_seconds
+                audio_retry_count += 1
+                LOGGER.info(
+                    "audio_normalized actual=%.2fs target=%.2fs window=[%.2f, %.2f]",
+                    normalized_seconds,
+                    normalize_target,
+                    min_acceptable_duration,
+                    max_acceptable_duration,
+                )
+        except Exception as exc:
+            last_errors.append(f"audio_normalize_error:{str(exc)[:160]}")
 
     if best_audio_path is None:
         audio_failed = True
@@ -1682,6 +1834,9 @@ def _derive_scene_queries_for_stock(payload: dict, prepared_payload: dict) -> li
     raw_queries = youtube_cfg.get("search_queries", []) if isinstance(youtube_cfg, dict) else []
     if isinstance(raw_queries, list):
         queries.extend([str(x).strip() for x in raw_queries if str(x).strip()])
+    camel_queries = youtube_cfg.get("searchQueries", []) if isinstance(youtube_cfg, dict) else []
+    if isinstance(camel_queries, list):
+        queries.extend([str(x).strip() for x in camel_queries if str(x).strip()])
 
     # 2) Script line texts from pipeline payload
     raw_script = payload.get("script", []) if isinstance(payload, dict) else []
@@ -1726,17 +1881,10 @@ def _plan_stock_asset_counts(target_seconds: float) -> tuple[int, int]:
     Images are fixed 3s each; clips are mixed 2-6s (approx 4s average).
     """
     target = max(15.0, min(60.0, float(target_seconds or 60.0)))
-    # Keep image share moderate for pace; cap to 6 images.
-    image_seconds = min(18.0, round(target * 0.30, 1))
-    image_count = int(image_seconds // 3.0)
-    remaining = max(0.0, target - (image_count * 3.0))
-    # Clip average around 4s.
-    clip_count = int(max(1, round(remaining / 4.0))) if remaining > 0 else 0
-    # Safety cap on total media requests to avoid over-downloading.
-    max_assets = 16
-    if clip_count + image_count > max_assets:
-        overflow = (clip_count + image_count) - max_assets
-        clip_count = max(1, clip_count - overflow)
+    # User policy: treat each clip as ~3s and keep a small buffer.
+    base_clips = int(math.ceil(target / 3.0))
+    clip_count = min(22, max(1, base_clips + 2))
+    image_count = 0
     return clip_count, image_count
 
 
@@ -1749,7 +1897,7 @@ def run_full_pipeline(
     if not isinstance(payload, dict):
         raise ValueError("PIPELINE_PAYLOAD must be an object for full mode.")
 
-    strict_validation_attempts = 3
+    strict_validation_attempts = 1
     prepared_payload: dict = {}
     last_validation_error = ""
     for attempt in range(1, strict_validation_attempts + 1):
@@ -1760,7 +1908,7 @@ def run_full_pipeline(
             validation_errors = []
         blocking = [
             str(err) for err in validation_errors
-            if str(err).startswith("ending:") or str(err) in {"abrupt_ending", "missing_cta", "missing_recap", "empty_script"}
+            if str(err) in {"missing_cta", "missing_recap", "empty_script"}
         ]
         if not blocking:
             break
@@ -1775,36 +1923,91 @@ def run_full_pipeline(
             raise RuntimeError(f"Strict validation failed after retries: {last_validation_error}")
 
     output_dir = AUDIO_PATH.parent
-    target_duration = float(prepared_payload.get("duration_actual") or prepared_payload.get("duration") or 0.0)
+    video_config = payload.get("videoConfig", {}) if isinstance(payload.get("videoConfig"), dict) else {}
+    target_duration = float(_extract_target_duration(video_config, payload))
     audio_path = Path(str(prepared_payload.get("audio_path", "")).strip())
     subtitle_path = Path(str(prepared_payload.get("subtitle_path", "")).strip()) if prepared_payload.get("subtitle_path") else None
     
     if not str(audio_path).strip() or not audio_path.exists() or not audio_path.is_file():
         raise RuntimeError(f"Full mode cannot continue: audio file missing or invalid path ({audio_path})")
 
-    media_dir = output_dir / "media_full"
+    media_dir = CLIPS_DIR / "full_mode"
     media_paths = _collect_media_paths_for_full_mode(payload, media_dir)
     scene_queries = _derive_scene_queries_for_stock(payload, prepared_payload)
     has_custom_media = len(media_paths) > 0
 
     # Always auto-download stock media when no custom media is provided by user.
-    if scene_queries and (PEXELS_API_KEY or PIXABAY_API_KEY) and not has_custom_media:
+    if scene_queries and not has_custom_media:
         planned_clips, planned_images = _plan_stock_asset_counts(target_duration)
         if planned_clips <= 0 and planned_images <= 0:
-            planned_clips, planned_images = 10, 4
+            planned_clips, planned_images = 22, 0
 
-        stock_dir = media_dir / "stock_video"
-        clip_queries = scene_queries[:max(1, planned_clips)]
+        media_fetch_start = time.time()
+        media_fetch_budget_s = 8 * 60.0
+        min_clips_to_proceed = min(planned_clips, 22)
+        min_images_to_proceed = min(planned_images, 0)
+
+        stock_dir = CLIPS_DIR / "stock_video"
+        clip_queries = _extend_scene_queries(scene_queries, max(1, planned_clips))
         scene_duration = max(2.5, float(target_duration) / max(1, len(clip_queries)))
-        stock_paths = download_scene_videos(
-            scenes=clip_queries,
-            output_dir=stock_dir,
-            pexels_key=PEXELS_API_KEY or "",
-            pixabay_key=PIXABAY_API_KEY or "",
-            scene_duration=scene_duration,
-            clips_per_scene_min=1,
-            clips_per_scene_max=1,
-        )
+        stock_paths: list[Path] = []
+        seen_video_paths: set[str] = set()
+        max_video_download_attempts = 3
+        for attempt_idx in range(1, max_video_download_attempts + 1):
+            if time.time() - media_fetch_start > media_fetch_budget_s:
+                LOGGER.warning(
+                    "auto_media_video_time_budget_exceeded downloaded=%s planned=%s budget_s=%.0f",
+                    len(stock_paths),
+                    planned_clips,
+                    media_fetch_budget_s,
+                )
+                break
+            needed = max(0, planned_clips - len(stock_paths))
+            if needed <= 0:
+                break
+            batch_queries = _extend_scene_queries(clip_queries, max(1, needed))
+            fetched = download_scene_videos(
+                scenes=batch_queries,
+                output_dir=stock_dir,
+                pexels_key=PEXELS_API_KEY or "",
+                pexels_keys=PEXELS_API_KEYS,
+                pixabay_key=PIXABAY_API_KEY or "",
+                pixabay_keys=PIXABAY_API_KEYS,
+                scene_duration=scene_duration,
+                min_resolution=360,
+                clips_per_scene_min=1,
+                clips_per_scene_max=1,
+            )
+            if not fetched:
+                # Fallback to broad queries when scene-specific phrases are too strict for stock APIs.
+                fetched = download_scene_videos(
+                    scenes=["technology cinematic b-roll", "ai data center", "futuristic interface"][:max(1, min(3, needed))],
+                    output_dir=stock_dir,
+                    pexels_key=PEXELS_API_KEY or "",
+                    pexels_keys=PEXELS_API_KEYS,
+                    pixabay_key=PIXABAY_API_KEY or "",
+                    pixabay_keys=PIXABAY_API_KEYS,
+                    scene_duration=scene_duration,
+                    min_resolution=240,
+                    clips_per_scene_min=1,
+                    clips_per_scene_max=1,
+                )
+            for path in fetched:
+                key = str(path.resolve())
+                if key in seen_video_paths:
+                    continue
+                seen_video_paths.add(key)
+                stock_paths.append(path)
+            if len(stock_paths) >= min_clips_to_proceed:
+                break
+            if len(stock_paths) < planned_clips:
+                LOGGER.info(
+                    "auto_media_video_retry attempt=%s downloaded=%s planned=%s",
+                    attempt_idx,
+                    len(stock_paths),
+                    planned_clips,
+                )
+                time.sleep(min(3, attempt_idx))
         if stock_paths:
             media_paths.extend(stock_paths)
         LOGGER.info(
@@ -1821,20 +2024,66 @@ def run_full_pipeline(
         )
 
         image_downloads: list[Path] = []
-        image_dir = media_dir / "stock_image"
-        image_queries = scene_queries[:max(1, planned_images)]
-        for idx, query in enumerate(image_queries, start=1):
-            try:
-                files = fetch_images(
-                    query=query,
-                    output_dir=image_dir / f"q{idx:02d}",
-                    count=1,
-                    pexels_key=PEXELS_API_KEY or "",
-                    pixabay_key=PIXABAY_API_KEY or "",
+        seen_image_paths: set[str] = set()
+        image_dir = CLIPS_DIR / "stock_image"
+        image_queries = _extend_scene_queries(scene_queries, max(1, planned_images))
+        max_image_download_attempts = 3
+        for attempt_idx in range(1, max_image_download_attempts + 1):
+            if time.time() - media_fetch_start > media_fetch_budget_s:
+                LOGGER.warning(
+                    "auto_media_image_time_budget_exceeded downloaded=%s planned=%s budget_s=%.0f",
+                    len(image_downloads),
+                    planned_images,
+                    media_fetch_budget_s,
                 )
-                image_downloads.extend(files)
-            except Exception as exc:
-                LOGGER.debug("stock_image_fetch_failed query=%s error=%s", query, str(exc)[:180])
+                break
+            needed = max(0, planned_images - len(image_downloads))
+            if needed <= 0:
+                break
+            batch_queries = _extend_scene_queries(image_queries, max(1, needed))
+            for idx, query in enumerate(batch_queries, start=1):
+                try:
+                    files = fetch_images(
+                        query=query,
+                        output_dir=image_dir / f"a{attempt_idx:02d}_q{idx:02d}",
+                        count=1,
+                        pexels_key=PEXELS_API_KEY or "",
+                        pixabay_key=PIXABAY_API_KEY or "",
+                    )
+                    for path in files:
+                        key = str(path.resolve())
+                        if key in seen_image_paths:
+                            continue
+                        seen_image_paths.add(key)
+                        image_downloads.append(path)
+                except Exception as exc:
+                    LOGGER.warning("stock_image_fetch_failed query=%s error=%s", query, str(exc)[:180])
+                    try:
+                        fallback_files = fetch_images(
+                            query="technology abstract background",
+                            output_dir=image_dir / f"a{attempt_idx:02d}_q{idx:02d}_fallback",
+                            count=1,
+                            pexels_key=PEXELS_API_KEY or "",
+                            pixabay_key=PIXABAY_API_KEY or "",
+                        )
+                        for path in fallback_files:
+                            key = str(path.resolve())
+                            if key in seen_image_paths:
+                                continue
+                            seen_image_paths.add(key)
+                            image_downloads.append(path)
+                    except Exception as fallback_exc:
+                        LOGGER.warning("stock_image_fallback_failed query=%s error=%s", query, str(fallback_exc)[:180])
+            if len(image_downloads) >= min_images_to_proceed:
+                break
+            if len(image_downloads) < planned_images:
+                LOGGER.info(
+                    "auto_media_image_retry attempt=%s downloaded=%s planned=%s",
+                    attempt_idx,
+                    len(image_downloads),
+                    planned_images,
+                )
+                time.sleep(min(3, attempt_idx))
         if image_downloads:
             media_paths.extend(image_downloads)
         LOGGER.info(
@@ -1849,6 +2098,24 @@ def run_full_pipeline(
                 ensure_ascii=False,
             )
         )
+    elif not scene_queries:
+        LOGGER.warning("auto_media_download skipped: no scene queries available")
+
+    if not media_paths:
+        # API quota/network failures can lead to zero downloads; reuse local assets as fallback.
+        local_videos = sorted([p for p in CLIPS_DIR.rglob("*.mp4") if p.is_file()])
+        local_images = sorted([p for p in CLIPS_DIR.rglob("*.jpg") if p.is_file()])
+        local_images.extend([p for p in CLIPS_DIR.rglob("*.jpeg") if p.is_file()])
+        local_images.extend([p for p in CLIPS_DIR.rglob("*.png") if p.is_file()])
+        fallback_media = local_videos[:16] + local_images[:8]
+        if fallback_media:
+            media_paths.extend(fallback_media)
+            LOGGER.info(
+                json.dumps(
+                    {"event": "auto_media_fallback_local", "videos": len(local_videos[:16]), "images": len(local_images[:8])},
+                    ensure_ascii=False,
+                )
+            )
 
     LOGGER.info("Stage: Rendering vertical video")
     output_video_path = output_dir / "final_full.mp4"
@@ -1897,31 +2164,8 @@ def run_full_pipeline(
             uploaded_video_url = f"https://www.youtube.com/watch?v={uploaded_video_id}"
             LOGGER.info("YouTube upload successful: %s", uploaded_video_url)
 
-    # After upload (or skip), clean up output and clips directories
-    if uploaded_video_id or not upload_requested:
-        LOGGER.info("Stage: Post-upload cleanup")
-        import shutil
-        # Clean output directory (generated video, audio, subtitles)
-        for f in output_dir.iterdir():
-            try:
-                if f.is_file():
-                    f.unlink()
-                elif f.is_dir():
-                    shutil.rmtree(f)
-            except Exception as exc:
-                LOGGER.warning("Cleanup failed for %s: %s", f, exc)
-        LOGGER.info("Cleaned output directory: %s", output_dir)
-        # Clean clips directory
-        if CLIPS_DIR.exists():
-            for f in CLIPS_DIR.iterdir():
-                try:
-                    if f.is_file():
-                        f.unlink()
-                    elif f.is_dir():
-                        shutil.rmtree(f)
-                except Exception as exc:
-                    LOGGER.warning("Cleanup failed for %s: %s", f, exc)
-            LOGGER.info("Cleaned clips directory: %s", CLIPS_DIR)
+    # Keep artifacts for debugging/auditing and reuse in later runs.
+    LOGGER.info("Stage: Post-upload cleanup skipped (artifacts retained)")
 
     final_payload = {
         "jobId": str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip(),

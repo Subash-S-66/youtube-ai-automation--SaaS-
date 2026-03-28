@@ -199,10 +199,27 @@ _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 
 
 def _run_ffmpeg(args: list[str]) -> None:
-    # Diagnostic: check -i arguments to ensure they are valid files
+    # Diagnostic: check local-file -i arguments only (skip ffmpeg virtual/stream inputs).
+    def _is_virtual_input(input_arg: str, arg_index: int) -> bool:
+        raw = str(input_arg or "").strip().lower()
+        if not raw:
+            return True
+        if raw in {"-", "pipe:0", "pipe:1", "pipe:2"}:
+            return True
+        if "://" in raw:
+            return True
+        if raw.startswith(("lavfi:", "concat:", "color=", "anullsrc", "testsrc", "sine=")):
+            return True
+        if arg_index >= 2 and args[arg_index - 2] == "-f" and str(args[arg_index - 1]).lower() == "lavfi":
+            return True
+        return False
+
     for i, arg in enumerate(args):
         if arg == "-i" and i + 1 < len(args):
-            input_file = Path(args[i+1])
+            input_spec = str(args[i + 1])
+            if _is_virtual_input(input_spec, i + 1):
+                continue
+            input_file = Path(input_spec)
             if not input_file.exists():
                 raise RuntimeError(f"ffmpeg failed: Input file does not exist: {input_file}")
             if input_file.is_dir():

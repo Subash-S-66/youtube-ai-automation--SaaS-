@@ -21,6 +21,32 @@ LOGGER = logging.getLogger(__name__)
 SHORTS_MAX_DURATION_SECONDS = 180.0
 
 
+def _decrypt_env_value(raw: str, encryption_key: str) -> str | None:
+    if not raw or not encryption_key:
+        return None
+    try:
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+        parts = raw.split(":")
+        if len(parts) != 2:
+            return None
+        iv = bytes.fromhex(parts[0])
+        encrypted_data = bytes.fromhex(parts[1])
+        key_bytes = encryption_key.encode("utf-8")[:32]
+        if len(key_bytes) < 32:
+            key_bytes = key_bytes.ljust(32, b"\0")
+        cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        decrypted_padded = decryptor.update(encrypted_data) + decryptor.finalize()
+        pad_len = int(decrypted_padded[-1])
+        if pad_len <= 0 or pad_len > 32:
+            return None
+        return decrypted_padded[:-pad_len].decode("utf-8")
+    except Exception:
+        return None
+
+
 def _notify_token_issue(message: str) -> None:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_ALLOWED_CHAT_ID:
         return
@@ -39,7 +65,25 @@ def _get_authenticated_service(client_secret_file: str, scopes: list[str], token
         )
 
     creds = None
-    if token_path.exists():
+    import os
+
+    env_token_json = os.environ.get("YOUTUBE_TOKEN_JSON", "").strip()
+    env_token_json_encrypted = os.environ.get("YOUTUBE_TOKEN_JSON_ENCRYPTED", "").strip()
+    encryption_key = os.environ.get("ENCRYPTION_KEY", "").strip()
+
+    decrypted_token_json = _decrypt_env_value(env_token_json_encrypted, encryption_key)
+    token_json_payload = decrypted_token_json or env_token_json
+    if token_json_payload:
+        try:
+            parsed = json.loads(token_json_payload)
+            creds = Credentials.from_authorized_user_info(parsed, scopes=scopes)
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text(creds.to_json(), encoding="utf-8")
+        except Exception as exc:
+            LOGGER.warning("Could not parse YOUTUBE_TOKEN_JSON payload from env: %s", exc)
+            creds = None
+
+    if not creds and token_path.exists():
         try:
             # Load cached scopes as-is to avoid refresh failures caused by scope expansion.
             creds = Credentials.from_authorized_user_file(str(token_path))
@@ -73,8 +117,6 @@ def _get_authenticated_service(client_secret_file: str, scopes: list[str], token
                 "YouTube OAuth token expired and has no refresh token. Re-auth is required."
             )
         if not creds or not creds.valid:
-            import os
-
             # Use YOUTUBE_TOKEN_ENCRYPTED environment variable if available (passed from the backend)
             # We must decrypt it using the ENCRYPTION_KEY environment variable.
             env_token_encrypted = os.environ.get("YOUTUBE_TOKEN_ENCRYPTED")
@@ -82,29 +124,10 @@ def _get_authenticated_service(client_secret_file: str, scopes: list[str], token
 
             if env_token_encrypted and encryption_key:
                 try:
-                    import base64
-                    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-                    from cryptography.hazmat.backends import default_backend
-
-                    parts = env_token_encrypted.split(':')
-                    if len(parts) == 2:
-                        iv = bytes.fromhex(parts[0])
-                        encrypted_data = bytes.fromhex(parts[1])
-                        key_bytes = encryption_key.encode('utf-8')[:32]
-                        if len(key_bytes) < 32:
-                            key_bytes = key_bytes.ljust(32, b'\0')
-
-                        cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
-                        decryptor = cipher.decryptor()
-                        decrypted_padded = decryptor.update(encrypted_data) + decryptor.finalize()
-
-                        env_token = decrypted_padded[:-decrypted_padded[-1]].decode('utf-8')
-
-                        # env_token is just the access token string based on backend implementation
+                    env_token = _decrypt_env_value(env_token_encrypted, encryption_key)
+                    if env_token:
+                        # Backward-compatible fallback for access-token-only payloads.
                         creds = Credentials(token=env_token)
-
-                        if not creds.valid and creds.expired and creds.refresh_token:
-                            creds.refresh(Request())
                 except Exception as e:
                     LOGGER.error(f"Failed to decrypt and use YOUTUBE_TOKEN_ENCRYPTED: {e}")
                     raise RuntimeError("Invalid encrypted YouTube token provided by backend. Re-auth required.")

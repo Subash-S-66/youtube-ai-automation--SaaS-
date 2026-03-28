@@ -1,0 +1,298 @@
+{
+  "used_clips": [
+    {
+      "url": "https://videos.pexels.com/video-files/35062463/14852572_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "These pathways are etched by light and powered by physics that defy ordinary intuition.",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene003_clip1.mp4",
+      "used_at": "2026-03-28T08:21:11.000510+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/7610983/7610983-hd_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "Beneath the glass screens of your pocket device lies a labyrinth of microscopic pathways.",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene002_clip1.mp4",
+      "used_at": "2026-03-28T08:21:14.202851+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/4903224/4903224-uhd_2160_4096_25fps.mp4",
+      "source": "pexels",
+      "query": "We are currently witnessing the final collapse of the physical barrier between human thoug",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene006_clip1.mp4",
+      "used_at": "2026-03-28T08:21:26.582731+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2023/01/09/145864-787701151_large.mp4",
+      "source": "pixabay",
+      "query": "As artificial intelligence integrates directly into our hardware, the distinction between",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene007_clip1.mp4",
+      "used_at": "2026-03-28T08:21:32.438297+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/6111513/6111513-uhd_2160_3840_24fps.mp4",
+      "source": "pexels",
+      "query": "Silicon chips are the new oil, driving a silent revolution that reshapes human reality eve",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene001_clip1.mp4",
+      "used_at": "2026-03-28T08:21:33.493604+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2022/06/27/122234-724743714_large.mp4",
+      "source": "pixabay",
+      "query": "These tiny transistors process more data in a heartbeat than the entire Library of Congres",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene005_clip1.mp4",
+      "used_at": "2026-03-28T08:21:34.234775+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/9784566/9784566-uhd_2160_4096_25fps.mp4",
+      "source": "pexels",
+      "query": "We have transitioned from the age of industrial muscle to a digital era defined by invisib",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene004_clip1.mp4",
+      "used_at": "2026-03-28T08:21:35.839126+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2020/02/13/32287-391434445_large.mp4",
+      "source": "pixabay",
+      "query": "These tiny transistors process more data in a heartbeat than the entire Library of Congres",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene009_clip1.mp4",
+      "used_at": "2026-03-28T08:21:37.812165+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/35048725/14846782_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "Everything merges into a seamless, singular stream of lightning-fast information.",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene008_clip1.mp4",
+      "used_at": "2026-03-28T08:21:53.935487+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/4359114/4359114-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "We have transitioned from the age of industrial muscle to a digital era defined by invisib",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene010_clip1.mp4",
+      "used_at": "2026-03-28T08:21:54.482418+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/36175909/15341287_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "Silicon Valley is no longer the center of the technological universe, as power has shifted",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene001_clip1.mp4",
+      "used_at": "2026-03-28T08:33:34.375707+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/31801117/13548036_2160_3840_60fps.mp4",
+      "source": "pexels",
+      "query": "Today it acts as an autonomous architect of human behavior.",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene003_clip1.mp4",
+      "used_at": "2026-03-28T08:34:16.751007+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8128422/8128422-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "We are transitioning from the era of manual input into a reality defined by predictive syn",
+      "local_path": "pipeline\\data\\assets\\clips\\stock_video\\scene006_clip1.mp4",
+      "used_at": "2026-03-28T08:34:19.930272+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2015/08/17/448-136550966_large.mp4",
+      "source": "pixabay",
+      "query": "Silicon chips are the new oil fueling a silent revolution beneath our feet.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene001_clip1.mp4",
+      "used_at": "2026-03-28T08:53:07.705249+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/33532005/14259066_2160_3840_60fps.mp4",
+      "source": "pexels",
+      "query": "They map our desires, predict our movements, and curate the very information that defines",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene007_clip1.mp4",
+      "used_at": "2026-03-28T08:53:32.315616+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2023/02/17/151008-799903783_large.mp4",
+      "source": "pixabay",
+      "query": "Every keystroke you make now trains a digital brain that never sleeps and never forgets.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene009_clip1.mp4",
+      "used_at": "2026-03-28T08:53:54.129033+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2016/03/06/2392-158039701_large.mp4",
+      "source": "pixabay",
+      "query": "This invisible infrastructure powers everything from the electricity in your walls to the",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene004_clip1.mp4",
+      "used_at": "2026-03-28T08:54:04.058462+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/6525361/6525361-hd_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "Silicon chips are the new oil fueling a silent revolution beneath our feet.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene001_clip1.mp4",
+      "used_at": "2026-03-28T08:54:05.176405+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/5961723/5961723-hd_1080_1920_15fps.mp4",
+      "source": "pexels",
+      "query": "Every keystroke you make now trains a digital brain that never sleeps and never forgets.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene003_clip1.mp4",
+      "used_at": "2026-03-28T08:54:05.794695+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2015/08/22/499-137078143_large.mp4",
+      "source": "pixabay",
+      "query": "We have crossed the threshold where technology no longer serves us, but actively shapes th",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene005_clip1.mp4",
+      "used_at": "2026-03-28T08:54:13.609080+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2023/12/10/192703-893427325_large.mp4",
+      "source": "pixabay",
+      "query": "We are no longer the primary architects of our own progress.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene008_clip1.mp4",
+      "used_at": "2026-03-28T08:54:16.363792+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2023/01/27/148208-793717949_large.mp4",
+      "source": "pixabay",
+      "query": "These processors hum with the weight of a billion decisions made in the blink of an eye.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene006_clip1.mp4",
+      "used_at": "2026-03-28T08:54:26.802276+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/7198072/7198072-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "We are transitioning from a world of physical labor to an era defined by pure, synthetic i",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene010_clip1.mp4",
+      "used_at": "2026-03-28T08:55:41.917835+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2020/05/19/39521-422803379_large.mp4",
+      "source": "pixabay",
+      "query": "Every keystroke you make now trains a digital brain that never sleeps and never forgets.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene003_clip1.mp4",
+      "used_at": "2026-03-28T08:56:07.186924+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/6646802/6646802-hd_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "We have crossed the threshold where technology no longer serves us, but actively shapes th",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene005_clip1.mp4",
+      "used_at": "2026-03-28T08:56:10.593629+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2021/07/07/80615-572853662_large.mp4",
+      "source": "pixabay",
+      "query": "These processors hum with the weight of a billion decisions made in the blink of an eye.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene006_clip1.mp4",
+      "used_at": "2026-03-28T08:56:13.149952+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/10641441/10641441-hd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "Silicon chips are the new oil fueling a silent revolution beneath our feet.",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene001_clip1.mp4",
+      "used_at": "2026-03-28T08:56:49.396114+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2022/08/28/129424-744370601_large.mp4",
+      "source": "pixabay",
+      "query": "We have crossed the threshold where technology no longer serves us, but actively shapes th",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene005_clip1.mp4",
+      "used_at": "2026-03-28T08:56:52.020980+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2024/03/12/203987-923133879_large.mp4",
+      "source": "pixabay",
+      "query": "They map our desires, predict our movements, and curate the very information that defines",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\scene007_clip1.mp4",
+      "used_at": "2026-03-28T08:56:56.922489+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/31809591/13552106_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "This process birthed the global nervous system that now dictates everything from your morn",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774688968232_scene003_clip1.mp4",
+      "used_at": "2026-03-28T09:09:32.767168+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/26628159/11979752_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "Silicon chips are the modern-day equivalent of the philosopher\u2019s stone, turning raw sand i",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774688968232_scene009_clip1.mp4",
+      "used_at": "2026-03-28T09:10:06.919232+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8999292/8999292-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "Every movement you make is now tracked, processed, and optimized by the silent, glowing he",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774688968232_scene014_clip1.mp4",
+      "used_at": "2026-03-28T09:10:50.576749+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2023/07/28/173530-849610807_large.mp4",
+      "source": "pixabay",
+      "query": "Silicon chips are the modern-day equivalent of the philosopher\u2019s stone, turning raw sand i",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774688968232_scene020_clip1.mp4",
+      "used_at": "2026-03-28T09:11:17.111458+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2021/02/24/66177-516904833_large.mp4",
+      "source": "pixabay",
+      "query": "Every movement you make is now tracked, processed, and optimized by the silent, glowing he",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689140340_scene005_clip1.mp4",
+      "used_at": "2026-03-28T09:12:39.113779+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2019/02/01/21115-315137069_large.mp4",
+      "source": "pixabay",
+      "query": "Every movement you make is now tracked, processed, and optimized by the silent, glowing he",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689140340_scene014_clip1.mp4",
+      "used_at": "2026-03-28T09:13:36.670418+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/8381522/8381522-uhd_2160_3840_25fps.mp4",
+      "source": "pexels",
+      "query": "Inside the pristine, sterile vacuum of a nanofabrication plant, lasers carve patterns thin",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689140340_scene012_clip1.mp4",
+      "used_at": "2026-03-28T09:13:40.345638+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2018/11/21/19456-303877307_large.mp4",
+      "source": "pixabay",
+      "query": "This process birthed the global nervous system that now dictates everything from your morn",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689140340_scene016_clip1.mp4",
+      "used_at": "2026-03-28T09:13:42.226670+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/27721553/12210347_2160_3840_50fps.mp4",
+      "source": "pexels",
+      "query": "Silicon chips are the modern-day equivalent of the philosopher\u2019s stone, turning raw sand i",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689140340_scene020_clip1.mp4",
+      "used_at": "2026-03-28T09:13:59.907248+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2023/07/15/171688-845775828_large.mp4",
+      "source": "pixabay",
+      "query": "We have traded the physical limitations of the natural world for the boundless, invisible",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689241913_scene004_clip1.mp4",
+      "used_at": "2026-03-28T09:14:08.687099+00:00"
+    },
+    {
+      "url": "https://cdn.pixabay.com/video/2022/12/19/143567-782758325_large.mp4",
+      "source": "pixabay",
+      "query": "The boundary between human intent and machine execution has finally vanished entirely, lea",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689241913_scene006_clip1.mp4",
+      "used_at": "2026-03-28T09:14:13.418904+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/15439742/15439742-hd_1080_1920_30fps.mp4",
+      "source": "pexels",
+      "query": "Our legacy is etched in silicon, a permanent record of a species that dared to build its o",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689241913_scene008_clip1.mp4",
+      "used_at": "2026-03-28T09:14:21.703825+00:00"
+    },
+    {
+      "url": "https://videos.pexels.com/video-files/34208871/14499163_2160_3840_24fps.mp4",
+      "source": "pexels",
+      "query": "This process birthed the global nervous system that now dictates everything from your morn",
+      "local_path": "C:\\Users\\subash\\projects\\MyProjects\\Youtube Automatiion (SaaS)\\youtube-automation-saas\\pipeline\\pipeline\\data\\assets\\clips\\stock_video\\1774689241913_scene016_clip1.mp4",
+      "used_at": "2026-03-28T09:15:11.992113+00:00"
+    }
+  ]
+}

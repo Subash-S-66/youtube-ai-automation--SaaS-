@@ -13,6 +13,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_DIR = PROJECT_ROOT / "data"
 
+
+def _resolve_path_env(value: str, default_path: Path) -> Path:
+    raw = (value or "").strip()
+    if not raw:
+        return default_path
+    p = Path(raw)
+    if p.is_absolute():
+        return p
+    # Resolve all relative env paths against PROJECT_ROOT, not process cwd.
+    # Handle common duplicated prefix issue: PROJECT_ROOT already equals ".../pipeline"
+    # while env may provide "pipeline/data/...".
+    normalized = raw.replace("\\", "/").lstrip("./")
+    if normalized.startswith("pipeline/") and PROJECT_ROOT.name.lower() == "pipeline":
+        return (PROJECT_ROOT.parent / normalized).resolve()
+    return (PROJECT_ROOT / p).resolve()
+
 # Load variables from .env if present, but keep runtime env precedence.
 # This allows CI/job-level env (for example RUN_MODE=prepared) to override .env defaults.
 env_file = CONFIG_DIR / ".env"
@@ -25,12 +41,12 @@ else:
 OUTPUT_DIR = DATA_DIR / "output"
 ASSETS_DIR = DATA_DIR / "assets"
 IMAGES_DIR = OUTPUT_DIR / "images"
-CLIPS_DIR = Path(os.getenv("CLIPS_DIR", str(ASSETS_DIR / "clips")))
-USED_CLIPS_FILE = Path(os.getenv("USED_CLIPS_FILE", str(ASSETS_DIR / "used_clips.json")))
+CLIPS_DIR = _resolve_path_env(os.getenv("CLIPS_DIR", ""), ASSETS_DIR / "clips")
+USED_CLIPS_FILE = _resolve_path_env(os.getenv("USED_CLIPS_FILE", ""), ASSETS_DIR / "used_clips.json")
 AUDIO_PATH = OUTPUT_DIR / "voice.mp3"
 SUBTITLE_PATH = OUTPUT_DIR / "subtitles.ass"
 VIDEO_PATH = OUTPUT_DIR / "short.mp4"
-TOKEN_PATH = Path(os.getenv("TOKEN_PATH", str(OUTPUT_DIR / "token.json")))
+TOKEN_PATH = _resolve_path_env(os.getenv("TOKEN_PATH", ""), OUTPUT_DIR / "token.json")
 UPLOADED_DOWNLOAD_DIR = OUTPUT_DIR / "uploaded"
 USED_TOPICS_FILE = OUTPUT_DIR / "used_topics.json"
 USED_HOOKS_FILE = OUTPUT_DIR / "used_hooks.json"
@@ -44,15 +60,27 @@ UPLOAD_REPORT_FILE = OUTPUT_DIR / "upload_report.json"
 # API keys and settings.
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
+PEXELS_API_KEYS = [
+    key.strip()
+    for key in [*PEXELS_API_KEY.split(","), os.getenv("PEXELS_API_KEY_2", ""), os.getenv("PEXELS_API_KEY_SECONDARY", "")]
+    if key and key.strip()
+]
+PIXABAY_API_KEYS = [
+    key.strip()
+    for key in [*PIXABAY_API_KEY.split(","), os.getenv("PIXABAY_API_KEY_2", ""), os.getenv("PIXABAY_API_KEY_SECONDARY", "")]
+    if key and key.strip()
+]
 GNEWS_API_KEY = os.getenv("GNEWS_API_KEY", "")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")
 NEWS_QUERY = os.getenv("NEWS_QUERY", "world")
 NEWS_LANGUAGE = os.getenv("NEWS_LANGUAGE", "en")
 NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "24"))
 NEWS_FETCH_MULTIPLIER = int(os.getenv("NEWS_FETCH_MULTIPLIER", "5"))
-YOUTUBE_CLIENT_SECRET_FILE = os.getenv(
-    "YOUTUBE_CLIENT_SECRET_FILE",
-    str(CONFIG_DIR / "client_secret.json"),
+YOUTUBE_CLIENT_SECRET_FILE = str(
+    _resolve_path_env(
+        os.getenv("YOUTUBE_CLIENT_SECRET_FILE", ""),
+        CONFIG_DIR / "client_secret.json",
+    )
 )
 YOUTUBE_SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",

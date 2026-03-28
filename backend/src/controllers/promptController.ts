@@ -29,7 +29,7 @@ export const generatePrompt = asyncHandler(
       throw new AppError('Not authorized', 401);
     }
 
-    // Call AI Prompt Service (Jules first → Gemini fallback)
+    // Call AI Prompt Service (Gemini only)
     const safeTemplateConfig = templateConfig
       ? {
           ...(templateConfig.fontStyle ? { fontStyle: templateConfig.fontStyle } : {}),

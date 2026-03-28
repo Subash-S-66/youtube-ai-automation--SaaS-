@@ -202,7 +202,8 @@ def validate_output(
     errors: list[str] = []
     target = max(MIN_DURATION_SECONDS, min(MAX_DURATION_SECONDS, int(target_seconds)))
 
-    if actual_seconds > MAX_DURATION_SECONDS:
+    allowed_max = min(float(MAX_DURATION_SECONDS), float(target + ALLOWED_DRIFT_SECONDS))
+    if actual_seconds > allowed_max:
         errors.append(f"duration_exceeds_max:{actual_seconds:.2f}")
     if abs(actual_seconds - target) > ALLOWED_DRIFT_SECONDS:
         errors.append(f"duration_out_of_range:target={target},actual={actual_seconds:.2f}")

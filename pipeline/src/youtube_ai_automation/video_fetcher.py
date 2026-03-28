@@ -9,6 +9,8 @@ import logging
 from pathlib import Path
 import random
 import shutil
+import subprocess
+import time
 from typing import Any
 
 import requests
@@ -37,10 +39,89 @@ def _download_file(url: str, out_file: Path) -> None:
                 f.write(chunk)
 
 
+def _probe_video_duration_seconds(path: Path) -> float:
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if proc.returncode != 0:
+            return 0.0
+        return float((proc.stdout or "").strip() or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _trim_clip_to_max_duration(path: Path, max_duration: float) -> bool:
+    tmp_out = path.with_name(f"{path.stem}_trimmed{path.suffix}")
+    try:
+        # Fast path: stream-copy trim
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(path),
+                "-t",
+                f"{max_duration:.2f}",
+                "-c",
+                "copy",
+                str(tmp_out),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if proc.returncode != 0 or not tmp_out.exists() or tmp_out.stat().st_size <= 0:
+            # Fallback: re-encode trim for files where stream-copy trim is invalid.
+            proc = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(path),
+                    "-t",
+                    f"{max_duration:.2f}",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-an",
+                    str(tmp_out),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        if proc.returncode != 0 or not tmp_out.exists() or tmp_out.stat().st_size <= 0:
+            return False
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        tmp_out.replace(path)
+        return True
+    except Exception:
+        return False
+
+
 def _build_fallback_scene_clips(
     scenes: list[str],
     output_dir: Path,
     scene_duration: float,
+    min_duration: float = 2.0,
+    max_duration: float = 7.0,
 ) -> list[Path]:
     local_pool = sorted(
         [
@@ -54,6 +135,9 @@ def _build_fallback_scene_clips(
         reused: list[Path] = []
         for idx in range(min(needed, len(local_pool))):
             src = local_pool[idx]
+            duration = _probe_video_duration_seconds(src)
+            if duration > 0 and (duration < min_duration or duration > max_duration):
+                continue
             dst = output_dir / f"fallback_scene{idx + 1}.mp4"
             if src.resolve() == dst.resolve():
                 reused.append(src)
@@ -264,7 +348,9 @@ def download_scene_videos(
     scenes: list[str],
     output_dir: Path,
     pexels_key: str = "",
+    pexels_keys: list[str] | None = None,
     pixabay_key: str = "",
+    pixabay_keys: list[str] | None = None,
     scene_duration: float = 4.0,
     min_resolution: int = 720,
     used_clips_file: Path | None = None,
@@ -275,14 +361,22 @@ def download_scene_videos(
     Download one clip per scene based on scene descriptions.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
+    batch_tag = str(int(time.time() * 1000))
     used_file = used_clips_file or (output_dir.parent / "used_clips.json")
     all_paths: list[Path] = []
     selected_urls: set[str] = set()
-    min_duration = max(2.0, scene_duration - 1.0)
-    max_duration = max(6.0, scene_duration + 3.0)
+    # Hard policy: only download short b-roll clips (2s to 7s).
+    min_duration = 2.0
+    max_duration = 7.0
     effective_min_resolution = max(720, int(min_resolution))
     min_per_scene = max(1, int(clips_per_scene_min))
     max_per_scene = max(min_per_scene, int(clips_per_scene_max))
+    normalized_pexels_keys = [k.strip() for k in (pexels_keys or []) if str(k).strip()]
+    normalized_pixabay_keys = [k.strip() for k in (pixabay_keys or []) if str(k).strip()]
+    if pexels_key and pexels_key.strip() not in normalized_pexels_keys:
+        normalized_pexels_keys.append(pexels_key.strip())
+    if pixabay_key and pixabay_key.strip() not in normalized_pixabay_keys:
+        normalized_pixabay_keys.append(pixabay_key.strip())
 
     from youtube_ai_automation.clip_tracker import ClipTracker
     clip_tracker = ClipTracker()
@@ -300,33 +394,43 @@ def download_scene_videos(
         pexels_candidates: list[dict[str, Any]] = []
         pixabay_candidates: list[dict[str, Any]] = []
 
-        if pexels_key:
-            try:
-                pexels_candidates.extend(
-                    _search_pexels_candidates(
-                        query=query,
-                        api_key=pexels_key,
-                        min_resolution=effective_min_resolution,
-                        min_duration=min_duration,
-                        max_duration=max_duration,
+        if normalized_pexels_keys:
+            start_idx = (idx - 1) % len(normalized_pexels_keys)
+            ordered_keys = normalized_pexels_keys[start_idx:] + normalized_pexels_keys[:start_idx]
+            for key in ordered_keys:
+                try:
+                    pexels_candidates.extend(
+                        _search_pexels_candidates(
+                            query=query,
+                            api_key=key,
+                            min_resolution=effective_min_resolution,
+                            min_duration=min_duration,
+                            max_duration=max_duration,
+                        )
                     )
-                )
-            except Exception as exc:
-                LOGGER.debug("Pexels source unavailable for scene %s: %s", idx, exc)
+                    if pexels_candidates:
+                        break
+                except Exception as exc:
+                    LOGGER.warning("Pexels source unavailable for scene %s (%s): %s", idx, query, exc)
 
-        if pixabay_key:
-            try:
-                pixabay_candidates.extend(
-                    _search_pixabay_candidates(
-                        query=query,
-                        api_key=pixabay_key,
-                        min_resolution=effective_min_resolution,
-                        min_duration=min_duration,
-                        max_duration=max_duration,
+        if normalized_pixabay_keys:
+            start_idx = (idx - 1) % len(normalized_pixabay_keys)
+            ordered_keys = normalized_pixabay_keys[start_idx:] + normalized_pixabay_keys[:start_idx]
+            for key in ordered_keys:
+                try:
+                    pixabay_candidates.extend(
+                        _search_pixabay_candidates(
+                            query=query,
+                            api_key=key,
+                            min_resolution=effective_min_resolution,
+                            min_duration=min_duration,
+                            max_duration=max_duration,
+                        )
                     )
-                )
-            except Exception as exc:
-                LOGGER.debug("Pixabay source unavailable for scene %s: %s", idx, exc)
+                    if pixabay_candidates:
+                        break
+                except Exception as exc:
+                    LOGGER.warning("Pixabay source unavailable for scene %s (%s): %s", idx, query, exc)
 
         combined_candidates = _merge_candidates(pexels_candidates, pixabay_candidates)
 
@@ -339,6 +443,14 @@ def download_scene_videos(
             exclude_urls=exclude_all,
             min_resolution=effective_min_resolution,
         )
+        if not available_candidates and combined_candidates:
+            # Relax constraints when the history/filter layer is too strict.
+            available_candidates = filter_candidates(
+                candidates=combined_candidates,
+                used_clips_file=used_file,
+                exclude_urls=set(),
+                min_resolution=max(240, effective_min_resolution // 2),
+            )
         if not available_candidates:
             return local_paths
 
@@ -352,7 +464,7 @@ def download_scene_videos(
                 exclude_urls=selected_urls,
                 top_k=12,
                 min_resolution=effective_min_resolution,
-                allow_used_fallback=False,
+                allow_used_fallback=True,
             )
 
             # Immediately reserve URLs to prevent other threads from grabbing them
@@ -364,10 +476,39 @@ def download_scene_videos(
             return local_paths
 
         for clip_idx, selected in enumerate(selected_batch, start=1):
-            out_path = output_dir / f"scene{idx:03d}_clip{clip_idx}.mp4"
+            out_path = output_dir / f"{batch_tag}_scene{idx:03d}_clip{clip_idx}.mp4"
             try:
                 clip_url = str(selected.get("url", ""))
                 _download_file(clip_url, out_path)
+                real_duration = _probe_video_duration_seconds(out_path)
+                if real_duration > 0 and real_duration > max_duration:
+                    trimmed = _trim_clip_to_max_duration(out_path, max_duration=max_duration)
+                    if trimmed:
+                        real_duration = _probe_video_duration_seconds(out_path)
+                if real_duration > 0 and real_duration < min_duration:
+                    try:
+                        out_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    LOGGER.debug(
+                        "Clip rejected (too short) scene=%s duration=%.2fs min=%.2f",
+                        idx,
+                        real_duration,
+                        min_duration,
+                    )
+                    continue
+                if real_duration > 0 and real_duration > max_duration:
+                    try:
+                        out_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    LOGGER.debug(
+                        "Clip rejected (trim failed) scene=%s duration=%.2fs max=%.2f",
+                        idx,
+                        real_duration,
+                        max_duration,
+                    )
+                    continue
 
                 with lock:
                     clip_tracker.mark_clip_used(_url_key(clip_url))
@@ -390,7 +531,8 @@ def download_scene_videos(
 
         return local_paths
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    worker_count = max(4, min(10, len(scenes)))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = [executor.submit(process_scene, idx, scene) for idx, scene in enumerate(scenes, start=1)]
         for future in futures:
             all_paths.extend(future.result())
@@ -400,6 +542,15 @@ def download_scene_videos(
     all_paths.sort()
 
     if not all_paths:
+        fallback = _build_fallback_scene_clips(
+            scenes=scenes,
+            output_dir=output_dir,
+            scene_duration=scene_duration,
+            min_duration=min_duration,
+            max_duration=max_duration,
+        )
+        if fallback:
+            return fallback
         return []
     return all_paths
 

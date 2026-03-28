@@ -664,6 +664,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // 3. Ensure valid YouTube token only if this run requires upload.
       const requiresUpload = shouldRequireYouTubeUpload(settings as Record<string, any>);
       let youtubeToken = '';
+      let youtubeAuthorizedUserJson = '';
       if (requiresUpload) {
         await updateProgressSafe(job, 60, 'token_validation', 'Validating YouTube token');
         try {
@@ -676,6 +677,37 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           const err: any = new Error('Failed to obtain a valid YouTube token');
           err.stage = 'TOKEN';
           throw new UnrecoverableError(err.message || 'YouTube token failure');
+        }
+        try {
+          const tokenUser = await User.findById(userId);
+          const channel = tokenUser?.youtubeChannels?.find((c: any) => c?.channelId === settings.channelId);
+          const accessToken = String(channel?.tokens?.access_token || youtubeToken || '').trim();
+          const refreshToken = String(channel?.tokens?.refresh_token || '').trim();
+          const expiryDate = Number(channel?.tokens?.expiry_date || 0) || undefined;
+          const clientId = String(process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '').trim();
+          const clientSecret = String(process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || '').trim();
+          if (accessToken && refreshToken && clientId && clientSecret) {
+            youtubeAuthorizedUserJson = JSON.stringify({
+              type: 'authorized_user',
+              client_id: clientId,
+              client_secret: clientSecret,
+              refresh_token: refreshToken,
+              access_token: accessToken,
+              token_uri: 'https://oauth2.googleapis.com/token',
+              expiry_date: expiryDate,
+            });
+            await appendLogSafe(jobId, 'Prepared refreshable YouTube OAuth payload from DB channel tokens.\n');
+          } else {
+            await appendLogSafe(
+              jobId,
+              'YouTube DB token payload incomplete; fallback to access-token-only runtime auth.\n'
+            );
+          }
+        } catch (payloadErr: any) {
+          await appendLogSafe(
+            jobId,
+            `Failed to build DB-backed YouTube OAuth payload: ${payloadErr?.message || String(payloadErr)}\n`
+          );
         }
       } else {
         await appendLogSafe(jobId, 'Upload not requested for this job. Skipping YouTube token validation.\n');
@@ -705,6 +737,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
       // We will encrypt the token using the same ENCRYPTION_KEY used for DB storage.
       const encryptedYoutubeToken = youtubeToken ? encrypt(youtubeToken) : '';
+      const encryptedYoutubeTokenJson = youtubeAuthorizedUserJson ? encrypt(youtubeAuthorizedUserJson) : '';
 
       // Setup payload configuring environment variables for the container run
       // Production hardening: always execute full video generation runtime.
@@ -714,6 +747,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "PIPELINE_PAYLOAD", value: JSON.stringify(pipelinePayload) },
         { name: "RUN_MODE", value: runtimeMode },
         { name: "YOUTUBE_TOKEN_ENCRYPTED", value: encryptedYoutubeToken },
+        { name: "YOUTUBE_TOKEN_JSON_ENCRYPTED", value: encryptedYoutubeTokenJson },
         { name: "ENCRYPTION_KEY", value: process.env.ENCRYPTION_KEY || "" },
         { name: "UPLOAD", value: requiresUpload ? "true" : "false" },
         { name: "JOB_ID", value: jobId },
@@ -729,7 +763,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
         { name: "GEMINI_MODEL", value: process.env.GEMINI_MODEL || "gemini-3.1-flash-lite-preview" },
         { name: "PEXELS_API_KEY", value: process.env.PEXELS_API_KEY || '' },
+        { name: "PEXELS_API_KEY_2", value: process.env.PEXELS_API_KEY_2 || process.env.PEXELS_API_KEY_SECONDARY || '' },
         { name: "PIXABAY_API_KEY", value: process.env.PIXABAY_API_KEY || '' },
+        { name: "PIXABAY_API_KEY_2", value: process.env.PIXABAY_API_KEY_2 || process.env.PIXABAY_API_KEY_SECONDARY || '' },
       ];
 
       if (pipelineRunner === 'remote') {
