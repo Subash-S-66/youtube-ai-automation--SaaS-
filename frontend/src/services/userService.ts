@@ -16,6 +16,28 @@ export const userService = {
       prompt?: string;
       selectedTopic?: string;
       customTopic?: string;
+      storyMode?: boolean;
+      storyId?: string;
+      currentPart?: number;
+      storyContext?: string;
+      recapEnabled?: boolean;
+      ctaEnabled?: boolean;
+      duration?: number;
+      contentType?: 'clips' | 'images' | 'mixed';
+      videoCount?: number;
+      selectedVoices?: string[];
+      randomVoice?: boolean;
+      templateFont?: string;
+      templateColor?: string;
+      captionPosition?: 'top' | 'middle' | 'bottom';
+      maxWordsPerCaption?: number;
+      useCustomMedia?: boolean;
+      selectedThumbnailId?: string;
+      scheduleEnabled?: boolean;
+      scheduleDatetime?: string;
+      autoUploadEnabled?: boolean;
+      autoUploadIntervalHours?: number;
+      autoUploadVideosPerInterval?: number;
     }>;
   }) {
     const response = await api.put('/user/settings', data);

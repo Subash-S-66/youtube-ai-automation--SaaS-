@@ -34,6 +34,7 @@ export default function GlobalBanner() {
 
   useEffect(() => {
     const fetchBanner = async () => {
+      if (document.hidden) return;
       try {
         const response = await fetch(`${getApiOrigin()}/api/banner`);
         const data = await response.json();
@@ -49,8 +50,8 @@ export default function GlobalBanner() {
 
     fetchBanner();
 
-    // Poll every 15 seconds
-    const intervalId = setInterval(fetchBanner, 15000);
+    // Poll every 60 seconds
+    const intervalId = setInterval(fetchBanner, 60000);
     return () => clearInterval(intervalId);
   }, []);
 

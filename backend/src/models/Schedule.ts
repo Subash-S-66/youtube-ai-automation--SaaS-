@@ -88,6 +88,16 @@ const ScheduleSchema = new Schema<ISchedule>(
 );
 
 ScheduleSchema.index({ userId: 1, channelId: 1, enabled: 1, nextRunAt: 1 });
+ScheduleSchema.index(
+  { userId: 1, channelId: 1, type: 1, enabled: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      enabled: true,
+      type: { $in: ['interval', 'recurring'] },
+    },
+  }
+);
 
 const Schedule = mongoose.model<ISchedule>('Schedule', ScheduleSchema);
 

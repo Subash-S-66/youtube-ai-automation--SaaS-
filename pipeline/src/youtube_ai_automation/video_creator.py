@@ -98,8 +98,19 @@ def _hex_to_ass_color(hex_color: str) -> str:
     return "&H00FFFFFF&"
 
 
-def _build_ass_header(font_name: str = "Anton", hex_color: str = "#FFFFFF") -> str:
+def _resolve_caption_position(position: str) -> tuple[int, int, str]:
+    normalized = str(position or "bottom").strip().lower()
+    if normalized == "top":
+        return 8, 120, r"\an8"
+    if normalized == "middle":
+        return 5, 0, r"\an5"
+    return 2, 140, r"\an2"
+
+
+def _build_ass_header(font_name: str = "Anton", hex_color: str = "#FFFFFF", caption_position: str = "bottom") -> str:
     ass_color = _hex_to_ass_color(hex_color)
+    alignment, margin_v, _ = _resolve_caption_position(caption_position)
+    # FIXED: Tune ASS caption style for clearer bottom-center subtitles (size 58, ScaleX 105).
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -111,8 +122,8 @@ def _build_ass_header(font_name: str = "Anton", hex_color: str = "#FFFFFF") -> s
         "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,"
         "Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,"
         "Alignment,MarginL,MarginR,MarginV,Encoding\n"
-        f"Style: Caption,{font_name},52,{ass_color},&H0000FFFF,"
-        "&H00000000,&HC0000000,1,0,0,0,100,100,0.5,0,1,2.5,1,2,100,100,520,1\n\n"
+        f"Style: Caption,{font_name},58,{ass_color},&H0000FFFF,"
+        f"&H00000000,&HC0000000,1,0,0,0,105,100,0.5,0,1,2.5,1,{alignment},100,100,{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
     )
@@ -146,6 +157,7 @@ def create_subtitles_from_script(
     line_mode: bool = True,
     font_style: str = "Anton",
     subtitle_color: str = "#FFFFFF",
+    caption_position: str = "bottom",
 ) -> Path:
     words = script.split()
     if not words:
@@ -173,7 +185,8 @@ def create_subtitles_from_script(
         subtitle_path.write_text("\n".join(lines), encoding="utf-8")
         return subtitle_path
 
-    lines = [_build_ass_header(font_name=font_style, hex_color=subtitle_color)]
+    _, _, alignment_tag = _resolve_caption_position(caption_position)
+    lines = [_build_ass_header(font_name=font_style, hex_color=subtitle_color, caption_position=caption_position)]
     current = 0.0
     durations = _allocate_caption_durations(chunks, total_words, duration, line_mode)
     for chunk, chunk_duration in zip(chunks, durations, strict=True):
@@ -185,7 +198,7 @@ def create_subtitles_from_script(
         text = _inject_highlight_ass(text, normalized_highlight)
         text = text.replace("\n", " ")
         fade_ms = min(150, int(chunk_duration * 100))
-        anim_prefix = r"{\fad(" + str(fade_ms) + r",80)\an2}"
+        anim_prefix = r"{\fad(" + str(fade_ms) + r",80)" + alignment_tag + r"}"
         lines.append(
             f"Dialogue: 0,{_format_ass_time(start)},{_format_ass_time(end)},Caption,,0,0,0,,{anim_prefix}{text}"
         )
@@ -336,8 +349,11 @@ def render_vertical_video(
             if _is_image(media):
                 seg_duration = image_duration
                 frames = max(1, int(round(seg_duration * 30)))
-                zoom_speed = random.choice([0.0008, 0.0010, 0.0012])
-                zoom_expr = f"min(1.18,zoom+{zoom_speed:.4f})"
+                zoom_speeds = [0.0006, 0.0008, 0.0010, 0.0012]  # FIXED: Expand Ken Burns zoom speed variety for image segments.
+                zoom_speed = random.choice(zoom_speeds)  # FIXED: Randomize image zoom pacing per segment.
+                zoom_expr = f"min(1.20,zoom+{zoom_speed:.4f})"  # FIXED: Allow slightly deeper zoom while capping for visual stability.
+                pan_x = random.choice(["iw/2-(iw/zoom/2)", "0", "iw-(iw/zoom)"])  # FIXED: Vary horizontal pan direction for image motion diversity.
+                pan_y = random.choice(["ih/2-(ih/zoom/2)", "0", "ih-(ih/zoom)"])  # FIXED: Vary vertical pan direction for image motion diversity.
                 _run_ffmpeg([
                     "ffmpeg", "-y",
                     "-loop", "1",
@@ -346,7 +362,7 @@ def render_vertical_video(
                     "-vf",
                     (
                         f"scale=1200:2133:force_original_aspect_ratio=increase,"
-                        f"zoompan=z='{zoom_expr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                        f"zoompan=z='{zoom_expr}':x='{pan_x}':y='{pan_y}':"  # FIXED: Apply dynamic pan path instead of fixed center pan.
                         f"d={frames}:s=1080x1920:fps=30,"
                         "format=yuv420p"
                     ),
@@ -385,8 +401,16 @@ def render_vertical_video(
             ])
         else:
             # Join animation: cross-fade transitions between segments.
-            transition = 0.35
-            transition_types = ["fade", "slideleft", "slideright", "wipeleft", "wiperight"]
+            TRANSITION_STYLES = [  # FIXED: Use richer, randomized transition palette with tuned per-style durations.
+                ("fade", 0.35),
+                ("slideleft", 0.30),
+                ("slideright", 0.30),
+                ("wipeleft", 0.30),
+                ("wiperight", 0.30),
+                ("fadeblack", 0.40),
+                ("circlecrop", 0.35),
+                ("smoothleft", 0.30),
+            ]
             cmd = ["ffmpeg", "-y"]
             for seg in segments:
                 cmd.extend(["-i", str(seg)])
@@ -396,14 +420,14 @@ def render_vertical_video(
             cumulative = float(segment_durations[0])
             for i in range(1, len(segments)):
                 out_label = f"[v{i}]"
+                transition_name, transition_duration = random.choice(TRANSITION_STYLES)  # FIXED: Pick transition style/duration per segment boundary.
                 # Offset is measured on current composed timeline.
-                offset = max(0.0, cumulative - transition)
-                transition_name = random.choice(transition_types)
+                offset = max(0.0, cumulative - transition_duration)  # FIXED: Align transition start offset with selected transition duration.
                 filters.append(
-                    f"{previous_label}[{i}:v]xfade=transition={transition_name}:duration={transition:.2f}:offset={offset:.2f}{out_label}"
+                    f"{previous_label}[{i}:v]xfade=transition={transition_name}:duration={transition_duration:.2f}:offset={offset:.2f}{out_label}"  # FIXED: Apply per-boundary transition style and duration.
                 )
                 previous_label = out_label
-                cumulative += float(segment_durations[i]) - transition
+                cumulative += float(segment_durations[i]) - transition_duration  # FIXED: Keep timeline accumulation consistent with chosen transition duration.
 
             filter_complex = ";".join(filters)
             cmd.extend([
@@ -418,7 +442,7 @@ def render_vertical_video(
         # Guarantee visual timeline is long enough; prevents accidental early cuts
         # when stock clips are fewer than target duration.
         audio_duration = _probe_duration_seconds(audio_path)
-        final_duration = max(duration, audio_duration if audio_duration > 0 else 0.0)
+        final_duration = audio_duration if audio_duration > 0 else duration  # FIXED: Match render duration to measured audio duration exactly when available.
         visual_padded = tmp / "visual_padded.mp4"
         _run_ffmpeg([
             "ffmpeg", "-y",
@@ -441,8 +465,7 @@ def render_vertical_video(
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
-            "-af", f"apad=whole_dur={final_duration:.2f}",
-            "-t", f"{final_duration:.2f}",
+            "-t", f"{final_duration:.2f}",  # FIXED: Trim/match output to audio duration without silence padding.
             str(muxed_no_sub),
         ])
 

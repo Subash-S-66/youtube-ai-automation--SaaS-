@@ -39,7 +39,7 @@ class DownloadedClip:
 
 
 def _download_file(url: str, out_file: Path) -> None:
-    response = requests.get(url, timeout=45, stream=True)
+    response = requests.get(url, timeout=20, stream=True)  # FIXED: Bound clip download request timeout to 20s.
     response.raise_for_status()
     out_file.parent.mkdir(parents=True, exist_ok=True)
     with out_file.open("wb") as f:
@@ -77,7 +77,7 @@ def _build_fallback_scene_clips(
     output_dir: Path,
     scene_duration: float,
     min_duration: float = 2.0,
-    max_duration: float = 10.0,
+    max_duration: float = 7.0,  # FIXED: Keep fallback clip reuse aligned with strict 2-7 second clip policy.
 ) -> list[Path]:
     local_pool = sorted(
         [
@@ -135,7 +135,7 @@ def _create_placeholder_video(output_dir: Path, name: str, duration_seconds: flo
 
 def fallback_media(scene: str, output_dir: Path, scene_idx: int) -> list[Path]:
     # 1) Reuse local clips if possible.
-    local = _build_fallback_scene_clips([scene], output_dir=output_dir, scene_duration=3.0, min_duration=2.0, max_duration=10.0)
+    local = _build_fallback_scene_clips([scene], output_dir=output_dir, scene_duration=3.0, min_duration=2.0, max_duration=7.0)  # FIXED: Enforce 2-7 second clip bounds for fallback media.
     if local:
         return local[:1]
     # 2) Create a deterministic placeholder video.
@@ -262,7 +262,7 @@ def _search_pexels_candidates(
         "per_page": 40,
         "orientation": "portrait",
     }
-    response = requests.get(endpoint, headers=headers, params=params, timeout=40)
+    response = requests.get(endpoint, headers=headers, params=params, timeout=20)  # FIXED: Use 20s timeout per Pexels API request.
     response.raise_for_status()
     payload = response.json()
     videos = payload.get("videos", [])
@@ -272,7 +272,7 @@ def _search_pexels_candidates(
     for video in videos:
         duration = float(video.get("duration", 0) or 0)
         # Enforce source-side duration policy strictly; do not download long clips for trimming.
-        if duration <= 0 or duration < min_duration or duration > max_duration:
+        if duration < 2.0 or duration > 7.0:  # FIXED: Hard filter Pexels candidates outside 2-7 second range.
             continue
         selected = _best_pexels_file(video.get("video_files", []), min_resolution=min_resolution)
         if not selected:
@@ -338,7 +338,7 @@ def _search_pixabay_candidates(
         "per_page": 40,
         "order": "popular",
     }
-    response = requests.get(endpoint, params=params, timeout=40)
+    response = requests.get(endpoint, params=params, timeout=20)  # FIXED: Use 20s timeout per Pixabay API request.
     response.raise_for_status()
     payload = response.json()
     hits = payload.get("hits", [])
@@ -348,7 +348,7 @@ def _search_pixabay_candidates(
     for item in hits:
         duration = float(item.get("duration", 0) or 0)
         # Enforce source-side duration policy strictly; do not download long clips for trimming.
-        if duration <= 0 or duration < min_duration or duration > max_duration:
+        if duration < 2.0 or duration > 7.0:  # FIXED: Hard filter Pixabay candidates outside 2-7 second range.
             continue
         best = _best_pixabay_file(item, min_resolution=min_resolution)
         if not best:
@@ -405,9 +405,9 @@ def download_scene_videos(
     used_file = _resolve_used_clips_file(output_dir=output_dir, explicit=used_clips_file)
     all_paths: list[Path] = []
     selected_urls: set[str] = set()
-    # Hard policy: only download short b-roll clips (2s to 10s).
-    min_duration = 2.0
-    max_duration = 10.0
+    # Hard policy: only download short b-roll clips (2s to 7s). # FIXED: Align runtime policy with requested clip duration window.
+    min_duration = 2.0  # FIXED: Minimum stock clip duration.
+    max_duration = 7.0  # FIXED: Maximum stock clip duration.
     effective_min_resolution = max(720, int(min_resolution))
     min_per_scene = max(1, int(clips_per_scene_min))
     max_per_scene = max(min_per_scene, int(clips_per_scene_max))
@@ -527,7 +527,7 @@ def download_scene_videos(
 
         return local_paths
 
-    worker_count = max(4, min(10, len(scenes)))
+    worker_count = min(len(scenes), 8) if scenes else 1  # FIXED: Scale parallel scene workers up to 8 as requested.
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = [executor.submit(process_scene, idx, scene) for idx, scene in enumerate(scenes, start=1)]
         for future in futures:

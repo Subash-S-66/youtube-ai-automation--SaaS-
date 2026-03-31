@@ -7,6 +7,8 @@ import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { getUploadLimits, reserveCredits } from './uploadLimitService';
 import { buildStandardPrompt } from './promptBuilderService';
+import { generateSubTopics } from './subTopicService';
+import { ensureValidYouTubeToken } from './youtubeTokenService';
 
 export interface PipelineInputSettings {
   targetDuration?: number;
@@ -26,6 +28,8 @@ export interface PipelineInputSettings {
   templateConfig?: {
     fontStyle?: string;
     subtitleColor?: string;
+    captionPosition?: 'top' | 'middle' | 'bottom';
+    maxWordsPerCaption?: number;
   };
   customVideoIds?: string[];
   customImageIds?: string[];
@@ -77,6 +81,19 @@ export const normalizePipelineSettings = (rawSettings: Record<string, any>): Pip
     aliasMappings.push('useImages -> contentType');
   }
 
+  const rawContentType = String(settings.contentType || '').trim().toLowerCase();
+  if (rawContentType) {
+    if (rawContentType === 'clips') {
+      settings.contentType = 'clips';
+    } else if (rawContentType === 'images') {
+      settings.contentType = 'images';
+    } else if (rawContentType === 'mixed') {
+      settings.contentType = 'mixed';
+    } else {
+      settings.contentType = 'clips';
+      notes.push(`Unknown contentType "${rawContentType}". Falling back to clips.`);
+    }
+  }
   if (!settings.contentType) {
     settings.contentType = 'clips';
   }
@@ -101,13 +118,49 @@ export const normalizePipelineSettings = (rawSettings: Record<string, any>): Pip
     throw new AppError('templateConfig must be an object when provided.', 400);
   }
 
+  if (isObject(rawSettings.templateConfig)) {
+    const rawTemplateConfig = rawSettings.templateConfig as Record<string, unknown>;
+    const sanitizedTemplateConfig: NonNullable<PipelineInputSettings['templateConfig']> = {};
+
+    const rawFontStyle = typeof rawTemplateConfig.fontStyle === 'string' ? rawTemplateConfig.fontStyle.trim() : '';
+    if (rawFontStyle) {
+      if (/^[a-zA-Z0-9 _-]{1,64}$/.test(rawFontStyle)) {
+        sanitizedTemplateConfig.fontStyle = rawFontStyle;
+      } else {
+        notes.push('templateConfig.fontStyle contained unsupported characters and was ignored.');
+      }
+    }
+
+    const rawSubtitleColor = typeof rawTemplateConfig.subtitleColor === 'string' ? rawTemplateConfig.subtitleColor.trim() : '';
+    if (rawSubtitleColor) {
+      if (/^#?[0-9a-fA-F]{6}$/.test(rawSubtitleColor)) {
+        sanitizedTemplateConfig.subtitleColor = rawSubtitleColor.startsWith('#') ? rawSubtitleColor.toUpperCase() : `#${rawSubtitleColor.toUpperCase()}`;
+      } else {
+        notes.push('templateConfig.subtitleColor was invalid and was ignored.');
+      }
+    }
+
+    const rawCaptionPosition = typeof rawTemplateConfig.captionPosition === 'string'
+      ? rawTemplateConfig.captionPosition.trim().toLowerCase()
+      : '';
+    if (rawCaptionPosition) {
+      if (rawCaptionPosition === 'top' || rawCaptionPosition === 'middle' || rawCaptionPosition === 'bottom') {
+        sanitizedTemplateConfig.captionPosition = rawCaptionPosition as 'top' | 'middle' | 'bottom';
+      } else {
+        notes.push('templateConfig.captionPosition must be top, middle, or bottom.');
+      }
+    }
+
+    const rawMaxWordsPerCaption = Number(rawTemplateConfig.maxWordsPerCaption);
+    if (Number.isFinite(rawMaxWordsPerCaption) && rawMaxWordsPerCaption > 0) {
+      sanitizedTemplateConfig.maxWordsPerCaption = Math.max(1, Math.min(8, Math.floor(rawMaxWordsPerCaption)));
+    }
+
+    settings.templateConfig = sanitizedTemplateConfig;
+  }
+
   const unusedFields = [
-    settings.customVideoIds?.length ? 'customVideoIds' : '',
-    settings.customImageIds?.length ? 'customImageIds' : '',
-    settings.customThumbnailId ? 'customThumbnailId' : '',
     settings.theme ? 'theme' : '',
-    settings.videoStyle ? 'videoStyle' : '',
-    settings.voiceRate ? 'voiceRate' : '',
     settings.musicVolume !== undefined ? 'musicVolume' : '',
   ].filter(Boolean);
 
@@ -174,6 +227,11 @@ export const enqueuePipelineJob = async ({
 
   const inputAudit = normalizePipelineSettings(settings as Record<string, any>);
   const finalSettings = inputAudit.normalizedSettings;
+  const selectedChannelId = typeof finalSettings.channelId === 'string' ? finalSettings.channelId.trim() : ''; // FIXED: Capture selected channel id once and normalize whitespace.
+  if (!selectedChannelId) { // FIXED: Fail fast when channel selection is missing.
+    throw new AppError('channelId is required to enqueue a pipeline job', 400); // FIXED: Clear validation error for missing selected channel.
+  }
+  finalSettings.channelId = selectedChannelId; // FIXED: Persist normalized selected channel id through downstream flow.
 
   // Global Emergency Stop for cost control / safety
   if (process.env.EMERGENCY_STOP === 'true') {
@@ -245,9 +303,16 @@ export const enqueuePipelineJob = async ({
     );
   }
 
-  const channel = user.youtubeChannels.find(c => c.channelId === finalSettings.channelId);
+  const channelBelongsToUser = user.youtubeChannels.some(
+    (c) => c.channelId === finalSettings.channelId && c.status !== 'disabled_due_to_plan'
+  ); // FIXED: Require selected channel ownership and active status before enqueue.
+  if (!channelBelongsToUser) {
+    throw new AppError('Channel does not belong to this user', 403); // FIXED: Block cross-user or disabled-channel execution attempts.
+  }
+
+  const channel = user.youtubeChannels.find((c) => c.channelId === selectedChannelId); // FIXED: Resolve user channel with exact selected channel id.
   if (!channel) {
-    throw new AppError(`YouTube channel with ID ${finalSettings.channelId} not found`, 404);
+    throw new AppError(`YouTube channel with ID ${selectedChannelId} not found`, 404); // FIXED: Report normalized selected channel id in not-found error.
   }
   if (channel.isValid === false) {
     throw new AppError(
@@ -257,6 +322,19 @@ export const enqueuePipelineJob = async ({
   }
   if (channel.status === 'disabled_due_to_plan') {
     throw new AppError('Channel disabled due to plan downgrade. Please upgrade.', 403);
+  }
+
+  const uploadDisabled = (finalSettings as any).upload === false;
+  if (!uploadDisabled) {
+    try {
+      await ensureValidYouTubeToken(selectedChannelId, userId);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error || '');
+      throw new AppError(
+        `youtube_token_expired: YouTube token for channel "${channel.channelName}" is invalid. Please reconnect this channel. ${reason}`,
+        400
+      );
+    }
   }
 
   if (channel.videosOnHold + finalSettings.videoCount > 10) {
@@ -275,10 +353,26 @@ export const enqueuePipelineJob = async ({
     throw new AppError('Prompt does not belong to user', 403);
   }
 
+  const userTopic = String(prompt.user_prompt || prompt.gemini_prompt || '').trim(); // FIXED: Use original user topic as parent category for sub-topic diversification.
+  const recentTopics = Array.isArray(user.recentTopics)
+    ? user.recentTopics.map((topic) => String(topic || '').trim()).filter(Boolean)
+    : [];
+  let chosenSubTopic = userTopic; // FIXED: Keep deterministic fallback to original topic when AI sub-topic generation fails.
+
+  try {
+    const generatedSubTopics = await generateSubTopics(userTopic, 10, recentTopics.slice(-50)); // FIXED: Generate 10 distinct sub-topics while excluding recently used user topics.
+    if (generatedSubTopics.length > 0) {
+      const pickIndex = Math.floor(Math.random() * generatedSubTopics.length);
+      chosenSubTopic = generatedSubTopics[pickIndex] || chosenSubTopic; // FIXED: Randomly pick one sub-topic for this job run.
+    }
+  } catch (error) {
+    console.warn('[PipelineRunService] Sub-topic generation failed, falling back to base topic:', error); // FIXED: Preserve backward compatibility when sub-topic generation is unavailable.
+  }
+
   // Queue immediately; content generation runs in background worker.
   const standardizedPrompt = buildStandardPrompt({
-    prompt: prompt.gemini_prompt || prompt.user_prompt,
-    title: prompt.user_prompt,
+    prompt: chosenSubTopic,
+    title: chosenSubTopic,
     duration: finalSettings.targetDuration || finalSettings.duration,
     style: finalSettings.videoStyle,
   });
@@ -289,7 +383,7 @@ export const enqueuePipelineJob = async ({
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const recentJobs = await Job.find({
     userId,
-    channelId: finalSettings.channelId,
+    channelId: selectedChannelId, // FIXED: Scope rolling upload checks to selected channel only.
     status: 'success',
     createdAt: { $gte: oneDayAgo },
   });
@@ -298,7 +392,7 @@ export const enqueuePipelineJob = async ({
   if (uploadsLast24h + finalSettings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
     return {
       warningOnly: true,
-      warning: 'YouTube allows ~10 uploads per 24 hours. This may affect uploads. Proceed?',
+      warning: 'YouTube daily upload limit reached. If you upload now it may not publish and will still consume your upload. Continue?',
     };
   }
 
@@ -315,7 +409,7 @@ export const enqueuePipelineJob = async ({
 
   // Still increment channel-specific hold
   const updatedUser = await User.findOneAndUpdate(
-    { _id: userId, 'youtubeChannels.channelId': finalSettings.channelId },
+    { _id: userId, 'youtubeChannels.channelId': selectedChannelId }, // FIXED: Increment hold on the exact selected channel.
     {
       $inc: {
         'youtubeChannels.$.videosOnHold': finalSettings.videoCount,
@@ -325,20 +419,29 @@ export const enqueuePipelineJob = async ({
   );
 
   const finalLimitCheck = await getUploadLimits(userId);
+  const persistedPipelineConfig = { ...finalSettings, channelId: selectedChannelId }; // FIXED: Explicitly persist selected channelId in pipelineConfig.channelId.
 
   const jobData: Record<string, any> = {
     userId,
     promptId,
     status: 'pending',
+    progress: {
+      progress: 0,
+      stage: 'queued',
+      message: 'Job queued',
+      timestamp: new Date().toISOString(),
+    },
     logs: [
       'Job added to queue...',
       'Content generation deferred to background worker.',
+      chosenSubTopic ? `Chosen sub-topic: ${chosenSubTopic}` : '', // FIXED: Persist selected sub-topic in logs for auditability.
       inputAudit.aliasMappings.length ? `Input alias mappings: ${inputAudit.aliasMappings.join(', ')}` : '',
       inputAudit.unusedFields.length ? `Input fields currently not used by runtime: ${inputAudit.unusedFields.join(', ')}` : '',
       inputAudit.notes.length ? `Input notes: ${inputAudit.notes.join(' | ')}` : '',
     ].filter(Boolean).join('\n') + '\n',
-    topic: prompt.user_prompt,
-    generatedPrompt: standardizedPrompt || prompt.gemini_prompt,
+    topic: chosenSubTopic || prompt.user_prompt,
+    chosenSubTopic: chosenSubTopic || undefined,
+    generatedPrompt: standardizedPrompt || chosenSubTopic || prompt.gemini_prompt,
     generatedScript: [],
     captions: [],
     title: '',
@@ -347,11 +450,11 @@ export const enqueuePipelineJob = async ({
     generatedScenes: [],
     generatedMetadata: [],
     preparedContent: [],
-    pipelineConfig: finalSettings,
-    youtubeAccountId: finalSettings.channelId,
+    pipelineConfig: persistedPipelineConfig, // FIXED: Store canonical selected channel id in job pipeline config.
+    youtubeAccountId: selectedChannelId, // FIXED: Keep legacy field aligned with selected channel for backward compatibility.
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
     videoCount: finalSettings.videoCount,
-    channelId: finalSettings.channelId,
+    channelId: selectedChannelId, // FIXED: Persist selected channel id at top-level job field.
     customVideoIds: finalSettings.customVideoIds || [],
     customImageIds: finalSettings.customImageIds || [],
   };
@@ -387,7 +490,7 @@ export const enqueuePipelineJob = async ({
       userId,
       promptId,
       jobId: job._id.toString(),
-      settings: finalSettings, // worker re-reads canonical config from DB before dispatch
+      settings: persistedPipelineConfig, // FIXED: Forward settings with explicit selected channel id for worker parity.
     },
     {
       priority: jobPriority,
@@ -417,7 +520,7 @@ export const enqueuePipelineJob = async ({
   };
 
   if (uploadsLast24h + finalSettings.videoCount > 10) {
-    result.warning = 'YouTube allows ~10 uploads per 24 hours. This may affect uploads. Proceed?';
+    result.warning = 'YouTube daily upload limit reached. If you upload now it may not publish and will still consume your upload. Continue?';
   }
 
   return result;

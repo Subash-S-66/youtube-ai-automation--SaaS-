@@ -30,14 +30,25 @@ export const runPipelineSchema = z.object({
       lastPrompt: z.string().optional(),
       templateConfig: z.object({
          fontStyle: z.string().optional(),
-         subtitleColor: z.string().optional()
+         subtitleColor: z.string().optional(),
+         captionPosition: z.enum(['top', 'middle', 'bottom']).optional(),
+         maxWordsPerCaption: z.number().int().min(1).max(8).optional(),
       }).optional(),
+      upload: z.boolean().optional(),
+      publishNow: z.boolean().optional(),
+      theme: z.string().optional(),
+      videoStyle: z.string().optional(),
+      enableCTA: z.boolean().optional(),
+      voice: z.string().optional(),
+      voiceRate: z.string().optional(),
+      musicVolume: z.number().optional(),
+      useImages: z.boolean().optional(),
       customVideoIds: z.array(z.string().max(100)).max(50).optional(),
       customImageIds: z.array(z.string().max(100)).max(50).optional(),
       customThumbnailId: z.string().max(100).optional(),
     }, {
       message: 'settings are required',
-    }),
+    }).passthrough(),
     acceptedYouTubeLimitWarning: z.boolean().optional(),
   }).superRefine((data, ctx) => {
     const hasPromptId = !!data.promptId;

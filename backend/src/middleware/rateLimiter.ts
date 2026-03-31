@@ -25,6 +25,7 @@ export const globalLimiter = withStore({
   limit: 1000, // 1000 requests per 15 mins for generic API routes
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.method === 'OPTIONS',
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again after 15 minutes',
@@ -87,6 +88,12 @@ export const pipelineRateLimiter = withStore({
   legacyHeaders: false,
 }, 'rl_pipeline_queue:');
 
+export const mediaUploadLimiter = withStore({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 30,
+  message: { success: false, message: 'Too many uploads. Try again in 1 hour.' },
+}, 'rl_media_upload:');
+
 export const resendVerificationLimiter = withStore({
   windowMs: 1 * 60 * 1000, // 1 minute
   limit: 1, // Max 1 request per minute
@@ -97,6 +104,12 @@ export const resendVerificationLimiter = withStore({
     message: 'Too many requests, please try again after 1 minute.',
   },
 }, 'rl_resend_verification:');
+
+export const paymentRateLimiter = withStore({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  limit: 30,
+  message: { success: false, message: 'Too many payment attempts. Please try again shortly.' },
+}, 'rl_payment:');
 
 export const sendOtpLimiter = withStore({
   windowMs: 1 * 60 * 1000, // 1 minute

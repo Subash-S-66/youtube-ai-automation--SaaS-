@@ -1,5 +1,7 @@
 import dotenv from 'dotenv';
-dotenv.config();
+import path from 'path';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 import { Worker, Job as BullJob, UnrecoverableError } from 'bullmq';
 import { acquireLock, releaseLock } from '../utils/redisLock';
 import mongoose from 'mongoose';
@@ -35,7 +37,6 @@ import { consumeReservedCredits, releaseReservedCredits } from '../services/uplo
 import { notifyUser } from '../services/notificationService';
 
 // Load env vars
-dotenv.config();
 
 const hasYoutubeOAuthConfig = Boolean(
   (process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID) &&
@@ -133,15 +134,42 @@ const updateProgressSafe = async (
   message?: string
 ): Promise<void> => {
   try {
-    await job.updateProgress({
+    const progressPayload = {
       progress: Math.max(0, Math.min(100, Math.floor(progress))),
       stage,
       message: message || '',
       timestamp: new Date().toISOString(),
-    });
+    };
+    await job.updateProgress(progressPayload);
+
+    const dbJobId = job.data?.jobId;
+    if (dbJobId) {
+      await JobModel.updateOne(
+        { _id: dbJobId },
+        { $set: { progress: progressPayload } }
+      );
+    }
   } catch {
     // Best-effort only
   }
+};
+
+const startRuntimeProgressTicker = (
+  job: BullJob<PipelineJobPayload>,
+  startValue: number,
+  maxValue: number,
+  intervalMs: number
+) => {
+  let current = startValue;
+  const timer = setInterval(() => {
+    if (current >= maxValue) {
+      clearInterval(timer);
+      return;
+    }
+    current += 1;
+    void updateProgressSafe(job, current, 'pipeline_runtime', 'Processing video');
+  }, intervalMs);
+  return () => clearInterval(timer);
 };
 
 const shouldRequireYouTubeUpload = (settings: Record<string, any>, uploadTargetId?: string): boolean => {
@@ -163,18 +191,15 @@ const resolveYouTubeUploadTarget = (
   settings: Record<string, any>,
   executionJob: Record<string, any>
 ): string => {
-  const candidates = [
-    settings?.youtubeAccountId,
-    settings?.channelId,
-    settings?.accountId,
-    executionJob?.youtubeAccountId,
-    executionJob?.channelId,
-  ];
-  for (const raw of candidates) {
-    const value = typeof raw === 'string' ? raw.trim() : '';
-    if (value) return value;
-  }
-  return '';
+  const primaryChannelId = typeof executionJob?.pipelineConfig?.channelId === 'string' // FIXED: Use canonical persisted job.pipelineConfig.channelId as primary source.
+    ? executionJob.pipelineConfig.channelId.trim() // FIXED: Normalize persisted channel id before use.
+    : ''; // FIXED: Treat non-string/empty persisted values as unresolved.
+  if (primaryChannelId) return primaryChannelId; // FIXED: Stop resolution once canonical job pipeline channel is present.
+
+  const secondaryChannelId = typeof settings?.channelId === 'string' // FIXED: Use runtime settings.channelId only as secondary source.
+    ? settings.channelId.trim() // FIXED: Normalize settings channel id before use.
+    : ''; // FIXED: Treat non-string/empty settings values as unresolved.
+  return secondaryChannelId; // FIXED: Never fall back to legacy youtubeAccountId/accountId fields.
 };
 
 const extractPipelineOutputJson = (stdout: string): Record<string, any> | null => {
@@ -449,9 +474,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         return;
       }
       let preparedContent = Array.isArray(dbJobForExecution.preparedContent) ? dbJobForExecution.preparedContent : [];
-      if (preparedContent.length === 0) {
+      const hasValidContent = Array.isArray(dbJobForExecution.preparedContent)
+        && dbJobForExecution.preparedContent.length > 0
+        && dbJobForExecution.preparedContent.some((item: any) => item?.script?.length > 10); // FIXED: Treat cached content as valid only when at least one item has a meaningful script payload.
+      if (!hasValidContent) {
         await appendLogSafe(jobId, 'No prepared content found. Generating content in background worker...\n');
-        await updateProgressSafe(job, 22, 'content_generation', 'Generating structured content');
+        await updateProgressSafe(job, 18, 'content_generation', 'Generating structured content');
 
         const promptDoc = await Prompt.findById(dbJobForExecution.promptId);
         if (!promptDoc) {
@@ -460,9 +488,11 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           throw err;
         }
 
+        const generationTopic = String((dbJobForExecution as any).chosenSubTopic || (dbJobForExecution as any).topic || promptDoc.user_prompt || '').trim(); // FIXED: Prefer chosen sub-topic persisted on job for downstream content generation.
+        const generationPrompt = String((dbJobForExecution as any).generatedPrompt || promptDoc.gemini_prompt || generationTopic).trim(); // FIXED: Prefer job-level prompt built from chosen sub-topic.
         const generationInput: any = {
-          topic: promptDoc.user_prompt,
-          prompt: promptDoc.gemini_prompt || promptDoc.user_prompt,
+          topic: generationTopic,
+          prompt: generationPrompt,
           videoCount: settings.videoCount || 1,
         };
         if (typeof settings.targetDuration === 'number') generationInput.targetDuration = settings.targetDuration;
@@ -534,7 +564,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           console.log(`[PipelineWorker] Content generation completed for job ${jobId}. Items: ${preparedContent.length}`);
         await appendLogSafe(jobId, `Background content generation completed with ${preparedContent.length} item(s).\n`);
           await appendLogSafe(jobId, `[PipelineWorker] Content generation completed for job ${jobId}. Items: ${preparedContent.length}\n`);
-        await updateProgressSafe(job, 38, 'content_generation', 'Content generation completed');
+        await updateProgressSafe(job, 30, 'content_generation', 'Content generation completed');
       }
       const executionJob = (await JobModel.findById(jobId)) || dbJobForExecution;
       const firstPreparedItem = (preparedContent[0] && typeof preparedContent[0] === 'object')
@@ -612,7 +642,9 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           },
         })}\n`
       );
-      await updateProgressSafe(job, 50, 'payload_build', 'Media resolution and payload build');
+      await updateProgressSafe(job, 40, 'payload_build', 'Media resolution and payload build');
+
+      const configuredMaxWordsPerCaption = Number((settings.templateConfig as any)?.maxWordsPerCaption);
 
       const payloadVideoConfig = sanitizePayloadValue({
         ...(executionJob.pipelineConfig || settings || {}),
@@ -623,6 +655,9 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           fontStyle: settings.templateConfig?.fontStyle || 'Anton',
           subtitleColor: settings.templateConfig?.subtitleColor || '#FFFFFF',
           captionPosition: (settings.templateConfig as any)?.captionPosition || 'bottom',
+          maxWordsPerCaption: Number.isFinite(configuredMaxWordsPerCaption)
+            ? Math.max(1, Math.min(8, Math.floor(configuredMaxWordsPerCaption)))
+            : 4,
         },
         targetDuration: settings.targetDuration || settings.duration || 40,
         ctaEnabled: !!settings.ctaEnabled,
@@ -636,6 +671,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         settings as Record<string, any>,
         executionJob as Record<string, any>
       );
+      await appendLogSafe(jobId, `[CHANNEL_CHECK] resolved uploadTargetChannelId=${uploadTargetChannelId || '(empty)'}\n`); // FIXED: Add explicit channel resolution trace for end-to-end debugging.
 
       const pipelinePayload = sanitizePayloadValue({
         jobId,
@@ -712,6 +748,14 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
             settings.recapEnabled = false;
         }
 
+        // FIXED: Keep already-constructed payload videoConfig synchronized with story state corrections.
+        (payloadVideoConfig as any).currentPart = settings.currentPart || 1;
+        (payloadVideoConfig as any).lastPrompt = settings.lastPrompt || '';
+        (payloadVideoConfig as any).recapEnabled = !!settings.recapEnabled;
+        (payloadVideoConfig as any).storyMode = !!settings.storyMode;
+        (pipelinePayload as any).videoConfig = payloadVideoConfig;
+        (pipelinePayload as any).recapEnabled = !!settings.recapEnabled;
+
         await appendLogSafe(jobId, `
 Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 `, 'processing');
@@ -731,13 +775,15 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         })}\n`
       );
       let youtubeToken = '';
+      let encryptedYoutubeTokenJson = ''; // FIXED: Carry full channel-specific OAuth token JSON for selected channel.
+      let scopedTokenPayload = ''; // FIXED: Preserve raw token JSON for local runner fallback.
       if (requiresUpload) {
         if (!uploadTargetChannelId) {
           const err: any = new Error('Upload requested but no YouTube channel/account id was resolved.');
           err.stage = 'UPLOAD';
           throw err;
         }
-        await updateProgressSafe(job, 60, 'token_validation', 'Validating YouTube token');
+        await updateProgressSafe(job, 45, 'token_validation', 'Validating YouTube token');
         try {
           youtubeToken = (await ensureValidYouTubeToken(uploadTargetChannelId, userId)).accessToken;
         } catch (error: any) {
@@ -749,9 +795,28 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           err.stage = 'TOKEN';
           throw err;
         }
+
+        const tokenUser = await User.findById(userId); // FIXED: Reload user after token validation to read latest channel token state.
+        const selectedChannel = tokenUser?.youtubeChannels?.find((channel) => channel.channelId === uploadTargetChannelId); // FIXED: Strictly select the exact requested channel token.
+        if (!selectedChannel?.tokens?.access_token) { // FIXED: Prevent dispatch when selected channel tokens are unavailable.
+          const err: any = new Error(`Selected YouTube channel token not found for channelId=${uploadTargetChannelId}`); // FIXED: Emit clear token/channel mismatch error.
+          err.stage = 'TOKEN'; // FIXED: Keep failure stage compatible with existing error handling.
+          throw err; // FIXED: Fail fast instead of risking upload with stale token context.
+        }
+
+        scopedTokenPayload = JSON.stringify({ // FIXED: Build channel-scoped token payload for Python uploader.
+          token: selectedChannel.tokens.access_token || '', // FIXED: Provide access token for immediate authenticated uploads.
+          refresh_token: selectedChannel.tokens.refresh_token || '', // FIXED: Provide refresh token tied to the exact channel.
+          expiry_date: selectedChannel.tokens.expiry_date || undefined, // FIXED: Preserve expiry metadata for refresh logic.
+          token_uri: 'https://oauth2.googleapis.com/token', // FIXED: Include token endpoint expected by OAuth credential helpers.
+          client_id: process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '', // FIXED: Include OAuth client id required for refresh.
+          client_secret: process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || '', // FIXED: Include OAuth client secret required for refresh.
+          scopes: ['https://www.googleapis.com/auth/youtube.upload'], // FIXED: Scope payload to upload permission.
+        });
+        encryptedYoutubeTokenJson = encrypt(scopedTokenPayload); // FIXED: Encrypt channel-specific token JSON before passing to runtime.
       } else {
         await appendLogSafe(jobId, 'Upload not requested for this job. Skipping YouTube token validation.\n');
-        await updateProgressSafe(job, 60, 'token_validation', 'Upload disabled, token validation skipped');
+        await updateProgressSafe(job, 45, 'token_validation', 'Upload disabled, token validation skipped');
       }
 
       // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
@@ -771,7 +836,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // Although we atomically lock it above, we refresh it here to act as the official timer start
       await JobModel.findByIdAndUpdate(jobId, { status: 'processing', startedAt: new Date() });
       await appendLogSafe(jobId, 'Job is running in pipeline...\n', 'processing');
-      await updateProgressSafe(job, 70, 'dispatch', 'Dispatching pipeline runtime');
+      await updateProgressSafe(job, 55, 'dispatch', 'Dispatching pipeline runtime');
 
       // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.
       // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
@@ -781,11 +846,15 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // Setup payload configuring environment variables for the container run
       // Production hardening: always execute full video generation runtime.
       const runtimeMode = 'full';
+      const useLocalTokenJson = pipelineRunner === 'local' && requiresUpload && scopedTokenPayload;
       const envVars = [
         { name: "USER_ID", value: userId },
         { name: "PIPELINE_PAYLOAD", value: JSON.stringify(pipelinePayload) },
+        { name: "SETTINGS", value: JSON.stringify(payloadVideoConfig) },
         { name: "RUN_MODE", value: runtimeMode },
-        { name: "YOUTUBE_TOKEN_ENCRYPTED", value: encryptedYoutubeToken },
+        { name: "YOUTUBE_TOKEN_JSON_ENCRYPTED", value: useLocalTokenJson ? '' : encryptedYoutubeTokenJson }, // FIXED: Use plain token JSON for local runner to avoid decryption mismatches.
+        { name: "YOUTUBE_TOKEN_ENCRYPTED", value: useLocalTokenJson ? '' : encryptedYoutubeToken },
+        ...(useLocalTokenJson ? [{ name: "YOUTUBE_TOKEN_JSON", value: scopedTokenPayload }] : []),
         { name: "ENCRYPTION_KEY", value: process.env.ENCRYPTION_KEY || "" },
         { name: "UPLOAD", value: requiresUpload ? "true" : "false" },
         { name: "JOB_ID", value: jobId },
@@ -814,7 +883,13 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       if (pipelineRunner === 'local') {
         await appendLogSafe(jobId, `\nDispatching local pipeline process for job ${jobId}...\n`);
-        const result = await triggerLocalPipeline(envVars);
+        const stopTicker = startRuntimeProgressTicker(job, 56, 88, 8000);
+        let result;
+        try {
+          result = await triggerLocalPipeline(envVars);
+        } finally {
+          stopTicker();
+        }
         const stdoutTail = (result.stdout || '').slice(-2000);
         const stderrTail = (result.stderr || '').slice(-2000);
         const outputJson = extractPipelineOutputJson(result.stdout || '');
@@ -832,7 +907,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           throw err;
         }
         await appendLogSafe(jobId, `\nLocal pipeline process finished.\n`);
-        await updateProgressSafe(job, 95, 'pipeline_runtime', 'Pipeline runtime finished');
+        await updateProgressSafe(job, 90, 'pipeline_runtime', 'Pipeline runtime finished');
 
         const outputVideoUrl = String(
           outputJson?.videoUrl ||
@@ -850,6 +925,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           outputYoutubeVideoId ||
           (outputVideoUrl && /^https?:\/\//i.test(outputVideoUrl))
         );
+        const acceptedWarning = Boolean((executionJob as any)?.acceptedYouTubeLimitWarning);
 
         if (!uploadConfirmed) {
           const failedLocal = await JobModel.findOneAndUpdate(
@@ -858,7 +934,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
               $set: {
                 status: 'failed',
                 completedAt: new Date(),
-                holdReleased: true,
+                holdConsumed: acceptedWarning,
+                holdReleased: !acceptedWarning,
                 error: 'Upload failed or was skipped.',
                 errorMessage: 'Upload failed or was skipped.',
                 errorStage: 'UPLOAD',
@@ -869,8 +946,13 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
             { returnDocument: 'after' }
           );
           if (failedLocal) {
-            await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            if (acceptedWarning) {
+              await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            } else {
+              await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            }
             await appendLogSafe(jobId, `${JSON.stringify({ event: 'local_completion_failed_upload', output: outputJson || {} })}\n`, 'failed');
+            await updateProgressSafe(job, 99, 'failed', 'Job failed');
           }
           return;
         }
@@ -892,6 +974,19 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         );
         if (finalized) {
           await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+          const chosenSubTopic = String((finalized as any).chosenSubTopic || '').trim(); // FIXED: Read selected sub-topic from finalized job.
+          if (chosenSubTopic) {
+            const topicUser = await User.findById(userId); // FIXED: Load user to update recent topic memory after successful upload.
+            if (topicUser) {
+              const previousTopics = Array.isArray((topicUser as any).recentTopics)
+                ? (topicUser as any).recentTopics.map((topic: unknown) => String(topic || '').trim()).filter(Boolean)
+                : [];
+              previousTopics.push(chosenSubTopic); // FIXED: Append successful sub-topic to user history.
+              (topicUser as any).recentTopics = previousTopics.slice(-100); // FIXED: Retain only the latest 100 topics.
+              topicUser.markModified('recentTopics');
+              await topicUser.save();
+            }
+          }
           await updateProgressSafe(job, 100, 'completed', 'Job completed successfully');
           await appendLogSafe(jobId, `${JSON.stringify({ event: 'local_completion', output: outputJson || {} })}\n`, 'success');
         }
@@ -1204,6 +1299,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           console.error(`[PipelineWorker] Failed to force-update failed state for job ${jobId}:`, dbErr);
         });
       }
+
+      await updateProgressSafe(job, 99, 'failed', 'Job failed');
 
       if (error?.stage === 'TOKEN') {
         throw new UnrecoverableError(error.message || 'YouTube token failure');

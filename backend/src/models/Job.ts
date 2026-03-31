@@ -5,6 +5,7 @@ export interface IJob extends Document {
   promptId: mongoose.Types.ObjectId;
   topic?: string;
   generatedPrompt?: string;
+  chosenSubTopic?: string;
   generatedScript?: Array<Array<{ text: string; duration?: number }>>;
   captions?: Array<Array<{ startMs: number; endMs: number; text: string }>>;
   title?: string;
@@ -24,6 +25,12 @@ export interface IJob extends Document {
   logs: string;
   error?: string;
   result?: any;
+  progress?: {
+    progress?: number;
+    stage?: string;
+    message?: string;
+    timestamp?: string;
+  };
   queuedAt?: Date;
   startedAt?: Date;
   completedAt?: Date;
@@ -58,6 +65,10 @@ const JobSchema = new Schema<IJob>(
       trim: true,
     },
     generatedPrompt: {
+      type: String,
+      trim: true,
+    },
+    chosenSubTopic: {
       type: String,
       trim: true,
     },
@@ -128,6 +139,10 @@ const JobSchema = new Schema<IJob>(
     result: {
       type: Schema.Types.Mixed,
     },
+    progress: {
+      type: Schema.Types.Mixed,
+      default: { progress: 0 },
+    },
     queuedAt: {
       type: Date,
     },
@@ -175,6 +190,7 @@ JobSchema.index({ userId: 1, status: 1 });
 JobSchema.index({ userId: 1, _id: -1 }); // Index for cursor pagination
 
 JobSchema.index({ userId: 1, createdAt: -1 });
+JobSchema.index({ userId: 1, status: 1, createdAt: -1 }); // FIXED: Optimize user status history queries sorted by newest jobs.
 JobSchema.index({ status: 1, holdConsumed: 1, holdReleased: 1 });
 
 const Job = mongoose.model<IJob>('Job', JobSchema);

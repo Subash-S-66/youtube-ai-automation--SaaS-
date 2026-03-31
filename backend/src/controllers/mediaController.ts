@@ -49,6 +49,10 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
       fs.unlinkSync(req.file.path);
       throw new AppError('Invalid file type detected. Only videos and images are allowed.', 400);
     }
+    if (fileType.mime !== req.file.mimetype) {
+      fs.unlinkSync(req.file.path); // FIXED: Remove suspicious upload immediately on MIME mismatch.
+      throw new AppError('File type mismatch detected', 400); // FIXED: Reject payloads with mismatched header/content types.
+    }
   } catch (err: any) {
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     throw new AppError(err.message || 'Error validating file type', err.statusCode || 500);

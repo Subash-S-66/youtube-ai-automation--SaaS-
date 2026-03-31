@@ -47,11 +47,34 @@ export interface IUser extends Document {
   lastPrompt?: string;
   lastSelectedTopic?: string;
   lastCustomTopic?: string;
+  recentTopics?: string[];
   lastChannelInputs?: Record<string, {
     inputMode?: 'topic' | 'prompt';
     prompt?: string;
     selectedTopic?: string;
     customTopic?: string;
+    storyMode?: boolean;
+    storyId?: string;
+    currentPart?: number;
+    storyContext?: string;
+    recapEnabled?: boolean;
+    ctaEnabled?: boolean;
+    duration?: number;
+    contentType?: 'clips' | 'images' | 'mixed';
+    videoCount?: number;
+    selectedVoices?: string[];
+    randomVoice?: boolean;
+    templateFont?: string;
+    templateColor?: string;
+    captionPosition?: 'top' | 'middle' | 'bottom';
+    maxWordsPerCaption?: number;
+    useCustomMedia?: boolean;
+    selectedThumbnailId?: string;
+    scheduleEnabled?: boolean;
+    scheduleDatetime?: string;
+    autoUploadEnabled?: boolean;
+    autoUploadIntervalHours?: number;
+    autoUploadVideosPerInterval?: number;
   }>;
   telegramChatId?: string;
   fcmToken?: string | undefined;
@@ -209,6 +232,10 @@ const UserSchema = new Schema<IUser>(
     lastCustomTopic: {
       type: String,
     },
+    recentTopics: {
+      type: [String],
+      default: [],
+    },
     lastChannelInputs: {
       type: Schema.Types.Mixed,
       default: {},
@@ -269,6 +296,7 @@ const UserSchema = new Schema<IUser>(
 UserSchema.index({ emailVerificationToken: 1 });
 UserSchema.index({ passwordResetToken: 1 });
 UserSchema.index({ otpToken: 1 });
+UserSchema.index({ 'youtubeChannels.channelId': 1 }); // FIXED: Speed channelId lookups within embedded youtubeChannels.
 
 const User = mongoose.model<IUser>('User', UserSchema);
 

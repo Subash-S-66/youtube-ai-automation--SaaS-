@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { m } from 'framer-motion';
 import { Sparkles, ArrowRight, Mail, Lock, Eye, EyeOff } from 'lucide-react';
@@ -12,6 +12,30 @@ import { getApiOrigin } from '../../lib/apiBase';
 
 
 import { Suspense } from 'react';
+
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+      unverified?: boolean;
+    };
+  };
+}
+
+const getEmailKey = (value: string) => value.trim().toLowerCase();
+const getCooldownKey = (value: string) => `resendCooldown:${getEmailKey(value)}`;
+const getAttemptsKey = (value: string) => `resendAttempts:${getEmailKey(value)}`;
+
+const getApiErrorMessage = (err: unknown, fallback: string): string => {
+  if (typeof err === 'object' && err) {
+    const maybeApiError = err as ApiErrorShape;
+    const message = maybeApiError.response?.data?.message;
+    if (typeof message === 'string' && message.trim()) {
+      return message;
+    }
+  }
+  return fallback;
+};
 
 function LoginContent() {
   const [email, setEmail] = useState('');
@@ -36,50 +60,47 @@ function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  useEffect(() => {
+  const oauthError = useMemo(() => {
     const errorCode = searchParams.get('error');
-    if (!errorCode) return;
+    if (!errorCode) return '';
     const messages: Record<string, string> = {
       Google_Login_Failed: 'Google login failed. Please try again.',
       Email_Not_Found: 'Google account email not available. Try another account.',
     };
-    setError(messages[errorCode] || 'Login failed. Please try again.');
+    return messages[errorCode] || 'Login failed. Please try again.';
   }, [searchParams]);
 
-  const getEmailKey = (value: string) => value.trim().toLowerCase();
-  const getCooldownKey = (value: string) => `resendCooldown:${getEmailKey(value)}`;
-  const getAttemptsKey = (value: string) => `resendAttempts:${getEmailKey(value)}`;
-
-  useEffect(() => {
-    if (!verificationEmail) return;
-    const cooldownKey = getCooldownKey(verificationEmail);
-    const attemptsKey = getAttemptsKey(verificationEmail);
+  const hydrateResendState = (targetEmail: string) => {
+    const cooldownKey = getCooldownKey(targetEmail);
+    const attemptsKey = getAttemptsKey(targetEmail);
     const storedEndAt = Number(localStorage.getItem(cooldownKey) || 0);
     const storedAttempts = Number(localStorage.getItem(attemptsKey) || 0);
 
-    setResendAttempts(Number.isFinite(storedAttempts) ? storedAttempts : 0);
+    const safeAttempts = Number.isFinite(storedAttempts) ? storedAttempts : 0;
+    setResendAttempts(safeAttempts);
 
     if (storedEndAt && storedEndAt > Date.now()) {
       setResendEndAt(storedEndAt);
-    } else {
-      setResendEndAt(0);
-      if (storedEndAt) {
-        localStorage.removeItem(cooldownKey);
-      }
-    }
-  }, [verificationEmail]);
-
-  useEffect(() => {
-    if (!resendEndAt) {
-      setResendCountdown(0);
+      setResendCountdown(Math.max(0, Math.ceil((storedEndAt - Date.now()) / 1000)));
       return;
     }
+
+    setResendEndAt(0);
+    setResendCountdown(0);
+    if (storedEndAt) {
+      localStorage.removeItem(cooldownKey);
+    }
+  };
+
+  useEffect(() => {
+    if (!resendEndAt) return;
 
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((resendEndAt - Date.now()) / 1000));
       setResendCountdown(remaining);
       if (remaining <= 0) {
         setResendEndAt(0);
+        setResendCountdown(0);
         if (verificationEmail) {
           localStorage.removeItem(getCooldownKey(verificationEmail));
         }
@@ -96,6 +117,8 @@ function LoginContent() {
     const nextCooldown = resendAttempts === 0 ? 60 : 120;
     const endAt = Date.now() + nextCooldown * 1000;
     setResendEndAt(endAt);
+    setResendCountdown(nextCooldown);
+
     if (targetEmail) {
       localStorage.setItem(getCooldownKey(targetEmail), String(endAt));
       const nextAttempts = resendAttempts + 1;
@@ -126,14 +149,18 @@ function LoginContent() {
         }
         router.push('/dashboard');
       }
-    } catch (err: any) {
-      if (err.response?.data?.unverified) {
-        setVerificationEmail(email.trim());
+    } catch (err: unknown) {
+      const maybeApiError = err as ApiErrorShape;
+      if (maybeApiError.response?.data?.unverified) {
+        const targetEmail = email.trim();
+        setVerificationEmail(targetEmail);
+        hydrateResendState(targetEmail);
         setUnverified(true);
         setError(''); // Clear standard error to show verification UI
       } else {
-        setError(err.response?.data?.message || 'Login failed. Please check your credentials.');
+        setError(getApiErrorMessage(err, 'Login failed. Please check your credentials.'));
       }
+    } finally {
       setIsLoading(false);
     }
   };
@@ -146,8 +173,8 @@ function LoginContent() {
       setResendMessage('Verification email sent!');
       startResendCooldown();
       setTimeout(() => setResendMessage(''), 5000); // clear message after 5s
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to resend verification email.');
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Failed to resend verification email.'));
     }
   };
 
@@ -165,13 +192,12 @@ function LoginContent() {
       startResendCooldown();
       setShowOtp(true);
       setTimeout(() => setResendMessage(''), 5000);
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to send OTP.');
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Failed to send OTP.'));
     }
   };
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleVerifyOtp = async () => {
     if (otp.length !== 6) {
       setOtpError('OTP must be exactly 6 digits');
       return;
@@ -195,11 +221,14 @@ function LoginContent() {
           router.push('/dashboard');
         }, 1000);
       }
-    } catch (err: any) {
-      setOtpError(err.response?.data?.message || 'Failed to verify OTP.');
+    } catch (err: unknown) {
+      setOtpError(getApiErrorMessage(err, 'Failed to verify OTP.'));
+    } finally {
       setIsOtpLoading(false);
     }
   };
+
+  const displayError = error || oauthError;
 
   return (
     <div className="min-h-screen bg-[#0B0F1A] flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans selection:bg-[#7C5CFF]/30 relative overflow-hidden">
@@ -275,9 +304,9 @@ function LoginContent() {
                 </button>
               </div>
             </div>
-            {error && !unverified && (
+            {displayError && !unverified && (
               <m.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm text-red-400 text-center">
-                {error}
+                {displayError}
               </m.div>
             )}
 

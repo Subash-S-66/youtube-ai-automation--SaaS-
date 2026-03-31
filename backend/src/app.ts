@@ -60,9 +60,6 @@ app.use(helmet({
   crossOriginResourcePolicy: isProduction ? { policy: 'same-site' } : false,
 }));
 
-// Apply generic API rate limiting
-app.use('/api', globalLimiter);
-
 // CORS Middleware
 // Supports single or comma-separated frontend URLs via FRONTEND_URL or FRONTEND_URLS.
 const allowedOrigins = getAllowedOrigins();
@@ -87,6 +84,9 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+// Apply generic API rate limiting (after CORS so error responses include CORS headers)
+app.use('/api', globalLimiter);
 
 // Webhook payload needs to remain raw for Razorpay signature verification.
 import { webhookHandler } from './controllers/paymentController';

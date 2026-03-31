@@ -43,7 +43,7 @@ def _decrypt_env_value(raw: str, encryption_key: str) -> str | None:
         encrypted_data = bytes.fromhex(parts[1])
         key_bytes = encryption_key.encode("utf-8")[:32]
         if len(key_bytes) < 32:
-            key_bytes = key_bytes.ljust(32, b"\0")
+            key_bytes = key_bytes.ljust(32, b"0")
         cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
         decryptor = cipher.decryptor()
         decrypted_padded = decryptor.update(encrypted_data) + decryptor.finalize()
@@ -73,14 +73,19 @@ def _prepare_youtube_credentials() -> None:
         _safe_write_text(client_secret_path, client_secret_json)
 
     decoded_token = _decode_b64(token_b64)
-    if decoded_token:
-        _safe_write_text(token_path, decoded_token)
-    elif token_json_encrypted:
-        decrypted_token_json = _decrypt_env_value(token_json_encrypted, encryption_key)
-        if decrypted_token_json:
-            _safe_write_text(token_path, decrypted_token_json)
+    if token_json_encrypted:  # FIXED: Prioritize encrypted channel-specific token payload from backend.
+        decrypted_token_json = _decrypt_env_value(token_json_encrypted, encryption_key)  # FIXED: Decrypt selected-channel token JSON before writing token cache.
+        if decrypted_token_json:  # FIXED: Only persist decrypted env token when decryption succeeds.
+            _safe_write_text(token_path, decrypted_token_json)  # FIXED: Force token file to the selected-channel credentials.
+            LOGGER.info("Prepared YouTube token from YOUTUBE_TOKEN_JSON_ENCRYPTED")  # FIXED: Trace token source for channel-routing audits.
+        else:
+            LOGGER.warning("YOUTUBE_TOKEN_JSON_ENCRYPTED was set but could not be decrypted")  # FIXED: Surface decryption problems early.
     elif token_json:
-        _safe_write_text(token_path, token_json)
+        _safe_write_text(token_path, token_json)  # FIXED: Use plain token JSON env only when encrypted payload is absent.
+        LOGGER.info("Prepared YouTube token from YOUTUBE_TOKEN_JSON")  # FIXED: Trace fallback token source.
+    elif decoded_token:
+        _safe_write_text(token_path, decoded_token)  # FIXED: Keep base64 token as lowest-priority fallback to avoid stale override.
+        LOGGER.info("Prepared YouTube token from YOUTUBE_TOKEN_B64")  # FIXED: Trace legacy fallback token source.
 
 
 def _acquire_arm_token(tenant_id: str, client_id: str, client_secret: str) -> str:

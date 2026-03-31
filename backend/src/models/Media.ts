@@ -35,6 +35,8 @@ const MediaSchema = new Schema<IMedia>(
   }
 );
 
+MediaSchema.index({ userId: 1, type: 1 }); // FIXED: Speed user media filtering by type.
+
 const Media = mongoose.model<IMedia>('Media', MediaSchema);
 
 export default Media;

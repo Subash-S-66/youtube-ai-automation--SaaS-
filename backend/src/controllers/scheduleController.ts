@@ -10,12 +10,54 @@ import { getUploadLimits } from '../services/uploadLimitService';
 import { scheduleQueue } from '../queues/scheduleQueue';
 import { z } from 'zod';
 
+const SCHEDULE_QUEUE_STATES: Array<'waiting' | 'delayed'> = ['waiting', 'delayed'];
+
+const clearQueuedScheduleJobs = async (scheduleId: string): Promise<void> => {
+  const queuedJobs = await scheduleQueue.getJobs(SCHEDULE_QUEUE_STATES);
+  const matchingJobs = queuedJobs.filter((job: any) => job?.data?.scheduleId === scheduleId);
+  await Promise.all(
+    matchingJobs.map((job: any) => job.remove().catch(() => undefined))
+  );
+};
+
+const enqueueScheduleRun = async (scheduleId: string, nextRunAt: Date): Promise<void> => {
+  await clearQueuedScheduleJobs(scheduleId);
+  await scheduleQueue.add(
+    'runSchedule',
+    { scheduleId },
+    {
+      delay: Math.max(0, nextRunAt.getTime() - Date.now()),
+      jobId: `schedule-${scheduleId}-${nextRunAt.getTime()}`,
+    }
+  );
+};
+
 const VideoConfigSchema = z.object({
   promptId: z.string().optional(),
   channelId: z.string().optional(),
+  targetDuration: z.number().optional(),
+  duration: z.number().optional(),
+  contentType: z.enum(['clips', 'images', 'mixed']).optional(),
   videoCount: z.number().optional(),
+  upload: z.boolean().optional(),
+  publishNow: z.boolean().optional(),
   storyMode: z.boolean().optional(),
   storyId: z.string().optional(),
+  currentPart: z.number().optional(),
+  recapEnabled: z.boolean().optional(),
+  ctaEnabled: z.boolean().optional(),
+  voices: z.array(z.string()).optional(),
+  templateConfig: z.object({
+    fontStyle: z.string().optional(),
+    subtitleColor: z.string().regex(/^#?[0-9a-fA-F]{6}$/).optional(),
+    captionPosition: z.enum(['top', 'middle', 'bottom']).optional(),
+    maxWordsPerCaption: z.number().int().min(1).max(8).optional(),
+  }).optional(),
+  customVideoIds: z.array(z.string().max(100)).max(50).optional(),
+  customImageIds: z.array(z.string().max(100)).max(50).optional(),
+  customThumbnailId: z.string().max(100).optional(),
+  userMediaPaths: z.array(z.string()).optional(),
+  lastPrompt: z.string().optional(),
   theme: z.string().optional(),
   videoStyle: z.string().optional(),
   enableCTA: z.boolean().optional(),
@@ -23,7 +65,7 @@ const VideoConfigSchema = z.object({
   voiceRate: z.string().optional(),
   musicVolume: z.number().optional(),
   useImages: z.boolean().optional(),
-});
+}).passthrough(); // FIXED: Preserve validated user config fields for delayed schedule execution.
 
 // @desc    Create a schedule
 // @route   POST /api/schedules
@@ -44,6 +86,7 @@ export const createSchedule = asyncHandler(
       cron_expression,
       videoConfig,
     } = req.body;
+    const normalizedChannelId = String(channelId || '').trim();
 
     const limitCheck = await getUploadLimits(userId);
     const planDoc = await Plan.findOne({ name: limitCheck.plan });
@@ -56,9 +99,9 @@ export const createSchedule = asyncHandler(
       throw new AppError('User not found', 404);
     }
 
-    const channel: any = user.youtubeChannels.find(c => c.channelId === channelId);
+    const channel: any = user.youtubeChannels.find(c => c.channelId === normalizedChannelId);
     if (!channel) {
-      throw new AppError(`YouTube channel with ID ${channelId} not found`, 404);
+      throw new AppError(`YouTube channel with ID ${normalizedChannelId} not found`, 404);
     }
     if (channel.isValid === false) {
       throw new AppError(
@@ -81,7 +124,7 @@ export const createSchedule = asyncHandler(
       }
     }
 
-    if (videoConfig?.channelId && videoConfig.channelId !== channelId) {
+    if (videoConfig?.channelId && String(videoConfig.channelId).trim() !== normalizedChannelId) {
       throw new AppError('channelId mismatch between schedule and videoConfig', 400);
     }
 
@@ -122,13 +165,13 @@ export const createSchedule = asyncHandler(
 
     const createPayload: Record<string, any> = {
       userId,
-      channelId,
+      channelId: normalizedChannelId,
       type,
       nextRunAt,
       cron_expression,
       videoConfig: {
         ...validatedVideoConfig,
-        channelId,
+        channelId: normalizedChannelId,
         videoCount: resolvedVideoCount,
       },
     };
@@ -140,23 +183,70 @@ export const createSchedule = asyncHandler(
       if (videosPerInterval) createPayload.videosPerInterval = videosPerInterval;
     }
 
-    const schedule = await Schedule.create(createPayload);
+    // Keep interval/recurring schedules channel-specific and singular while allowing many one-time schedules.
+    let schedule = null;
+    if (type === 'interval' || type === 'recurring') {
+      schedule = await Schedule.findOne({
+        userId,
+        channelId: normalizedChannelId,
+        type,
+        enabled: true,
+      });
+      if (schedule) {
+        const setPayload: Record<string, any> = {
+          nextRunAt,
+          videoConfig: createPayload.videoConfig,
+          running: false,
+          enabled: true,
+          status: 'pending',
+        };
+        const unsetPayload: Record<string, number> = {
+          lastError: 1,
+        };
+
+        if (intervalHours !== undefined) {
+          setPayload.intervalHours = intervalHours;
+        } else {
+          unsetPayload.intervalHours = 1;
+        }
+
+        if (videosPerInterval !== undefined) {
+          setPayload.videosPerInterval = videosPerInterval;
+        } else {
+          unsetPayload.videosPerInterval = 1;
+        }
+
+        if (cron_expression !== undefined) {
+          setPayload.cron_expression = cron_expression;
+        } else {
+          unsetPayload.cron_expression = 1;
+        }
+
+        schedule = await Schedule.findByIdAndUpdate(
+          schedule._id,
+          {
+            $set: setPayload,
+            $unset: unsetPayload,
+          },
+          { new: true }
+        );
+      }
+    }
+
+    if (!schedule) {
+      schedule = await Schedule.create(createPayload);
+    }
 
     // Enqueue delayed job
     if (nextRunAt) {
-      await scheduleQueue.add(
-        'runSchedule',
-        { scheduleId: schedule._id.toString() },
-        {
-          delay: Math.max(0, nextRunAt.getTime() - Date.now()),
-          jobId: `schedule-${schedule._id.toString()}-${nextRunAt.getTime()}`
-        }
-      );
+      await enqueueScheduleRun(schedule._id.toString(), nextRunAt);
     }
 
     res.status(201).json({
       success: true,
-      message: 'Schedule created successfully',
+      message: type === 'interval' || type === 'recurring'
+        ? 'Channel schedule saved successfully'
+        : 'Schedule created successfully',
       data: schedule,
     });
   }
@@ -170,7 +260,13 @@ export const getSchedules = asyncHandler(async (req: Request, res: Response) => 
     throw new AppError('Not authorized', 401);
   }
 
-  const schedules = await Schedule.find({ userId: req.user.id }).sort({ createdAt: -1 });
+  const channelId = typeof req.query.channelId === 'string' ? req.query.channelId.trim() : '';
+  const query: Record<string, any> = { userId: req.user.id };
+  if (channelId) {
+    query.channelId = channelId;
+  }
+
+  const schedules = await Schedule.find(query).sort({ createdAt: -1 });
   res.status(200).json({
     success: true,
     data: schedules,
@@ -190,6 +286,8 @@ export const deleteSchedule = asyncHandler(async (req: Request, res: Response) =
   if (!schedule) {
     throw new AppError('Schedule not found', 404);
   }
+
+  await clearQueuedScheduleJobs(scheduleId);
 
   res.status(200).json({
     success: true,

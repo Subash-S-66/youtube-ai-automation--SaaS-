@@ -15,6 +15,7 @@ from pathlib import Path
 import random
 import re
 import requests
+import shutil
 import socket
 import subprocess
 import time
@@ -110,7 +111,7 @@ from youtube_ai_automation.video_creator import create_subtitles_from_script, re
 from youtube_ai_automation.video_fetcher import download_scene_videos
 from youtube_ai_automation.image_fetcher import fetch_images
 from youtube_ai_automation.viral_pattern_engine import ViralPatternScore, estimate_viral_probability
-from youtube_ai_automation.voice_generator import generate_voice, pick_voice_profile
+from youtube_ai_automation.voice_generator import generate_voice, generate_voice_with_duration_control, pick_voice_profile  # FIXED: Use duration-controlled TTS helper to keep final audio inside [T-10, T].
 from youtube_ai_automation.youtube_uploader import SHORTS_MAX_DURATION_SECONDS, upload_video
 from youtube_ai_automation.services.webhook_service import send_pipeline_complete
 from youtube_ai_automation.duration_controller import (
@@ -761,7 +762,80 @@ def _build_video_from_content(
     LOGGER.info("Scene duration: %.1fs", scene_duration)
     scene_queries = _extend_scene_queries(scene_plan.search_queries[:], target_scenes)
 
-    videos = []
+    videos = []  # FIXED: Build media list with strict mode-aware selection.
+
+    def fetch_images_for_all_scenes(scene_queries: list[str], output_dir: Path) -> list[Path]:  # FIXED: Centralize images-only retrieval for contentType="images".
+        image_files: list[Path] = []  # FIXED: Collect one image per scene query.
+        for query in scene_queries:  # FIXED: Preserve scene ordering while fetching images.
+            try:
+                imgs = fetch_images(  # FIXED: Use image fetcher exclusively in images mode.
+                    query=query,
+                    output_dir=output_dir / "images",  # FIXED: Store image assets in dedicated images folder.
+                    count=1,
+                    pexels_key=PEXELS_API_KEY,
+                    pixabay_key=PIXABAY_API_KEY,
+                )
+                image_files.extend(imgs)  # FIXED: Append fetched scene image(s) in order.
+            except Exception as exc:
+                LOGGER.warning("Failed to fetch image for query '%s': %s", query, exc)  # FIXED: Keep pipeline resilient when single-image fetch fails.
+        return image_files
+
+    def download_scene_videos_for_all_scenes(scene_queries: list[str], output_dir: Path) -> list[Path]:  # FIXED: Centralize clips-only retrieval for contentType="clips".
+        if not scene_queries:
+            return []
+        return download_scene_videos(
+            scenes=scene_queries,
+            output_dir=output_dir / "clips",  # FIXED: Store clip assets in dedicated clips folder.
+            pexels_key=PEXELS_API_KEY,
+            pexels_keys=PEXELS_API_KEYS,
+            pixabay_key=PIXABAY_API_KEY,
+            pixabay_keys=PIXABAY_API_KEYS,
+            scene_duration=4.0,
+            min_resolution=720,
+            used_clips_file=_runtime_used_clips_file(USED_CLIPS_FILE),
+            clips_per_scene_min=1,
+            clips_per_scene_max=1,
+            job_id=str(os.getenv("JOB_ID", "")).strip(),
+        )
+
+    def _fetch_mixed_media(scene_queries: list[str], output_dir: Path) -> list[Path]:
+        """Alternate clip -> image -> clip -> image for true mixed content."""  # FIXED: Enforce deterministic mixed-mode alternation.
+        mixed: list[Path] = []  # FIXED: Preserve alternation sequence in output list.
+        for idx, query in enumerate(scene_queries):
+            if idx % 2 == 0:
+                # Even index -> video clip
+                try:
+                    clips = download_scene_videos(
+                        scenes=[query],
+                        output_dir=output_dir / "clips",
+                        pexels_key=PEXELS_API_KEY,
+                        pexels_keys=PEXELS_API_KEYS,
+                        pixabay_key=PIXABAY_API_KEY,
+                        pixabay_keys=PIXABAY_API_KEYS,
+                        scene_duration=4.0,
+                        min_resolution=720,
+                        used_clips_file=_runtime_used_clips_file(USED_CLIPS_FILE),
+                        clips_per_scene_min=1,
+                        clips_per_scene_max=1,
+                        job_id=str(os.getenv("JOB_ID", "")).strip(),
+                    )
+                    mixed.extend(clips)
+                except Exception as exc:
+                    LOGGER.warning("Failed to fetch mixed clip for query '%s': %s", query, exc)  # FIXED: Keep mixed flow robust on clip fetch errors.
+            else:
+                # Odd index -> image
+                try:
+                    imgs = fetch_images(
+                        query=query,
+                        output_dir=output_dir / "images",
+                        count=1,
+                        pexels_key=PEXELS_API_KEY,
+                        pixabay_key=PIXABAY_API_KEY,
+                    )
+                    mixed.extend(imgs)
+                except Exception as exc:
+                    LOGGER.warning("Failed to fetch mixed image for query '%s': %s", query, exc)  # FIXED: Keep mixed flow robust on image fetch errors.
+        return mixed
 
     # Load custom media from backend-provided secure URLs.
     downloaded_custom_videos = _download_custom_media(
@@ -772,8 +846,13 @@ def _build_video_from_content(
         urls=[str(url).strip() for url in custom_image_urls if str(url).strip()],
         output_dir=CLIPS_DIR,
     ) if isinstance(custom_image_urls, list) else []
-    videos.extend(downloaded_custom_videos)
-    videos.extend(downloaded_custom_images)
+    if content_type == "images":
+        videos.extend(downloaded_custom_images)  # FIXED: Use only image assets in images mode.
+    elif content_type == "clips":
+        videos.extend(downloaded_custom_videos)  # FIXED: Use only clip assets in clips mode.
+    else:
+        videos.extend(downloaded_custom_videos)  # FIXED: Keep both asset types available in mixed/default modes.
+        videos.extend(downloaded_custom_images)  # FIXED: Keep both asset types available in mixed/default modes.
     LOGGER.info(
         "custom_media_download_summary videos=%s images=%s",
         len(downloaded_custom_videos),
@@ -781,9 +860,20 @@ def _build_video_from_content(
     )
 
     # Legacy local media path support for local/dev runs.
+    image_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}  # FIXED: Restrict local media by content type.
+    video_exts = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}  # FIXED: Restrict local media by content type.
     if user_media_paths and isinstance(user_media_paths, list):
         for media_path in user_media_paths:
             path_obj = Path(media_path)
+            if not path_obj.exists():
+                continue
+            suffix = path_obj.suffix.lower()
+            if content_type == "images" and suffix not in image_exts:
+                continue  # FIXED: Reject non-image local media in images mode.
+            if content_type == "clips" and suffix not in video_exts:
+                continue  # FIXED: Reject non-video local media in clips mode.
+            if content_type in {"mixed", ""} and suffix not in image_exts.union(video_exts):
+                continue  # FIXED: Keep mixed mode limited to supported image/video assets.
             if path_obj.exists():
                 videos.append(path_obj)
         LOGGER.info("Loaded %s legacy local user media clips", len(videos))
@@ -793,64 +883,19 @@ def _build_video_from_content(
 
     if needed_clips > 0:
         remaining_queries = scene_queries[len(videos):]
-        from youtube_ai_automation.services.media_service import fetch_media
         if content_type == "images":
-            LOGGER.info("Media mode 'images': Downloading stock images")
-            from youtube_ai_automation.image_fetcher import fetch_images
-            for idx, query in enumerate(remaining_queries, start=1):
-                try:
-                    # fetch 1 image per scene
-                    imgs = fetch_images(
-                        query=query,
-                        output_dir=CLIPS_DIR,
-                        count=1,
-                        pexels_key=PEXELS_API_KEY,
-                        pixabay_key=PIXABAY_API_KEY,
-                    )
-                    if imgs:
-                        videos.extend(imgs)
-                except Exception as e:
-                    LOGGER.warning(f"Failed to fetch image for query '{query}': {e}")
+            LOGGER.info("Media mode 'images': Downloading stock images only")  # FIXED: Enforce image-only stock retrieval.
+            media_files = fetch_images_for_all_scenes(remaining_queries, CLIPS_DIR)  # FIXED: Dispatch images mode to image-only downloader.
+        elif content_type == "clips":
+            LOGGER.info("Media mode 'clips': Downloading stock clips only")  # FIXED: Enforce clips-only stock retrieval.
+            media_files = download_scene_videos_for_all_scenes(remaining_queries, CLIPS_DIR)  # FIXED: Dispatch clips mode to video-only downloader.
         elif content_type == "mixed":
-            LOGGER.info("Media mode 'mixed': Downloading video and image clips")
-            from youtube_ai_automation.image_fetcher import fetch_images
-            initial_video_count = len(videos)
-            for idx, query in enumerate(remaining_queries, start=1):
-                try:
-                    # Intro (1st scene) -> Video, Explanation (Middle scenes) -> Images, Highlights (Last scene) -> Video
-                    # Adjust idx relative to total queries to keep intro/outro logic intact
-                    global_idx = initial_video_count + idx
-                    if global_idx == 1 or global_idx == len(scene_queries):
-                        clips = download_scene_videos(
-                            scenes=[query],
-                            output_dir=CLIPS_DIR,
-                            pexels_key=PEXELS_API_KEY,
-                            pexels_keys=PEXELS_API_KEYS,
-                            pixabay_key=PIXABAY_API_KEY,
-                            pixabay_keys=PIXABAY_API_KEYS,
-                            scene_duration=scene_duration,
-                            min_resolution=720,
-                            used_clips_file=_runtime_used_clips_file(USED_CLIPS_FILE),
-                            clips_per_scene_min=1,
-                            clips_per_scene_max=1,
-                            job_id=str(os.getenv("JOB_ID", "")).strip(),
-                        )
-                        videos.extend(clips)
-                    else:
-                        imgs = fetch_images(
-                            query=query,
-                            output_dir=CLIPS_DIR,
-                            count=1,
-                            pexels_key=PEXELS_API_KEY,
-                            pixabay_key=PIXABAY_API_KEY,
-                        )
-                        if imgs:
-                            videos.extend(imgs)
-                except Exception as e:
-                    LOGGER.warning(f"Failed to fetch mixed media for query '{query}': {e}")
+            LOGGER.info("Media mode 'mixed': Alternating clip/image by scene")  # FIXED: Enforce true mixed alternation.
+            media_files = _fetch_mixed_media(remaining_queries, CLIPS_DIR)  # FIXED: Dispatch mixed mode to alternating clip/image fetcher.
         else:
-            LOGGER.info("Media mode 'clips': Downloading stock videos via MediaService")
-            videos.extend(fetch_media(remaining_queries, CLIPS_DIR, PEXELS_API_KEY, PIXABAY_API_KEY, use_images=False))
+            LOGGER.info("Media mode '%s' is unknown. Falling back to mixed alternation", content_type)  # FIXED: Default unknown mode to mixed for safer media diversity.
+            media_files = _fetch_mixed_media(remaining_queries, CLIPS_DIR)  # FIXED: Apply mixed-mode fallback instead of clips-only fallback.
+        videos.extend(media_files)  # FIXED: Append fetched media from the selected mode dispatcher.
 
     LOGGER.info("Prepared %s media clips", len(videos))
 
@@ -1141,6 +1186,16 @@ def _extract_target_duration(video_config: dict, payload: dict | None = None) ->
     return max(15, min(60, target))
 
 
+def _script_word_budget_bounds(target_duration: int) -> tuple[int, int, int]:
+    bounded_target = max(15, min(60, int(target_duration)))  # FIXED: Keep duration budget constrained to supported Shorts target range.
+    target_words = int(round(bounded_target * 2.8))  # FIXED: Use conservative Gemini native audio speaking rate for target word count.
+    hard_cap_words = int(math.floor(bounded_target * 3.0))  # FIXED: Enforce absolute upper word cap for TTS input.
+    min_words = int(math.ceil(max(1, bounded_target - 10) * 2.5))  # FIXED: Enforce lower floor matching [T-10s] minimum duration window.
+    if min_words > hard_cap_words:
+        min_words = hard_cap_words  # FIXED: Guard against inverted bounds under edge durations.
+    return min_words, target_words, hard_cap_words
+
+
 def _build_section_scripts(
     base_script: str,
     topic: str,
@@ -1239,9 +1294,9 @@ def _build_section_scripts(
 
 
 def estimate_audio_duration(script: str) -> float:
-    """Estimate TTS audio length from word count at 3.6 WPS (Gemini Flash)."""
+    """Estimate TTS audio length from word count at 2.8 WPS (conservative Gemini native audio rate)."""  # FIXED: Align duration estimation with conservative narration pacing.
     words = max(1, len(str(script or "").split()))
-    return round(words / 3.6, 2)
+    return round(words / 2.8, 2)  # FIXED: Use 2.8 WPS baseline for duration control calculations.
 
 
 def get_audio_duration_seconds(audio_path: Path) -> float:
@@ -1475,11 +1530,12 @@ def run_prepared_pipeline(
         raise ValueError("videoConfig.customImageUrls must be an array when provided.")
 
     target_duration = _extract_target_duration(video_config, payload)
-    # Allow extra lexical headroom (+10s) because TTS pace can be faster than 3.6 WPS.
-    # This prevents frequent under-length audio (e.g., 40-45s for a 60s target).
-    hard_max_words = int(min(70, target_duration + 10) * WORDS_PER_SECOND)
-    # Hard cap early so oversized generated scripts don't start at ~70s for a 60s request.
-    script_text = _enforce_word_cap(script_text, hard_max_words)
+    min_words, target_words, hard_max_words = _script_word_budget_bounds(target_duration)  # FIXED: Derive strict [min,target,hard-cap] script word budget from requested duration.
+    script_text = _enforce_word_cap(script_text, hard_max_words)  # FIXED: Prevent over-budget scripts from reaching TTS.
+    if len(script_text.split()) < min_words:
+        script_text = expand_meaningfully(script_text, min_words - len(script_text.split()))  # FIXED: Expand under-budget scripts before TTS to protect lower duration bound.
+        script_text = _enforce_word_cap(script_text, hard_max_words)  # FIXED: Re-apply hard cap after expansion.
+    _log_job_stage(payload, "audio", f"word_budget min={min_words} target={target_words} hard_cap={hard_max_words} actual={len(script_text.split())}")  # FIXED: Trace script budget compliance before TTS.
     cta_enabled = bool(video_config.get("ctaEnabled", video_config.get("enableCTA", False)))
     recap_enabled = bool(video_config.get("recapEnabled", False))
     story_mode = bool(video_config.get("storyMode", False))
@@ -1492,8 +1548,17 @@ def run_prepared_pipeline(
     if not voice_name:
         voice_name = DEFAULT_VOICE
     voice_rate = str(video_config.get("voiceRate", "") or "").strip()
-    font_style = str(video_config.get("templateConfig", {}).get("fontStyle", "Anton")).strip() or "Anton"
-    subtitle_color = str(video_config.get("templateConfig", {}).get("subtitleColor", "#FFFFFF")).strip() or "#FFFFFF"
+    template_config = video_config.get("templateConfig", {}) if isinstance(video_config.get("templateConfig"), dict) else {}
+    font_style = str(template_config.get("fontStyle", "Anton")).strip() or "Anton"
+    subtitle_color = str(template_config.get("subtitleColor", "#FFFFFF")).strip() or "#FFFFFF"
+    caption_position = str(template_config.get("captionPosition", "bottom")).strip().lower() or "bottom"
+    if caption_position not in {"top", "middle", "bottom"}:
+        caption_position = "bottom"
+    try:
+        max_words_per_caption = int(template_config.get("maxWordsPerCaption", 4) or 4)
+    except Exception:
+        max_words_per_caption = 4
+    max_words_per_caption = max(1, min(8, max_words_per_caption))
 
     best_script = _enforce_word_cap(script_text, hard_max_words)
     last_valid_script = script_text
@@ -1644,67 +1709,28 @@ def run_prepared_pipeline(
     actual_audio_seconds = 0.0
     audio_retry_count = 0
     audio_failed = False
-    best_audio_path: Path | None = None
-    best_audio_seconds = 0.0
-    allowed_drift_seconds = 10.0
-    min_acceptable_duration = max(50.0, float(target_duration) - allowed_drift_seconds)
-    max_acceptable_duration = min(70.0, float(target_duration) + allowed_drift_seconds)
-    preferred_target_seconds = min(float(target_duration), 55.0)
+    min_acceptable_duration = max(1.0, float(target_duration) - 10.0)  # FIXED: Enforce lower duration bound at T-10 seconds.
     current_script = str(best_package["script"]).strip()
 
     try:
-        candidate_output = output_dir / "voice_full_attempt_1.wav"
-        candidate_path, _ = generate_voice(
+        final_audio_path, actual_audio_seconds, adjusted_script, duration_action, audio_retry_count = generate_voice_with_duration_control(  # FIXED: Use one deterministic duration-control flow (generate once, speed-up once, expand-only retries).
             script=current_script,
             voice=voice_name,
+            output_path=output_dir / "voice_full.wav",
+            target_seconds=float(target_duration),
+            min_seconds=min_acceptable_duration,
             rate=voice_rate,
-            output_path=candidate_output,
-            rotate_profile=False,
+            min_words=min_words,
+            hard_cap_words=hard_max_words,
+            max_expand_retries=2,
         )
-        candidate_seconds = get_audio_duration_seconds(candidate_path)
-        if candidate_seconds <= 0:
-            candidate_seconds = estimate_audio_duration(current_script)
-        drift_from_target = candidate_seconds - float(target_duration)
-        _log_job_stage(
-            payload,
-            "audio",
-            f"audio_attempt=1 actual={candidate_seconds:.2f}s estimated={estimate_audio_duration(current_script):.2f}s target={target_duration}s drift={drift_from_target:.2f}s",
-        )
-        best_audio_path = candidate_path
-        best_audio_seconds = candidate_seconds
-
-        if not (min_acceptable_duration <= candidate_seconds <= max_acceptable_duration):
-            normalize_target = max(min_acceptable_duration, min(preferred_target_seconds, max_acceptable_duration))
-            normalized_path = output_dir / "voice_full_normalized.wav"
-            normalized_seconds = normalize_audio_duration_with_ffmpeg(
-                input_path=candidate_path,
-                output_path=normalized_path,
-                target_seconds=normalize_target,
-            )
-            if normalized_seconds > 0:
-                best_audio_path = normalized_path
-                best_audio_seconds = normalized_seconds
-                audio_retry_count = 1
-                _log_job_stage(
-                    payload,
-                    "audio",
-                    f"audio_speed_adjusted actual={normalized_seconds:.2f}s target={normalize_target:.2f}s window=[{min_acceptable_duration:.2f}, {max_acceptable_duration:.2f}]",
-                )
+        full_audio_path = final_audio_path  # FIXED: Persist duration-controlled audio output path.
+        best_package["script"] = adjusted_script  # FIXED: Keep subtitle/script text aligned with any expansion retries used for short audio.
+        _log_job_stage(payload, "audio", f"[DURATION_CHECK] target={target_duration}s actual={actual_audio_seconds:.2f}s action={duration_action}")  # FIXED: Emit required duration action trace.
     except Exception as exc:
         audio_failed = True
         last_errors.append(f"audio_generation_error:{str(exc)[:160]}")
         _log_job_stage(payload, "audio", f"audio generation failed: {str(exc)[:200]}", level="warning")
-
-    if not audio_failed and best_audio_path is not None:
-        final_audio_path = output_dir / "voice_full.wav"
-        try:
-            if best_audio_path != final_audio_path:
-                final_audio_path.write_bytes(best_audio_path.read_bytes())
-            full_audio_path = final_audio_path
-            actual_audio_seconds = best_audio_seconds
-        except Exception as exc:
-            audio_failed = True
-            last_errors.append(f"audio_finalize_error:{str(exc)[:120]}")
 
     if full_audio_path is not None:
         created.append(full_audio_path)
@@ -1759,11 +1785,12 @@ def run_prepared_pipeline(
         script=best_package["script"],
         estimated_duration_seconds=target_line_total,
         subtitle_path=SUBTITLE_PATH,
-        max_words=4,
+        max_words=max_words_per_caption,
         highlight_words=_extract_highlight_words(topic, best_package["sections"].get("hook", "")),
         line_mode=True,
         font_style=font_style,
         subtitle_color=subtitle_color,
+        caption_position=caption_position,
     )
 
     sectionAudio = {
@@ -1792,6 +1819,8 @@ def run_prepared_pipeline(
             "timed": timed_lines,
             "font": font_style,
             "color": subtitle_color,
+            "position": caption_position,
+            "maxWordsPerCaption": max_words_per_caption,
         },
         "hashtags": [str(tag).strip() for tag in hashtags if str(tag).strip()],
         "cta": best_package["sections"].get("cta", ""),
@@ -2206,12 +2235,15 @@ def run_full_pipeline(
     LOGGER.info("Stage: Rendering vertical video")
     _log_job_stage(payload, "render", f"render start media_count={len(media_paths)}")
     output_video_path = output_dir / "final_full.mp4"
+    actual_audio_duration = get_audio_duration_seconds(audio_path)  # FIXED: Probe real narration duration for exact audio-visual sync.
+    if actual_audio_duration <= 0:
+        actual_audio_duration = max(1.0, target_duration)  # FIXED: Fall back safely only when audio probing fails.
     render_vertical_video(
         media_paths=media_paths,
         audio_path=audio_path,
         subtitle_path=subtitle_path,
         output_path=output_video_path,
-        target_duration_seconds=max(1.0, target_duration),
+        target_duration_seconds=max(1.0, actual_audio_duration),  # FIXED: Drive render timeline from actual audio length, not requested duration.
     )
     LOGGER.info("Video rendered successfully: %s", output_video_path)
     _log_job_stage(payload, "render", f"render completed video={output_video_path}")
@@ -2265,7 +2297,17 @@ def run_full_pipeline(
             subtitle_path=subtitle_path,
             output_video_path=output_video_path,
         )
-        LOGGER.info("Stage: Post-upload cleanup completed (local artifacts deleted)")
+        for cleanup_dir in [
+            CLIPS_DIR / "clips",
+            CLIPS_DIR / "images",
+            CLIPS_DIR / "stock_video",
+            CLIPS_DIR / "stock_image",
+            CLIPS_DIR / "full_mode",
+            CLIPS_DIR / "orchestrated",
+        ]:
+            if cleanup_dir.exists():
+                shutil.rmtree(cleanup_dir, ignore_errors=True)  # FIXED: Remove per-job media subdirectories after confirmed successful upload.
+        LOGGER.info("[CLEANUP] All media files deleted after successful upload.")  # FIXED: Emit explicit cleanup confirmation for operations monitoring.
     else:
         LOGGER.info("Stage: Post-upload cleanup skipped (artifacts retained)")
 

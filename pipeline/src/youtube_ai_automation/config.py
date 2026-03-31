@@ -4,9 +4,13 @@ Load values from environment variables so secrets stay out of source code.
 """
 
 from pathlib import Path
+import logging
 import os
 
 from dotenv import load_dotenv
+
+
+LOGGER = logging.getLogger("youtube_ai_automation.config")
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -133,6 +137,11 @@ STRICT_SHORTS_VALIDATION = os.getenv("STRICT_SHORTS_VALIDATION", "false").strip(
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_ALLOWED_CHAT_ID = os.getenv("TELEGRAM_ALLOWED_CHAT_ID", "").strip()
+
+REQUIRED_SECRETS = ["GEMINI_API_KEY", "WEBHOOK_SECRET", "ENCRYPTION_KEY"]  # FIXED: Define required runtime secrets for security baseline checks.
+for secret in REQUIRED_SECRETS:
+    if not os.getenv(secret, "").strip():
+        LOGGER.critical("[SECURITY] Required secret %s is not set!", secret)  # FIXED: Emit startup critical log when mandatory secret is missing.
 
 # Content defaults.
 DEFAULT_TOPIC = os.getenv("DEFAULT_TOPIC", "")

@@ -16,13 +16,12 @@ if (!ENCRYPTION_KEY) {
 }
 
 // Ensure the key is exactly 32 bytes (256 bits) long.
+if (isProduction && ENCRYPTION_KEY.length !== 32) {
+  throw new Error('ENCRYPTION_KEY must be exactly 32 characters in production');
+}
 if (ENCRYPTION_KEY.length !== 32) {
-  if (isProduction) {
-    throw new Error('ENCRYPTION_KEY must be exactly 32 bytes/characters long for aes-256-cbc');
-  } else {
-    console.warn('⚠️ ENCRYPTION_KEY must be exactly 32 bytes. Padding/truncating for dev mode.');
-    ENCRYPTION_KEY = ENCRYPTION_KEY.padEnd(32, '0').substring(0, 32);
-  }
+  console.warn('⚠️ ENCRYPTION_KEY must be exactly 32 bytes. Padding/truncating for dev mode.');
+  ENCRYPTION_KEY = ENCRYPTION_KEY.padEnd(32, '0').substring(0, 32);
 }
 
 const IV_LENGTH = 16;

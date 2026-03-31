@@ -36,7 +36,7 @@ def _decrypt_env_value(raw: str, encryption_key: str) -> str | None:
         encrypted_data = bytes.fromhex(parts[1])
         key_bytes = encryption_key.encode("utf-8")[:32]
         if len(key_bytes) < 32:
-            key_bytes = key_bytes.ljust(32, b"\0")
+            key_bytes = key_bytes.ljust(32, b"0")
         cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
         decryptor = cipher.decryptor()
         decrypted_padded = decryptor.update(encrypted_data) + decryptor.finalize()
@@ -83,6 +83,8 @@ def _get_authenticated_service(client_secret_file: str, scopes: list[str], token
     if token_json_payload:
         try:
             parsed = json.loads(token_json_payload)
+            if isinstance(parsed, dict) and "token" not in parsed and parsed.get("access_token"):  # FIXED: Accept backend payloads that use access_token naming.
+                parsed["token"] = parsed.get("access_token")  # FIXED: Normalize access_token to token for Google credentials parser.
             creds = Credentials.from_authorized_user_info(parsed, scopes=scopes)
 
             # Refresh if expired — the JSON includes the refresh_token for this specific channel
@@ -94,6 +96,7 @@ def _get_authenticated_service(client_secret_file: str, scopes: list[str], token
                 # Overwrite any stale cached file so subsequent calls in this run use the right channel
                 token_path.parent.mkdir(parents=True, exist_ok=True)
                 token_path.write_text(creds.to_json(), encoding="utf-8")
+                LOGGER.info("Uploading to channel from token: %s", (creds.token or "")[:20])  # FIXED: Emit selected-channel token fingerprint for operator verification.
                 LOGGER.info("Using channel-specific OAuth credentials from env (YOUTUBE_TOKEN_JSON_ENCRYPTED).")
                 return build("youtube", "v3", credentials=creds)
             else:

@@ -29,6 +29,11 @@ export const ensureValidYouTubeToken = async (
 };
 
 export const getValidYouTubeToken = async (userId: string, channelId: string): Promise<string> => {
+  const normalizedChannelId = typeof channelId === 'string' ? channelId.trim() : ''; // FIXED: Normalize input channelId before any lookup.
+  if (!normalizedChannelId) { // FIXED: Guard against empty channelId to avoid accidental fallback or wrong-channel lookup.
+    throw new Error('YouTube channelId is required for token retrieval'); // FIXED: Provide clear operator-facing error for missing channelId.
+  }
+
   const user = await User.findById(userId);
 
   if (!user) {
@@ -39,14 +44,14 @@ export const getValidYouTubeToken = async (userId: string, channelId: string): P
     throw new Error('User has not connected their YouTube account');
   }
 
-  const channelIndex = user.youtubeChannels.findIndex(c => c.channelId === channelId);
+  const channelIndex = user.youtubeChannels.findIndex((c) => c.channelId === normalizedChannelId); // FIXED: Match channelId using strict equality against normalized exact id.
   if (channelIndex === -1) {
-    throw new Error(`YouTube channel with ID ${channelId} not found`);
+    throw new Error(`YouTube channel with ID ${normalizedChannelId} not found for this user`); // FIXED: Return explicit mismatch error when channel is not in user's channel list.
   }
 
   const channel = user.youtubeChannels[channelIndex];
   if (!channel) {
-    throw new Error(`YouTube channel with ID ${channelId} not found`);
+    throw new Error(`YouTube channel with ID ${normalizedChannelId} not found for this user`); // FIXED: Keep error clear and consistent for null-safe channel lookup.
   }
   const { access_token, refresh_token, expiry_date } = channel.tokens;
 
@@ -71,7 +76,7 @@ export const getValidYouTubeToken = async (userId: string, channelId: string): P
     throw new Error('No valid token and no refresh token available');
   }
 
-  const lockKey = `${userId}:${channelId}`;
+  const lockKey = `${userId}:${normalizedChannelId}`; // FIXED: Use normalized channel id in refresh lock key for consistent per-channel locking.
   const existing = refreshLocks.get(lockKey);
   if (existing) {
     return existing;

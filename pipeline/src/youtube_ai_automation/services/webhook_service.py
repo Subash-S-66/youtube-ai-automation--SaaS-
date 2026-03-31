@@ -61,6 +61,7 @@ def send_job_status(
 ) -> None:
     webhook_url = os.getenv("WEBHOOK_URL")
     webhook_secret = os.getenv("WEBHOOK_SECRET")
+    resolved_user_id = os.getenv("USER_ID", "").strip()  # FIXED: Attach runtime user id so backend can enforce webhook job ownership.
 
     if not webhook_url or not job_id:
         return
@@ -78,6 +79,8 @@ def send_job_status(
         "errorMessage": error_message,
         "errorStage": error_stage,
     }
+    if resolved_user_id:
+        payload["userId"] = resolved_user_id  # FIXED: Provide user id for backend ownership verification.
     headers = {"Content-Type": "application/json"}
     if webhook_secret:
         headers["x-webhook-secret"] = webhook_secret
@@ -111,13 +114,18 @@ def send_pipeline_complete(payload: dict) -> None:
     if webhook_secret:
         headers["x-webhook-secret"] = webhook_secret
 
-    LOGGER.info("Sending webhook: %s", payload)
-    print("Sending webhook:", payload)
+    resolved_user_id = os.getenv("USER_ID", "").strip()  # FIXED: Attach runtime user id for ownership checks on completion webhook.
+    outbound_payload = dict(payload or {})
+    if resolved_user_id and not str(outbound_payload.get("userId", "")).strip():
+        outbound_payload["userId"] = resolved_user_id  # FIXED: Preserve caller payload while ensuring userId presence.
+
+    LOGGER.info("Sending webhook: %s", outbound_payload)
+    print("Sending webhook:", outbound_payload)
 
     last_error: Exception | None = None
     for candidate_url in _normalize_pipeline_complete_candidates(webhook_url):
         try:
-            send_with_retry(candidate_url, payload, headers)
+            send_with_retry(candidate_url, outbound_payload, headers)
             return
         except Exception as exc:
             last_error = exc

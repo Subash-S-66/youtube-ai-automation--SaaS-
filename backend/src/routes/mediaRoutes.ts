@@ -2,6 +2,7 @@ import express, { Request } from 'express';
 import { protect } from '../middleware/authMiddleware';
 import { uploadMedia, getMedia, getSecureMediaFile, deleteMedia, updateMedia, reorderMedia, reorderMixedMedia, getSequence, addToSequence, reorderSequence, deleteSequenceItem } from '../controllers/mediaController';
 import multer, { FileFilterCallback } from 'multer';
+import { mediaUploadLimiter } from '../middleware/rateLimiter';
 
 const router = express.Router();
 
@@ -43,7 +44,7 @@ router.get('/file/:filename', getSecureMediaFile);
 // Protect all routes except secure media file fetch (auth handled in controller)
 router.use(protect);
 
-router.post('/upload', upload.single('file'), uploadMedia);
+router.post('/upload', mediaUploadLimiter, upload.single('file'), uploadMedia); // FIXED: Apply dedicated upload rate limiting before file processing.
 router.get('/', getMedia);
 router.get('/sequence', getSequence);
 router.post('/sequence', addToSequence);

@@ -1,3 +1,4 @@
+import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 
@@ -17,10 +18,16 @@ export const triggerLocalPipeline = async (
   envVars: Array<{ name: string; value: string }>,
   callbacks?: LocalPipelineCallbacks
 ): Promise<LocalPipelineResult> => {
-  const pythonCmd = process.env.PIPELINE_PYTHON_CMD || 'python';
   const repoRoot = path.resolve(__dirname, '../../..');
   const pipelineDir = path.join(repoRoot, 'pipeline');
   const pipelineSrc = path.join(pipelineDir, 'src');
+  const venvPythonWin = path.join(repoRoot, '.venv', 'Scripts', 'python.exe');
+  const venvPythonUnix = path.join(repoRoot, '.venv', 'bin', 'python');
+  const pythonCmd =
+    process.env.PIPELINE_PYTHON_CMD ||
+    (fs.existsSync(venvPythonWin)
+      ? venvPythonWin
+      : (fs.existsSync(venvPythonUnix) ? venvPythonUnix : 'python'));
 
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const entry of envVars) {

@@ -50,6 +50,36 @@ def _derive_target_duration(payload: dict[str, Any]) -> int:
     return 60
 
 
+def _resolve_content_type(payload: dict[str, Any]) -> str:
+    raw = ""
+    if isinstance(payload, dict):
+        if isinstance(payload.get("videoConfig"), dict):
+            cfg = payload.get("videoConfig", {})
+            raw = cfg.get("contentType") or cfg.get("content_type") or ""
+            if not raw and isinstance(cfg.get("useImages"), bool):
+                raw = "images" if cfg.get("useImages") else "clips"
+        if not raw and isinstance(payload.get("input"), dict):
+            options = payload.get("input", {}).get("options")
+            if isinstance(options, dict):
+                raw = options.get("contentType") or options.get("content_type") or ""
+        if not raw:
+            raw = payload.get("contentType") or payload.get("content_type") or ""
+        if not raw:
+            settings_env = os.getenv("SETTINGS", "")
+            if settings_env:
+                try:
+                    settings = json.loads(settings_env)
+                except Exception:
+                    settings = {}
+                if isinstance(settings, dict):
+                    raw = settings.get("contentType") or settings.get("content_type") or ""
+
+    normalized = str(raw or "clips").strip().lower()
+    if normalized in {"clips", "images", "mixed"}:
+        return normalized
+    return "clips"
+
+
 def _extract_scenes(payload: dict[str, Any], script_lines: list[str]) -> list[str]:
     scenes: list[str] = []
     # from metadata.searchQueries if present
@@ -83,6 +113,7 @@ def run_orchestrated_pipeline(
         logger.debug_log("orchestrator", f"payload={json.dumps(payload, ensure_ascii=False)[:4000]}")
 
     target_duration = _derive_target_duration(payload)
+    content_type = _resolve_content_type(payload)
     output_dir = OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -126,6 +157,7 @@ def run_orchestrated_pipeline(
         warnings.append("timeout_guard_triggered_after_audio")
 
     scenes = _extract_scenes(payload, script_result.lines)
+    logger.info("media", f"content_type={content_type}")
     if timeout_guard():
         media_result = MediaStageResult(media_paths=[], warnings=["timeout_guard_skipped_media"])
     else:
@@ -139,6 +171,7 @@ def run_orchestrated_pipeline(
                 pixabay_key=PIXABAY_API_KEY or "",
                 target_duration=float(target_duration),
                 logger=logger,
+                content_type=content_type,
             ),
             lambda exc: MediaStageResult(media_paths=[], warnings=[f"media_stage_exception:{str(exc)[:140]}"]),
             logger,

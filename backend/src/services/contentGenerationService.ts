@@ -214,21 +214,26 @@ ${ctaEnabled ? `• CTA (last line): ~${ctaWords} words — a direct action call
 ${variationNote}
 ${storyNote}
 
-SCRIPT QUALITY RULES (critical — these determine video quality):
-1. Write like a PREMIUM documentary voiceover, not a YouTuber. Every line sounds cinematic when read aloud.
-2. Split into SHORT lines — one sentence per line, max 15 words per line.
-3. BANNED OPENERS (never use these):
-   - "Did you know…", "What if I told you…", "Have you ever wondered…"
-   - "Here are X things…", "Here's why…", "Here's what…", "Let me tell you…"
-   - "In this video…", "Welcome back…", "Today we…", "Want to know…"
-4. GREAT OPENERS (use these patterns):
-   - Bold claim: "This single discovery just changed everything we knew about…"
-   - Dramatic fact: "In under three seconds, this molecule can rewrite your DNA."
-   - Scene-setter: "Twelve thousand feet above the Pacific, something impossible just happened."
-   - Authority: "Scientists spent forty years searching. They finally found it."
-5. NO labels in the script (no "Hook:", "CTA:", "Main:", "Recap:").
-6. Count words: total script must be ${minWords}–${maxWords} words. Expand main body if under. Trim if over.
-7. Use ACTIVE voice. Use SPECIFIC nouns. Replace "things" with real words. Replace "stuff" with detail.
+HOOK RULES (first line of script — most important):
+1. MUST open with one of these patterns:
+  - A jaw-dropping statistic: "In 2024, [specific number] revealed something unexpected."
+  - A named discovery: "The [specific named technology] just proved scientists wrong."
+  - A dramatic reversal: "Everything we thought about [topic] changed in [year]."
+  - A direct challenge: "Most people still don't know [specific fact] about [topic]."
+2. BANNED starters: "Did you know", "What if", "Have you ever", "Here are", "In this video", "Today we", "Welcome back", "Want to know", "Let me tell you".
+3. Max 15 words for the hook line.
+4. Hook must make the viewer feel they are missing critical information.
+
+CONTENT QUALITY RULES:
+1. Write as a confident documentary narrator, not a YouTuber.
+2. Every sentence must contain ONE specific, verifiable fact or detail.
+3. Avoid filler: "amazing", "incredible", "mind-blowing", "you won't believe".
+4. Use active voice. Replace all instances of "things" with specific nouns.
+5. Each sentence: maximum 15 words.
+6. The script must tell a micro-story with: hook -> context -> revelation -> impact.
+7. End WITHOUT a question. End with a powerful declarative statement or call to action.
+8. NO labels in the script (no "Hook:", "CTA:", "Main:", "Recap:").
+9. Count words: total script must be ${minWords}–${maxWords} words. Expand main body if under. Trim if over.
 
 SCENE RULES (cinematic quality):
 - Generate exactly one scene per script line (minimum 5, maximum 12 scenes total).

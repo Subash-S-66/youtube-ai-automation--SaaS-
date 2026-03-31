@@ -5,7 +5,7 @@ import { m, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
-  Play, Activity, Youtube, ListVideo, Clock, FileVideo,
+  Play, Youtube, ListVideo, Clock, FileVideo,
   ShieldAlert, Sparkles, RefreshCw, PenLine, List,
   BookOpen, Mic, Volume2
 } from 'lucide-react';
@@ -14,6 +14,7 @@ import { youtubeService } from '../../services/youtubeService';
 import { promptService } from '../../services/promptService';
 import { pipelineService } from '../../services/pipelineService';
 import { paymentService } from '../../services/paymentService';
+import { scheduleService } from '../../services/scheduleService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 const AppModal = dynamic(() => import('../../components/ui/AppModal'), { ssr: false });
 import { AppModalType } from '../../components/ui/AppModal';
@@ -33,23 +34,159 @@ const AVAILABLE_VOICES = [
   { id: 'Puck', name: 'Puck (Gemini Flash Native)' },
 ];
 
+const DEFAULT_AUTO_UPLOAD_INTERVAL_HOURS = 2;
+const DEFAULT_AUTO_UPLOAD_VIDEOS_PER_INTERVAL = 1;
+
+type InputMode = 'topic' | 'prompt';
+type ContentType = 'clips' | 'images' | 'mixed';
+type CaptionPosition = 'top' | 'middle' | 'bottom';
+
+interface ChannelInputCacheEntry {
+  inputMode?: InputMode;
+  prompt?: string;
+  selectedTopic?: string;
+  customTopic?: string;
+  storyMode?: boolean;
+  storyId?: string;
+  currentPart?: number;
+  storyContext?: string;
+  recapEnabled?: boolean;
+  ctaEnabled?: boolean;
+  duration?: number;
+  contentType?: ContentType;
+  videoCount?: number;
+  selectedVoices?: string[];
+  randomVoice?: boolean;
+  templateFont?: string;
+  templateColor?: string;
+  captionPosition?: CaptionPosition;
+  maxWordsPerCaption?: number;
+  useCustomMedia?: boolean;
+  selectedThumbnailId?: string;
+  scheduleEnabled?: boolean;
+  scheduleDatetime?: string;
+  autoUploadEnabled?: boolean;
+  autoUploadIntervalHours?: number;
+  autoUploadVideosPerInterval?: number;
+}
+
+interface YouTubeChannel {
+  channelId: string;
+  channelName: string;
+  status?: string;
+  isValid?: boolean;
+}
+
+interface DashboardUser {
+  isYoutubeConnected?: boolean;
+  youtubeChannels?: YouTubeChannel[];
+  plan?: string;
+  planFeatures?: {
+    voice_selection?: boolean;
+    scheduling?: boolean;
+    multi_channel?: boolean;
+    story_mode?: boolean;
+    cta?: boolean;
+    format_selection?: boolean;
+    template_customization?: boolean;
+    custom_media?: boolean;
+  };
+  uploadLimitPerDay?: number;
+  uploadLimit?: number;
+  remainingUploads?: number;
+  user?: {
+    plan?: string;
+    templateFont?: string;
+    templateColor?: string;
+    lastChannelInputs?: Record<string, ChannelInputCacheEntry>;
+    lastInputMode?: InputMode;
+    lastPrompt?: string;
+    lastSelectedTopic?: string;
+    lastCustomTopic?: string;
+  };
+}
+
+interface JobRecord {
+  _id: string;
+  status?: string;
+}
+
+interface MediaRecord {
+  _id: string;
+  type: 'video' | 'image' | 'thumbnail' | string;
+  originalName?: string;
+  duration?: number;
+  imageDuration?: number;
+  trimStart?: number;
+  trimEnd?: number;
+}
+
+interface SequenceRecord {
+  _id?: string;
+  media?: MediaRecord | null;
+}
+
+interface AuthMeResponse {
+  data: DashboardUser;
+}
+
+interface JobsResponse {
+  data: JobRecord[];
+}
+
+interface MediaResponse {
+  data: MediaRecord[];
+}
+
+interface SequenceResponse {
+  data: SequenceRecord[];
+}
+
+interface PromptResponse {
+  promptId?: string;
+  gemini_prompt?: string;
+  data?: {
+    promptId?: string;
+    id?: string;
+    gemini_prompt?: string;
+  };
+}
+
+interface PipelineResponse {
+  warning?: string;
+}
+
+interface ApiErrorShape {
+  message?: string;
+  response?: {
+    data?: {
+      message?: string;
+      warning?: string;
+    };
+  };
+}
+
+interface DateTimePickerInput extends HTMLInputElement {
+  showPicker?: () => void;
+}
+
 function Dashboard() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<DashboardUser | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<string>('');
-  const [jobs, setJobs] = useState<any[]>([]);
+  const [, setJobs] = useState<JobRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mediaList, setMediaList] = useState<any[]>([]);
-  const [sequenceItems, setSequenceItems] = useState<any[]>([]);
-  const [channelInputCache, setChannelInputCache] = useState<Record<string, { inputMode?: 'topic' | 'prompt'; prompt?: string; selectedTopic?: string; customTopic?: string }>>({});
+  const [mediaList, setMediaList] = useState<MediaRecord[]>([]);
+  const [sequenceItems, setSequenceItems] = useState<SequenceRecord[]>([]);
+  const [channelInputCache, setChannelInputCache] = useState<Record<string, ChannelInputCacheEntry>>({});
 
   // Persistent Settings
-  const [inputMode, setInputMode] = usePersistentSettings<'topic' | 'prompt'>('clipforge_inputMode', 'prompt');
+  const [inputMode, setInputMode] = usePersistentSettings<InputMode>('clipforge_inputMode', 'prompt');
   const [prompt, setPrompt] = usePersistentSettings<string>('clipforge_prompt', '');
   const [selectedTopic, setSelectedTopic] = usePersistentSettings<string>('clipforge_topic', 'Tech');
   const [customTopic, setCustomTopic] = usePersistentSettings<string>('clipforge_customTopic', '');
 
   const [duration, setDuration] = usePersistentSettings<number>('clipforge_duration', 60);
-  const [contentType, setContentType] = usePersistentSettings<'clips' | 'images' | 'mixed'>('clipforge_contentType', 'mixed');
+  const [contentType, setContentType] = usePersistentSettings<ContentType>('clipforge_contentType', 'mixed');
   const [videoCount, setVideoCount] = usePersistentSettings<number>('clipforge_videoCount', 1);
 
   // Story Mode State
@@ -65,6 +202,8 @@ function Dashboard() {
   const [randomVoice, setRandomVoice] = usePersistentSettings<boolean>('clipforge_randomVoice', true);
   const [templateFont, setTemplateFont] = usePersistentSettings<string>('clipforge_templateFont', 'Arial');
   const [templateColor, setTemplateColor] = usePersistentSettings<string>('clipforge_templateColor', '#FFFFFF');
+  const [captionPosition, setCaptionPosition] = usePersistentSettings<CaptionPosition>('clipforge_captionPosition', 'bottom');
+  const [maxWordsPerCaption, setMaxWordsPerCaption] = usePersistentSettings<number>('clipforge_maxWordsPerCaption', 3);
   const [templateConfigOpen, setTemplateConfigOpen] = usePersistentSettings<boolean>('clipforge_templateConfigOpen', true);
   const [useCustomMedia, setUseCustomMedia] = usePersistentSettings<boolean>('clipforge_useCustomMedia', false);
   const [selectedThumbnailId, setSelectedThumbnailId] = usePersistentSettings<string>('clipforge_selectedThumbnailId', '');
@@ -104,15 +243,178 @@ function Dashboard() {
   const jobStatusRef = useRef<Record<string, string>>({});
   const notificationsPrimedRef = useRef(false);
   const allYouTubeChannels = Array.isArray(user?.youtubeChannels) ? user.youtubeChannels : [];
-  const activeYouTubeChannels = allYouTubeChannels.filter((channel: any) => channel?.status !== 'disabled_due_to_plan');
-  const validYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid !== false);
-  const invalidYouTubeChannels = activeYouTubeChannels.filter((channel: any) => channel?.isValid === false);
+  const activeYouTubeChannels = allYouTubeChannels.filter((channel) => channel?.status !== 'disabled_due_to_plan');
+  const validYouTubeChannels = activeYouTubeChannels.filter((channel) => channel?.isValid !== false);
+  const invalidYouTubeChannels = activeYouTubeChannels.filter((channel) => channel?.isValid === false);
   const selectedChannelInvalid = selectedChannelId
-    ? invalidYouTubeChannels.some((channel: any) => channel?.channelId === selectedChannelId)
+    ? invalidYouTubeChannels.some((channel) => channel?.channelId === selectedChannelId)
     : false;
   const reconnectChannelsToShow = selectedChannelInvalid
-    ? invalidYouTubeChannels.filter((channel: any) => channel?.channelId === selectedChannelId)
+    ? invalidYouTubeChannels.filter((channel) => channel?.channelId === selectedChannelId)
     : (validYouTubeChannels.length === 0 ? invalidYouTubeChannels : []);
+
+  const getCurrentChannelCacheEntry = useCallback((): ChannelInputCacheEntry => ({
+    inputMode,
+    prompt,
+    selectedTopic,
+    customTopic,
+    storyMode,
+    storyId,
+    currentPart,
+    storyContext,
+    recapEnabled,
+    ctaEnabled,
+    duration,
+    contentType,
+    videoCount,
+    selectedVoices,
+    randomVoice,
+    templateFont,
+    templateColor,
+    captionPosition,
+    maxWordsPerCaption,
+    useCustomMedia,
+    selectedThumbnailId,
+    scheduleEnabled,
+    scheduleDatetime,
+    autoUploadEnabled,
+    autoUploadIntervalHours,
+    autoUploadVideosPerInterval,
+  }), [
+    inputMode,
+    prompt,
+    selectedTopic,
+    customTopic,
+    storyMode,
+    storyId,
+    currentPart,
+    storyContext,
+    recapEnabled,
+    ctaEnabled,
+    duration,
+    contentType,
+    videoCount,
+    selectedVoices,
+    randomVoice,
+    templateFont,
+    templateColor,
+    captionPosition,
+    maxWordsPerCaption,
+    useCustomMedia,
+    selectedThumbnailId,
+    scheduleEnabled,
+    scheduleDatetime,
+    autoUploadEnabled,
+    autoUploadIntervalHours,
+    autoUploadVideosPerInterval,
+  ]);
+
+  const applyChannelCache = useCallback((cached?: ChannelInputCacheEntry) => {
+    setInputMode(cached?.inputMode || 'prompt');
+    setPrompt(cached?.prompt ?? '');
+    setSelectedTopic(cached?.selectedTopic || 'Tech');
+    setCustomTopic(cached?.customTopic ?? '');
+
+    setStoryMode(Boolean(cached?.storyMode));
+    setStoryId(cached?.storyId || '');
+    const partCandidate = Number(cached?.currentPart);
+    setCurrentPart(Number.isFinite(partCandidate) && partCandidate > 0 ? Math.floor(partCandidate) : 1);
+    setStoryContext(cached?.storyContext ?? '');
+    setRecapEnabled(Boolean(cached?.recapEnabled));
+    setCtaEnabled(Boolean(cached?.ctaEnabled));
+
+    const durationCandidate = Number(cached?.duration);
+    setDuration(
+      Number.isFinite(durationCandidate)
+        ? Math.min(120, Math.max(15, Math.round(durationCandidate)))
+        : 60
+    );
+    setContentType(cached?.contentType || 'mixed');
+    const videoCountCandidate = Number(cached?.videoCount);
+    setVideoCount(
+      Number.isFinite(videoCountCandidate)
+        ? Math.min(10, Math.max(1, Math.round(videoCountCandidate)))
+        : 1
+    );
+
+    const cachedVoices = Array.isArray(cached?.selectedVoices)
+      ? cached?.selectedVoices.filter(Boolean)
+      : [];
+    setSelectedVoices(cachedVoices.length ? cachedVoices : ['Aoede']);
+    setRandomVoice(Boolean(cached?.randomVoice));
+
+    setTemplateFont(cached?.templateFont || 'Arial');
+    setTemplateColor(cached?.templateColor || '#FFFFFF');
+    setCaptionPosition(cached?.captionPosition || 'bottom');
+    const wordsCandidate = Number(cached?.maxWordsPerCaption);
+    setMaxWordsPerCaption(
+      Number.isFinite(wordsCandidate)
+        ? Math.min(8, Math.max(1, Math.round(wordsCandidate)))
+        : 3
+    );
+    setUseCustomMedia(Boolean(cached?.useCustomMedia));
+    setSelectedThumbnailId(cached?.selectedThumbnailId || '');
+
+    const nextAutoUploadEnabled = Boolean(cached?.autoUploadEnabled);
+    const nextScheduleEnabled = Boolean(cached?.scheduleEnabled) && !nextAutoUploadEnabled;
+    const intervalCandidate = Number(cached?.autoUploadIntervalHours);
+    const videosCandidate = Number(cached?.autoUploadVideosPerInterval);
+
+    setAutoUploadEnabled(nextAutoUploadEnabled);
+    setScheduleEnabled(nextScheduleEnabled);
+    setScheduleDatetime(cached?.scheduleDatetime || '');
+    setAutoUploadIntervalHours(
+      Number.isFinite(intervalCandidate)
+        ? Math.min(24, Math.max(1, intervalCandidate))
+        : DEFAULT_AUTO_UPLOAD_INTERVAL_HOURS
+    );
+    setAutoUploadVideosPerInterval(
+      Number.isFinite(videosCandidate)
+        ? Math.min(10, Math.max(1, videosCandidate))
+        : DEFAULT_AUTO_UPLOAD_VIDEOS_PER_INTERVAL
+    );
+  }, [
+    setInputMode,
+    setPrompt,
+    setSelectedTopic,
+    setCustomTopic,
+    setStoryMode,
+    setStoryId,
+    setCurrentPart,
+    setStoryContext,
+    setRecapEnabled,
+    setCtaEnabled,
+    setDuration,
+    setContentType,
+    setVideoCount,
+    setSelectedVoices,
+    setRandomVoice,
+    setTemplateFont,
+    setTemplateColor,
+    setCaptionPosition,
+    setMaxWordsPerCaption,
+    setUseCustomMedia,
+    setSelectedThumbnailId,
+    setAutoUploadEnabled,
+    setScheduleEnabled,
+    setScheduleDatetime,
+    setAutoUploadIntervalHours,
+    setAutoUploadVideosPerInterval,
+  ]);
+
+  const switchChannel = useCallback((nextChannelId: string) => {
+    const currentId = selectedChannelId;
+    const nextCache = { ...channelInputCache };
+
+    if (currentId) {
+      nextCache[currentId] = getCurrentChannelCacheEntry();
+    }
+
+    setChannelInputCache(nextCache);
+    setSelectedChannelId(nextChannelId);
+    applyChannelCache(nextCache[nextChannelId]);
+    userService.updateSettings({ lastChannelInputs: nextCache }).catch(() => {});
+  }, [selectedChannelId, channelInputCache, getCurrentChannelCacheEntry, applyChannelCache]);
 
   useEffect(() => {
     if (searchParams.get('payment') === 'success') {
@@ -122,10 +424,10 @@ function Dashboard() {
         try {
           const params = Object.fromEntries(searchParams.entries());
           await paymentService.confirmPayment(params as Record<string, string>);
-          const userData = await authService.getMe();
+          const userData = await authService.getMe() as AuthMeResponse;
           setUser({ ...userData.data, ...userData.data.user });
           setMessage({ text: 'Subscription upgraded successfully! Your limits have been updated.', type: 'success' });
-        } catch (err) {
+        } catch {
           setMessage({ text: 'Payment received, but verification is pending. Please refresh in a minute or contact support.', type: 'warning' });
         } finally {
           router.replace('/dashboard');
@@ -145,7 +447,7 @@ function Dashboard() {
         ]);
 
         if (userResult.status === 'fulfilled') {
-          const userData = userResult.value;
+          const userData = userResult.value as AuthMeResponse;
           setUser({ ...userData.data, ...userData.data.user });
 
           if (userData.data?.user?.templateFont) {
@@ -171,33 +473,31 @@ function Dashboard() {
           }
 
           const initialValidChannel = Array.isArray(userData.data?.youtubeChannels)
-            ? userData.data.youtubeChannels.find((channel: any) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
+            ? userData.data.youtubeChannels.find((channel) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
             : null;
           const initialChannelId = initialValidChannel?.channelId || '';
           if (initialChannelId) {
             setSelectedChannelId(initialChannelId);
-          }
-          if (initialChannelId && userData.data?.user?.lastChannelInputs?.[initialChannelId]) {
-            const cached = userData.data.user.lastChannelInputs[initialChannelId];
-            if (cached.inputMode) setInputMode(cached.inputMode);
-            if (cached.prompt !== undefined) setPrompt(cached.prompt);
-            if (cached.selectedTopic) setSelectedTopic(cached.selectedTopic);
-            if (cached.customTopic !== undefined) setCustomTopic(cached.customTopic);
+            const cached = userData.data?.user?.lastChannelInputs?.[initialChannelId];
+            applyChannelCache(cached);
           }
         } else {
           throw userResult.reason; // Rethrow to handle auth error below
         }
 
         if (jobsResult.status === 'fulfilled') {
-          setJobs(jobsResult.value.data);
+          const jobsData = jobsResult.value as JobsResponse;
+          setJobs(jobsData.data || []);
         }
 
         if (mediaResult.status === 'fulfilled') {
-          setMediaList(mediaResult.value.data || []);
+          const mediaData = mediaResult.value as MediaResponse;
+          setMediaList(mediaData.data || []);
         }
 
         if (sequenceResult.status === 'fulfilled') {
-          setSequenceItems(sequenceResult.value.data || []);
+          const sequenceData = sequenceResult.value as SequenceResponse;
+          setSequenceItems(sequenceData.data || []);
         } else {
           setSequenceItems([]);
         }
@@ -241,69 +541,103 @@ function Dashboard() {
       }
     };
     fetchData();
-  }, []);
+  }, [setCustomTopic, setInputMode, setPrompt, setSelectedTopic, setTemplateColor, setTemplateFont, applyChannelCache]);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (user) {
-        interval = setInterval(async () => {
-            try {
-                const jobsData = await pipelineService.getJobs();
-
-            const currentJobs = jobsData.data || [];
-            const nextStatusMap: Record<string, string> = {};
-            for (const job of currentJobs) {
-              nextStatusMap[job._id] = String(job.status || '');
-            }
-
-            if (!notificationsPrimedRef.current) {
-              // Prime with current snapshot so old completed/failed jobs don't trigger popups.
-              jobStatusRef.current = nextStatusMap;
-              notificationsPrimedRef.current = true;
-              setJobs(currentJobs);
-              return;
-            }
-
-            const prevStatusMap = jobStatusRef.current;
-            for (const job of currentJobs) {
-              const prevStatus = prevStatusMap[job._id] || '';
-              const currStatus = String(job.status || '');
-              const wasActive = prevStatus === 'pending' || prevStatus === 'processing' || prevStatus === 'queued' || prevStatus === 'running';
-              const isSuccess = currStatus === 'success' || currStatus === 'completed';
-              const isFailed = currStatus === 'failed';
-
-              // Notify only on real state transition from active -> terminal.
-              if (wasActive && (isSuccess || isFailed)) {
-                if (isSuccess) {
-                  setModalConfig({
-                    isOpen: true,
-                    title: 'Job Completed',
-                    description: 'Your video generation and upload has completed successfully!',
-                    type: 'success',
-                    confirmText: 'Awesome',
-                    onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
-                  });
-                } else {
-                  setModalConfig({
-                    isOpen: true,
-                    title: 'Job Failed',
-                    description: 'A background job failed to complete. You can view the logs in your history.',
-                    type: 'error',
-                    confirmText: 'Dismiss',
-                    onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
-                  });
-                }
-              }
-            }
-
-            jobStatusRef.current = nextStatusMap;
-            setJobs(currentJobs);
-            } catch (err) {
-                // Silently ignore polling errors
-            }
-        }, 5000);
+    if (!user) {
+      return;
     }
-    return () => clearInterval(interval);
+
+    let cancelled = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let pollingDelayMs = 5000; // FIXED: Start polling at 5s.
+
+    const activeStatuses = new Set(['pending', 'processing', 'queued', 'running']);
+    const terminalStatuses = new Set(['success', 'completed', 'failed', 'cancelled', 'canceled']);
+
+    const scheduleNextPoll = () => {
+      if (cancelled) {
+        return;
+      }
+      timeoutHandle = setTimeout(pollJobs, pollingDelayMs);
+    };
+
+    const pollJobs = async () => {
+      try {
+        const jobsData = await pipelineService.getJobs() as JobsResponse;
+        const currentJobs = jobsData.data || [];
+        const nextStatusMap: Record<string, string> = {};
+
+        for (const job of currentJobs) {
+          nextStatusMap[job._id] = String(job.status || '');
+        }
+
+        if (!notificationsPrimedRef.current) {
+          // Prime with current snapshot so old completed/failed jobs don't trigger popups.
+          jobStatusRef.current = nextStatusMap;
+          notificationsPrimedRef.current = true;
+          setJobs(currentJobs);
+          pollingDelayMs = 5000; // FIXED: Keep fast poll cadence after initial prime.
+          scheduleNextPoll();
+          return;
+        }
+
+        const prevStatusMap = jobStatusRef.current;
+        let resetBackoff = false;
+
+        for (const job of currentJobs) {
+          const prevStatus = (prevStatusMap[job._id] || '').toLowerCase();
+          const currStatus = String(job.status || '').toLowerCase();
+          const wasActive = activeStatuses.has(prevStatus);
+          const isTerminal = terminalStatuses.has(currStatus);
+          const isSuccess = currStatus === 'success' || currStatus === 'completed';
+          const isFailed = currStatus === 'failed';
+
+          // Notify only on real state transition from active -> terminal.
+          if (wasActive && isTerminal) {
+            resetBackoff = true; // FIXED: Reset polling delay on active->terminal transitions.
+            if (isSuccess) {
+              setModalConfig({
+                isOpen: true,
+                title: 'Job Completed',
+                description: 'Your video generation and upload has completed successfully!',
+                type: 'success',
+                confirmText: 'Awesome',
+                onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+              });
+            } else if (isFailed) {
+              setModalConfig({
+                isOpen: true,
+                title: 'Job Failed',
+                description: 'A background job failed to complete. You can view the logs in your history.',
+                type: 'error',
+                confirmText: 'Dismiss',
+                onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+              });
+            }
+          }
+        }
+
+        jobStatusRef.current = nextStatusMap;
+        setJobs(currentJobs);
+
+        pollingDelayMs = resetBackoff ? 5000 : Math.min(pollingDelayMs + 2000, 30000); // FIXED: Exponential-style backoff with +2s steps capped at 30s.
+      } catch {
+        // Silently ignore polling errors and back off to avoid request storms.
+        pollingDelayMs = Math.min(pollingDelayMs + 2000, 30000); // FIXED: Back off on polling failures.
+      }
+
+      scheduleNextPoll();
+    };
+
+    void pollJobs();
+
+    return () => {
+      cancelled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    };
   }, [user]);
 
   useEffect(() => {
@@ -319,11 +653,15 @@ function Dashboard() {
       }
       return;
     }
-    const isSelectedValid = validYouTubeChannels.some((channel: any) => channel.channelId === selectedChannelId);
+    const isSelectedValid = validYouTubeChannels.some((channel) => channel.channelId === selectedChannelId);
     if (!isSelectedValid) {
-      setSelectedChannelId(validYouTubeChannels[0]?.channelId || '');
+      const fallbackChannelId = validYouTubeChannels[0]?.channelId || '';
+      setSelectedChannelId(fallbackChannelId);
+      if (fallbackChannelId) {
+        applyChannelCache(channelInputCache[fallbackChannelId]);
+      }
     }
-  }, [user?.isYoutubeConnected, validYouTubeChannels, selectedChannelId]);
+  }, [user?.isYoutubeConnected, validYouTubeChannels, selectedChannelId, applyChannelCache, channelInputCache]);
 
   const currentPlan = ((user?.plan || user?.user?.plan || 'free') as string).toLowerCase();
   const planFeatures = (user?.planFeatures || {}) as {
@@ -340,7 +678,6 @@ function Dashboard() {
   const isPaidPlan = !isFreeUser;
   const canUseVoiceSelection = planFeatures.voice_selection ?? isPaidPlan;
   const canUseScheduling = planFeatures.scheduling ?? isPaidPlan;
-  const canUseMultiChannel = planFeatures.multi_channel ?? isPaidPlan;
   const canUseStoryMode = planFeatures.story_mode ?? isPaidPlan;
   const canUseCta = planFeatures.cta ?? isPaidPlan;
   const canUseFormatSelection = planFeatures.format_selection ?? isPaidPlan;
@@ -381,7 +718,10 @@ function Dashboard() {
     if (!canUseScheduling && autoUploadEnabled) {
       setAutoUploadEnabled(false);
     }
-  }, [canUseStoryMode, canUseScheduling, storyMode, recapEnabled, autoUploadEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
+    if (!canUseScheduling && scheduleEnabled) {
+      setScheduleEnabled(false);
+    }
+  }, [canUseStoryMode, canUseScheduling, storyMode, recapEnabled, autoUploadEnabled, scheduleEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
 
   const handleConnectYouTube = useCallback(() => {
     (async () => {
@@ -456,7 +796,7 @@ function Dashboard() {
     setSelectedVoices(prev =>
       prev.includes(vid) ? prev.filter(id => id !== vid) : [...prev, vid]
     );
-  }, [canUseVoiceSelection, randomVoice, showUpgradeModal]);
+  }, [canUseVoiceSelection, randomVoice, showUpgradeModal, setRandomVoice, setSelectedVoices]);
 
   const playVoicePreview = (e: React.MouseEvent, voiceName: string) => {
     e.stopPropagation();
@@ -550,7 +890,7 @@ function Dashboard() {
     runPipelineGeneration();
   };
 
-    const runPipelineGeneration = useCallback(async () => {
+    const runPipelineGeneration = async () => {
       setGenerating(true);
       setMessage(null);
       try {
@@ -558,7 +898,7 @@ function Dashboard() {
           const updatedCache = selectedChannelId
             ? {
                 ...channelInputCache,
-                [selectedChannelId]: { inputMode, prompt, selectedTopic, customTopic },
+                [selectedChannelId]: getCurrentChannelCacheEntry(),
               }
             : channelInputCache;
           await userService.updateSettings({
@@ -602,7 +942,7 @@ function Dashboard() {
         finalPrompt += `\nInclude a strong, dynamic call-to-action at the end related to the content to subscribe and like the video.`;
       }
 
-      const promptRes = await promptService.generatePrompt(finalPrompt);
+      const promptRes = await promptService.generatePrompt(finalPrompt) as PromptResponse;
       const promptId =
         promptRes?.promptId ||
         promptRes?.data?.promptId ||
@@ -612,25 +952,21 @@ function Dashboard() {
         throw new Error('Prompt generation response is missing promptId');
       }
 
-      // Determine final voice(s) selected
-      let finalVoices = selectedVoices;
-      if (randomVoice || selectedVoices.length === 0) {
-        finalVoices = [AVAILABLE_VOICES[Math.floor(Math.random() * AVAILABLE_VOICES.length)].id];
-      }
-
       await executePipeline(
         promptId,
         false,
         promptRes?.gemini_prompt || promptRes?.data?.gemini_prompt,
         currentStoryId
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      if (err.response?.data?.warning) {
+      const apiError = err as ApiErrorShape;
+      const warningMessage = apiError.response?.data?.warning;
+      if (warningMessage) {
         setModalConfig({
           isOpen: true,
           title: 'Limit Warning',
-          description: err.response.data.warning,
+          description: warningMessage,
           type: 'warning',
           confirmText: 'Proceed Anyway',
           cancelText: 'Cancel',
@@ -642,14 +978,11 @@ function Dashboard() {
       }
       setGenerating(false);
     }
-  }, [
-    selectedChannelId, channelInputCache, inputMode, prompt, selectedTopic, customTopic,
-    storyId, effectiveStoryMode, currentPart, storyContext, recapEnabled, ctaEnabled,
-    selectedVoices, randomVoice // eslint-disable-line react-hooks/exhaustive-deps
-  ]);
+  };
 
-  const handleApiError = (err: any) => {
-     const errorMsg = err.response?.data?.message || err.message || 'An unknown error occurred.';
+  const handleApiError = (err: unknown) => {
+     const apiError = err as ApiErrorShape;
+     const errorMsg = apiError.response?.data?.message || apiError.message || 'An unknown error occurred.';
 
      if (errorMsg.includes('youtube_token_expired') || errorMsg.includes('YouTube channel is not connected or token is invalid')) {
          const reconnectTarget = reconnectChannelsToShow[0]?.channelId || selectedChannelId || invalidYouTubeChannels[0]?.channelId || '';
@@ -701,6 +1034,7 @@ function Dashboard() {
       if (acceptedWarning) {
           setGenerating(true);
       }
+      const normalizedMaxWordsPerCaption = Math.max(1, Math.min(8, Math.round(maxWordsPerCaption || 3)));
       let finalVoices = selectedVoices;
       if (randomVoice && AVAILABLE_VOICES.length > 0) {
         finalVoices = [AVAILABLE_VOICES[Math.floor(Math.random() * AVAILABLE_VOICES.length)]!.id];
@@ -719,7 +1053,12 @@ function Dashboard() {
         recapEnabled: effectiveStoryMode && currentPart > 1 ? recapEnabled : false,
         ctaEnabled,
         voices: finalVoices,
-        templateConfig: { fontStyle: templateFont, subtitleColor: templateColor },
+        templateConfig: {
+          fontStyle: templateFont,
+          subtitleColor: templateColor,
+          captionPosition,
+          maxWordsPerCaption: normalizedMaxWordsPerCaption,
+        },
         customVideoIds: useCustomMedia ? mediaList.filter(m => m.type === 'video').map(m => m._id) : [],
         customImageIds: useCustomMedia ? mediaList.filter(m => m.type === 'image').map(m => m._id) : [],
         customThumbnailId: useCustomMedia && selectedThumbnailId ? selectedThumbnailId : undefined
@@ -741,7 +1080,6 @@ function Dashboard() {
           return;
         }
 
-        const { scheduleService } = require('../../services/scheduleService');
         await scheduleService.createSchedule({
           channelId: selectedChannelId,
           type: 'interval',
@@ -750,12 +1088,15 @@ function Dashboard() {
           videoConfig: { ...videoConfig, promptId: pId, videoCount: autoUploadVideosPerInterval },
         });
         setMessage({ text: 'Auto-upload schedule created successfully!', type: 'success' });
-      } else if (scheduleEnabled && scheduleDatetime) {
+      } else if (scheduleEnabled) {
+        if (!scheduleDatetime) {
+          setMessage({ text: 'Please select a publish date and time for the scheduled run.', type: 'error' });
+          return;
+        }
         if (!canUseScheduling) {
           showUpgradeModal('Scheduling');
           return;
         }
-        const { scheduleService } = require('../../services/scheduleService');
         await scheduleService.createSchedule({
           channelId: selectedChannelId,
           type: 'one-time',
@@ -764,7 +1105,7 @@ function Dashboard() {
         });
         setMessage({ text: 'Video generation scheduled successfully!', type: 'success' });
       } else {
-        const pipelineRes = await pipelineService.runPipeline(pId, videoConfig, acceptedWarning);
+        const pipelineRes = await pipelineService.runPipeline(pId, videoConfig, acceptedWarning) as PipelineResponse;
         if (pipelineRes.warning) {
             setMessage({ text: pipelineRes.warning, type: 'warning' });
         } else {
@@ -782,20 +1123,22 @@ function Dashboard() {
         setCurrentPart(prev => prev + 1);
       }
 
-      const jobsData = await pipelineService.getJobs();
+      const jobsData = await pipelineService.getJobs() as JobsResponse;
       setJobs(jobsData.data);
       setModalConfig(prev => ({ ...prev, isOpen: false }));
       setPendingPromptId(null);
       setPendingPromptContent(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error(err);
-      if (err.response?.data?.warning) {
+      const apiError = err as ApiErrorShape;
+      const warningMessage = apiError.response?.data?.warning;
+      if (warningMessage) {
          setPendingPromptId(pId);
          setPendingPromptContent(newPromptContent || null);
          setModalConfig({
             isOpen: true,
             title: 'Limit Warning',
-            description: err.response.data.warning,
+            description: warningMessage,
             type: 'warning',
             confirmText: 'Proceed Anyway',
             cancelText: 'Cancel',
@@ -1050,7 +1393,7 @@ function Dashboard() {
                           showUpgradeModal('Format changes');
                           return;
                       }
-                      setContentType(e.target.value as any);
+                      setContentType(e.target.value as ContentType);
                     }}
                   >
                     <option value="clips" className="bg-[#111827]">Clips</option>
@@ -1084,24 +1427,7 @@ function Dashboard() {
                       value={selectedChannelId}
                       onChange={(e) => {
                         const nextChannelId = e.target.value;
-                        const applyChannel = () => {
-                          const currentId = selectedChannelId;
-                          const nextCache = { ...channelInputCache };
-                          if (currentId) {
-                            nextCache[currentId] = { inputMode, prompt, selectedTopic, customTopic };
-                          }
-                          setChannelInputCache(nextCache);
-                          setSelectedChannelId(nextChannelId);
-                          const cached = nextCache[nextChannelId];
-                          if (cached) {
-                            if (cached.inputMode) setInputMode(cached.inputMode);
-                            if (cached.prompt !== undefined) setPrompt(cached.prompt);
-                            if (cached.selectedTopic) setSelectedTopic(cached.selectedTopic);
-                            if (cached.customTopic !== undefined) setCustomTopic(cached.customTopic);
-                          }
-                          userService.updateSettings({ lastChannelInputs: nextCache }).catch(() => {});
-                        };
-                        confirmStoryReset(applyChannel);
+                        confirmStoryReset(() => switchChannel(nextChannelId));
                       }}
                     >
                       {!user?.isYoutubeConnected && (
@@ -1111,7 +1437,7 @@ function Dashboard() {
                         <option value="" className="bg-[#111827]">No channels found</option>
                       )}
                         {user?.isYoutubeConnected && validYouTubeChannels.length > 0 && (
-                          validYouTubeChannels.map((channel: any) => (
+                          validYouTubeChannels.map((channel) => (
                             <option key={channel.channelId} value={channel.channelId} className="bg-[#111827]">
                               {channel.channelName}
                             </option>
@@ -1177,7 +1503,11 @@ function Dashboard() {
                           checked={scheduleEnabled}
                           onChange={(e) => {
                             if (!canUseScheduling) { showUpgradeModal('Scheduling'); return; }
-                            setScheduleEnabled(e.target.checked);
+                            const nextChecked = e.target.checked;
+                            setScheduleEnabled(nextChecked);
+                            if (nextChecked) {
+                              setAutoUploadEnabled(false);
+                            }
                           }}
                         />
                         <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
@@ -1205,8 +1535,9 @@ function Dashboard() {
                                 onClick={() => {
                                   const el = scheduleInputRef.current;
                                   if (!el) return;
-                                  if (typeof (el as any).showPicker === 'function') {
-                                    (el as any).showPicker();
+                                  const pickerEl = el as DateTimePickerInput;
+                                  if (typeof pickerEl.showPicker === 'function') {
+                                    pickerEl.showPicker();
                                   } else {
                                     el.focus();
                                   }
@@ -1238,7 +1569,11 @@ function Dashboard() {
                           checked={autoUploadEnabled}
                           onChange={(e) => {
                             if (!canUseScheduling) { showUpgradeModal('Auto-upload scheduling'); return; }
-                            setAutoUploadEnabled(e.target.checked);
+                            const nextChecked = e.target.checked;
+                            setAutoUploadEnabled(nextChecked);
+                            if (nextChecked) {
+                              setScheduleEnabled(false);
+                            }
                           }}
                         />
                         <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
@@ -1427,6 +1762,42 @@ function Dashboard() {
                                     className="w-full h-9 bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-1 cursor-pointer"
                                   />
                                 </div>
+                                <div>
+                                  <label className="text-xs text-slate-400 mb-1 block">Caption Position</label>
+                                  <select
+                                    id="template-caption-position"
+                                    aria-label="Caption Position"
+                                    value={captionPosition}
+                                    onChange={(e) => {
+                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                      setCaptionPosition(e.target.value as CaptionPosition);
+                                    }}
+                                    className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                                  >
+                                    <option value="top">Top</option>
+                                    <option value="middle">Middle</option>
+                                    <option value="bottom">Bottom</option>
+                                  </select>
+                                </div>
+                                <div className="col-span-2 sm:col-span-1">
+                                  <label className="text-xs text-slate-400 mb-1 block">Max Words Per Caption</label>
+                                  <input
+                                    id="template-max-words"
+                                    aria-label="Max Words Per Caption"
+                                    type="number"
+                                    min="1"
+                                    max="8"
+                                    value={maxWordsPerCaption}
+                                    onChange={(e) => {
+                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                      const nextValue = Number(e.target.value);
+                                      const boundedValue = Math.min(8, Math.max(1, Number.isFinite(nextValue) ? nextValue : 3));
+                                      setMaxWordsPerCaption(boundedValue);
+                                    }}
+                                    className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
+                                  />
+                                  <p className="text-[11px] text-slate-500 mt-1">Recommended range: 2-5 words per caption.</p>
+                                </div>
                               </div>
                             </m.div>
                           )}
@@ -1557,10 +1928,10 @@ function Dashboard() {
                         id="channel-select"
                         aria-label="Select Channel"
                         value={selectedChannelId}
-                        onChange={(e) => setSelectedChannelId(e.target.value)}
+                        onChange={(e) => confirmStoryReset(() => switchChannel(e.target.value))}
                         className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
                       >
-                        {validYouTubeChannels.map((channel: any) => (
+                        {validYouTubeChannels.map((channel) => (
                           <option key={channel.channelId} value={channel.channelId}>
                             {channel.channelName}
                           </option>
@@ -1572,7 +1943,7 @@ function Dashboard() {
                     <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
                       <p className="text-xs font-semibold text-red-300 mb-2">Reconnect Required</p>
                       <div className="space-y-2">
-                        {reconnectChannelsToShow.map((channel: any) => (
+                        {reconnectChannelsToShow.map((channel) => (
                           <div key={channel.channelId} className="flex items-center justify-between gap-2">
                             <span className="text-xs text-slate-300 truncate">{channel.channelName}</span>
                             <button

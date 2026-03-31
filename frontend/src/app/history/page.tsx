@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
+import { useEffect, useRef, useState } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 
 
@@ -14,23 +13,56 @@ import { pipelineService } from '../../services/pipelineService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { cn } from '../../lib/utils';
 
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 15000;
+
+interface HistoryJob {
+  _id: string;
+  createdAt: string;
+  status?: string;
+  errorMessage?: string;
+  error?: string;
+  logs?: string;
+  progress?: {
+    progress?: number;
+    stage?: string;
+    message?: string;
+    timestamp?: string;
+  } | number;
+}
+
+interface JobsResult {
+  data: HistoryJob[];
+  pagination?: {
+    pages?: number;
+  };
+}
+
+interface UserResult {
+  data: Record<string, unknown>;
+}
 
 export default function HistoryPage() {
-  const [user, setUser] = useState<any>(null);
-  const [jobs, setJobs] = useState<any[]>([]);
+  const [user, setUser] = useState<Record<string, unknown> | null>(null);
+  const [jobs, setJobs] = useState<HistoryJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const jobsRef = useRef<HistoryJob[]>([]);
+
+  const isActiveJob = (job: HistoryJob) => {
+    const status = String(job?.status || '').toLowerCase();
+    return ['queued', 'pending', 'processing', 'running'].includes(status);
+  };
 
   useEffect(() => {
     let active = true;
 
-    const fetchData = async (opts?: { silent?: boolean }) => {
+    const fetchData = async (opts?: { silent?: boolean; includeUser?: boolean }) => {
       const silent = !!opts?.silent;
+      const includeUser = opts?.includeUser !== false;
       if (!silent) {
         setLoading(true);
       } else {
@@ -38,12 +70,15 @@ export default function HistoryPage() {
       }
       try {
         const [userData, jobsData] = await Promise.all([
-          authService.getMe(),
+          includeUser ? authService.getMe() : Promise.resolve(null),
           pipelineService.getJobs(page, 10)
-        ]);
+        ]) as [UserResult | null, JobsResult];
         if (!active) return;
-        setUser(userData.data);
+        if (includeUser && userData) {
+          setUser(userData.data);
+        }
         setJobs(jobsData.data);
+        jobsRef.current = jobsData.data;
         setTotalPages(jobsData.pagination?.pages || 1);
       } catch (err) {
         if (!silent) {
@@ -59,9 +94,11 @@ export default function HistoryPage() {
       }
     };
 
-    fetchData();
+    fetchData({ includeUser: true });
     const interval = setInterval(() => {
-      fetchData({ silent: true });
+      if (document.hidden) return;
+      if (!jobsRef.current.some(isActiveJob)) return;
+      fetchData({ silent: true, includeUser: false });
     }, POLL_INTERVAL_MS);
 
     return () => {
@@ -75,6 +112,7 @@ export default function HistoryPage() {
     try {
       const jobsData = await pipelineService.getJobs(page, 10);
       setJobs(jobsData.data);
+      jobsRef.current = jobsData.data;
       setTotalPages(jobsData.pagination?.pages || 1);
     } finally {
       setRefreshing(false);
@@ -85,12 +123,12 @@ export default function HistoryPage() {
     setExpandedJobId(prev => prev === id ? null : id);
   };
 
-  const isQueueTimeoutJob = (job: any) => {
+  const isQueueTimeoutJob = (job: HistoryJob) => {
     const haystack = `${job?.errorMessage || ''} ${job?.error || ''} ${job?.logs || ''}`.toLowerCase();
     return haystack.includes('queue timeout') || haystack.includes('waiting in queue for more than 2 hours');
   };
 
-  const getDisplayStatus = (job: any) => {
+  const getDisplayStatus = (job: HistoryJob) => {
     if (job?.status === 'failed' && isQueueTimeoutJob(job)) {
       return 'timeout';
     }
@@ -98,7 +136,7 @@ export default function HistoryPage() {
   };
 
   const getStatusBadge = (status: string) => {
-    const colors: any = {
+    const colors: Record<string, string> = {
       queued: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
       pending: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20', // legacy support
       processing: 'bg-[#00D4FF]/10 text-[#00D4FF] border-[#00D4FF]/20',
@@ -113,6 +151,32 @@ export default function HistoryPage() {
         {status}
       </span>
     );
+  };
+
+  const resolveProgressValue = (job: HistoryJob) => {
+    if (typeof job.progress === 'number' && Number.isFinite(job.progress)) {
+      return Math.max(0, Math.min(100, Math.round(job.progress)));
+    }
+    const value = typeof job.progress === 'object' ? job.progress?.progress : undefined;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.max(0, Math.min(100, Math.round(value)));
+    }
+    return null;
+  };
+
+  const clampProgressForStatus = (value: number, status: string) => {
+    const normalized = status.toLowerCase();
+    if (normalized === 'success' || normalized === 'completed') {
+      return value;
+    }
+    return Math.min(value, 99);
+  };
+
+  const resolveProgressStage = (job: HistoryJob) => {
+    if (typeof job.progress === 'object' && job.progress?.stage) {
+      return job.progress.stage;
+    }
+    return '';
   };
 
   if (loading) {
@@ -191,6 +255,25 @@ export default function HistoryPage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {getStatusBadge(getDisplayStatus(job))}
+                        {(() => {
+                          const progressValue = resolveProgressValue(job);
+                          if (progressValue === null) return null;
+                          const boundedProgress = clampProgressForStatus(progressValue, getDisplayStatus(job));
+                          const stageLabel = resolveProgressStage(job);
+                          return (
+                            <div className="mt-2">
+                              <div className="h-2 w-40 bg-[#0B0F1A] rounded-full overflow-hidden border border-[#1A2235]">
+                                <div
+                                  className="h-full bg-gradient-to-r from-[#00D4FF] to-[#7C5CFF]"
+                                  style={{ width: `${boundedProgress}%` }}
+                                />
+                              </div>
+                              <div className="mt-1 text-[11px] text-slate-400">
+                                {boundedProgress}%{stageLabel ? ` • ${stageLabel}` : ''}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <button

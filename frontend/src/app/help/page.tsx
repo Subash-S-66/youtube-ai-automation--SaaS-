@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { authService } from '../../services/authService';
@@ -8,13 +8,62 @@ import { supportService } from '../../services/supportService';
 import { Send, Loader2, Info } from 'lucide-react';
 import io, { Socket } from 'socket.io-client';
 
+interface HelpUser {
+  [key: string]: unknown;
+}
+
+interface TicketRecord {
+  _id: string;
+  status?: string;
+  expireAt?: string;
+}
+
+interface TicketMessage {
+  _id: string;
+  sender: string;
+  message: string;
+  createdAt: string;
+}
+
+interface SupportTicketPayload {
+  ticket: TicketRecord;
+  messages: TicketMessage[];
+}
+
+interface SupportTicketResponse {
+  data?: SupportTicketPayload;
+}
+
+interface SupportSendResponse {
+  ticketId?: string;
+}
+
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+const getApiErrorMessage = (err: unknown, fallback: string): string => {
+  if (typeof err === 'object' && err) {
+    const maybeApiError = err as ApiErrorShape;
+    const message = maybeApiError.response?.data?.message;
+    if (typeof message === 'string' && message.trim()) {
+      return message;
+    }
+  }
+  return fallback;
+};
+
 export default function HelpPage() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<HelpUser | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  const [ticket, setTicket] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [ticket, setTicket] = useState<TicketRecord | null>(null);
+  const [messages, setMessages] = useState<TicketMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -27,24 +76,31 @@ export default function HelpPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, ticket]);
 
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const userData = await authService.getMe();
-        setUser(userData.data);
-        await fetchTicket();
-      } catch (err) {
-        router.push('/login');
-      } finally {
-        setLoading(false);
-      }
-    };
-    init();
-  }, [router]);
+  const connectSocket = useCallback((ticketId: string) => {
+    if (socket) return;
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
+    const newSocket = io(backendUrl, {
+      withCredentials: true,
+    });
 
-  const fetchTicket = async () => {
+    newSocket.on('connect', () => {
+      newSocket.emit('join_ticket', ticketId);
+    });
+
+    newSocket.on('receive_message', (msg: TicketMessage) => {
+      setMessages((prev) => [...prev, msg]);
+    });
+
+    newSocket.on('ticket_closed', (data: { expireAt?: string }) => {
+      setTicket((prev) => (prev ? { ...prev, status: 'closed', expireAt: data.expireAt } : null));
+    });
+
+    setSocket(newSocket);
+  }, [socket]);
+
+  const fetchTicket = useCallback(async () => {
     try {
-      const res = await supportService.getUserTicket();
+      const res = await supportService.getUserTicket() as SupportTicketResponse;
       if (res.data) {
         setTicket(res.data.ticket);
         setMessages(res.data.messages || []);
@@ -56,29 +112,22 @@ export default function HelpPage() {
     } catch (err) {
       console.error('Failed to fetch ticket', err);
     }
-  };
+  }, [connectSocket]);
 
-  const connectSocket = (ticketId: string) => {
-    if (socket) return;
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
-    const newSocket = io(backendUrl, {
-      withCredentials: true,
-    });
-
-    newSocket.on('connect', () => {
-      newSocket.emit('join_ticket', ticketId);
-    });
-
-    newSocket.on('receive_message', (msg: any) => {
-      setMessages((prev) => [...prev, msg]);
-    });
-
-    newSocket.on('ticket_closed', (data: any) => {
-      setTicket((prev: any) => (prev ? { ...prev, status: 'closed', expireAt: data.expireAt } : null));
-    });
-
-    setSocket(newSocket);
-  };
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const userData = await authService.getMe() as { data: HelpUser };
+        setUser(userData.data);
+        await fetchTicket();
+      } catch {
+        router.push('/login');
+      } finally {
+        setLoading(false);
+      }
+    };
+    init();
+  }, [router, fetchTicket]);
 
   // Cleanup socket on unmount
   useEffect(() => {
@@ -95,7 +144,7 @@ export default function HelpPage() {
     setError('');
 
     try {
-      const res = await supportService.sendMessage(inputMessage, ticket?._id);
+      const res = await supportService.sendMessage(inputMessage, ticket?._id) as SupportSendResponse;
 
       // If a new ticket was created
       if (!ticket && res.ticketId) {
@@ -103,8 +152,8 @@ export default function HelpPage() {
       }
 
       setInputMessage('');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to send message');
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Failed to send message'));
     } finally {
       setSubmitting(false);
     }
@@ -217,7 +266,7 @@ export default function HelpPage() {
                   No messages yet. Send a message to start the chat.
                 </div>
               ) : (
-                messages.map((msg: any) => {
+                messages.map((msg) => {
                   const isUser = msg.sender === 'user';
                   const time = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 

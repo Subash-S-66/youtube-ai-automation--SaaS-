@@ -1,7 +1,22 @@
 import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import JobModel from '../models/Job';
+import User from '../models/User';
 import crypto from 'crypto';
+
+const appendRecentTopic = async (userId: string, topic: string): Promise<void> => {
+  const chosenTopic = String(topic || '').trim(); // FIXED: Normalize chosen topic before storing in history.
+  if (!chosenTopic) return;
+  const user = await User.findById(userId);
+  if (!user) return;
+  const previousTopics = Array.isArray((user as any).recentTopics)
+    ? (user as any).recentTopics.map((item: unknown) => String(item || '').trim()).filter(Boolean)
+    : [];
+  previousTopics.push(chosenTopic); // FIXED: Persist successful sub-topic for future anti-repeat generation.
+  (user as any).recentTopics = previousTopics.slice(-100); // FIXED: Keep only the latest 100 stored topics.
+  user.markModified('recentTopics');
+  await user.save();
+};
 
 const verifyWebhookSecret = (req: Request, res: Response): boolean => {
   const secret = req.headers['x-webhook-secret'];
@@ -38,7 +53,7 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     return;
   }
 
-  const { jobId, status, logs, videoUrl, youtubeVideoId, errorMessage, errorStage, processedVideos } = req.body;
+  const { jobId, status, logs, videoUrl, youtubeVideoId, errorMessage, errorStage, processedVideos, userId: webhookUserId } = req.body;
 
   if (typeof jobId !== 'string' || !jobId.trim() || typeof status !== 'string' || !status.trim()) {
     res.status(400).json({ error: 'Missing jobId or status' });
@@ -64,6 +79,16 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     return;
   }
 
+  const resolvedUserId = String(webhookUserId || '').trim(); // FIXED: Resolve caller-provided userId for ownership verification.
+  if (!resolvedUserId) {
+    res.status(400).json({ error: 'Missing userId in webhook payload' }); // FIXED: Require userId to prevent blind status mutation by jobId alone.
+    return;
+  }
+  if (job.userId.toString() !== resolvedUserId) {
+    res.status(403).json({ error: 'Job does not belong to this user' }); // FIXED: Enforce strict job-to-user ownership check.
+    return;
+  }
+
   // Append new logs if provided
   if (logs) {
     job.logs = (job.logs || '') + '\n' + logs;
@@ -80,7 +105,8 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
 
   // Update status if it's changing
   const { consumeReservedCredits, releaseReservedCredits } = await import('../services/uploadLimitService.js');
-  const requiresUpload = Boolean(
+  const uploadDisabled = (job as any)?.pipelineConfig?.upload === false;
+  const requiresUpload = !uploadDisabled && Boolean(
     (job as any)?.pipelineConfig?.upload === true ||
     (job as any)?.pipelineConfig?.autoUpload === true ||
     (job as any)?.pipelineConfig?.autoUploadSchedule === true ||
@@ -88,6 +114,13 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     (job as any)?.pipelineConfig?.publishNow === true ||
     (typeof (job as any)?.pipelineConfig?.channelId === 'string' && (job as any).pipelineConfig.channelId.trim().length > 0)
   );
+  const acceptedWarning = Boolean((job as any)?.acceptedYouTubeLimitWarning);
+  const requestedCount = Math.max(1, Number(job.videoCount || 1));
+  const processedCountRaw = typeof processedVideos === 'number' && processedVideos > 0
+    ? processedVideos
+    : (typeof job.processedVideos === 'number' && job.processedVideos > 0 ? job.processedVideos : requestedCount);
+  const processedCount = Math.min(requestedCount, Math.max(1, Math.floor(processedCountRaw)));
+  const remainingCount = Math.max(0, requestedCount - processedCount);
 
   const normalizedStatus = status.toLowerCase();
   if (normalizedStatus === 'success' || normalizedStatus === 'completed') {
@@ -113,7 +146,8 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
            $set: {
              status: 'failed',
              completedAt: new Date(),
-             holdReleased: true,
+             holdConsumed: acceptedWarning,
+             holdReleased: !acceptedWarning,
              error: 'Upload failed or was skipped.',
              errorMessage: 'Upload failed or was skipped.',
              errorStage: 'UPLOAD' as any,
@@ -127,7 +161,11 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
          { new: true }
        );
        if (updatedJob) {
-         await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+         if (acceptedWarning) {
+           await consumeReservedCredits(job.userId.toString(), processedCount || requestedCount).catch(console.error);
+         } else {
+           await releaseReservedCredits(job.userId.toString(), requestedCount).catch(console.error);
+         }
        }
        await job.save();
        res.status(200).json({ success: true });
@@ -153,7 +191,11 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       await consumeReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+       await consumeReservedCredits(job.userId.toString(), processedCount || requestedCount).catch(console.error);
+       if (remainingCount > 0) {
+         await releaseReservedCredits(job.userId.toString(), remainingCount).catch(console.error);
+       }
+       await appendRecentTopic(updatedJob.userId.toString(), String((updatedJob as any).chosenSubTopic || '')).catch(console.error); // FIXED: Update user recent topics after webhook-confirmed success.
      } else {
        console.log(`[Webhook] Job ${jobId} already processed (success). Skipping duplicate update.`);
      }
@@ -167,7 +209,8 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
          $set: {
            status: 'failed',
            completedAt: new Date(),
-           holdReleased: true,
+           holdConsumed: acceptedWarning && parsedErrorStage === 'UPLOAD',
+           holdReleased: !(acceptedWarning && parsedErrorStage === 'UPLOAD'),
            error: resolvedError,
            errorMessage: resolvedError,
            errorStage: parsedErrorStage,
@@ -181,7 +224,11 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+       if (acceptedWarning && parsedErrorStage === 'UPLOAD') {
+         await consumeReservedCredits(job.userId.toString(), processedCount || requestedCount).catch(console.error);
+       } else {
+         await releaseReservedCredits(job.userId.toString(), requestedCount).catch(console.error);
+       }
      } else {
        console.log(`[Webhook] Job ${jobId} already processed (failed). Skipping duplicate update.`);
      }
@@ -194,7 +241,8 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
          $set: {
            status: 'failed',
            completedAt: new Date(),
-           holdReleased: true,
+           holdConsumed: acceptedWarning,
+           holdReleased: !acceptedWarning,
            error: resolvedError,
            errorMessage: resolvedError,
            errorStage: 'UPLOAD' as any,
@@ -208,7 +256,11 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+       if (acceptedWarning) {
+         await consumeReservedCredits(job.userId.toString(), processedCount || requestedCount).catch(console.error);
+       } else {
+         await releaseReservedCredits(job.userId.toString(), requestedCount).catch(console.error);
+       }
      } else {
        console.log(`[Webhook] Job ${jobId} already processed (youtube_rejected). Skipping duplicate update.`);
      }
@@ -252,22 +304,107 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
     }
   }
 
-  const updated = await JobModel.findOneAndUpdate(
-    { _id: jobId },
+  const job = await JobModel.findById(jobId);
+  if (!job) {
+    res.status(404).json({ error: 'Job not found' });
+    return;
+  }
+
+  const resultPayload = payload.result ?? payload;
+  const normalizedStatus = String(payload.status || payload.state || '').toLowerCase();
+  const resultStatus = String(resultPayload?.status || resultPayload?.state || '').toLowerCase();
+  const statusHint = normalizedStatus || resultStatus;
+
+  const resolvedVideoUrl = String(
+    resultPayload?.videoUrl ||
+    resultPayload?.result?.videoUrl ||
+    resultPayload?.youtube?.videoUrl ||
+    ''
+  ).trim();
+  const resolvedYoutubeVideoId = String(
+    resultPayload?.youtubeVideoId ||
+    resultPayload?.result?.youtubeVideoId ||
+    resultPayload?.youtube?.youtubeVideoId ||
+    ''
+  ).trim();
+
+  const uploadRequested = typeof resultPayload?.uploadRequested === 'boolean'
+    ? resultPayload.uploadRequested
+    : (job.pipelineConfig?.upload !== false);
+  const uploadSkipped = Boolean(resultPayload?.uploadSkipped);
+  const uploadConfirmed = !uploadRequested || uploadSkipped || Boolean(
+    resolvedYoutubeVideoId ||
+    (resolvedVideoUrl && /^https?:\/\//i.test(resolvedVideoUrl))
+  );
+
+  const acceptedWarning = Boolean((job as any)?.acceptedYouTubeLimitWarning);
+  const requestedCount = Math.max(1, Number(job.videoCount || 1));
+
+  let nextStatus: 'success' | 'failed' = 'success';
+  if (statusHint && ['failed', 'error', 'errored'].includes(statusHint)) {
+    nextStatus = 'failed';
+  }
+  if (!uploadConfirmed) {
+    nextStatus = 'failed';
+  }
+
+  const failureMessage = nextStatus === 'failed'
+    ? (String(resultPayload?.errorMessage || payload?.errorMessage || '').trim() ||
+        (uploadConfirmed ? 'Pipeline failed' : 'Upload failed or was skipped.'))
+    : '';
+  const failureStage = nextStatus === 'failed'
+    ? (uploadConfirmed
+        ? (typeof resultPayload?.errorStage === 'string' ? resultPayload.errorStage : undefined)
+        : 'UPLOAD')
+    : undefined;
+
+  const updatePayload: Record<string, any> = {
+    result: resultPayload,
+    progress: {
+      progress: 100,
+      stage: nextStatus === 'success' ? 'completed' : 'failed',
+      message: nextStatus === 'success' ? 'Job completed successfully' : 'Job failed',
+      timestamp: new Date().toISOString(),
+    },
+  };
+  if (resolvedVideoUrl) updatePayload.videoUrl = resolvedVideoUrl;
+  if (resolvedYoutubeVideoId) updatePayload.youtubeVideoId = resolvedYoutubeVideoId;
+
+  const finalized = await JobModel.findOneAndUpdate(
+    { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
     {
       $set: {
-        status: 'success',
+        ...updatePayload,
+        status: nextStatus,
         completedAt: new Date(),
-        result: payload.result ?? payload,
+        holdConsumed: nextStatus === 'success' || (acceptedWarning && nextStatus === 'failed' && uploadRequested),
+        holdReleased: nextStatus === 'failed' && !(acceptedWarning && uploadRequested),
+        error: nextStatus === 'failed' ? failureMessage : undefined,
+        errorMessage: nextStatus === 'failed' ? failureMessage : '',
+        errorStage: nextStatus === 'failed' ? failureStage : undefined,
       },
     },
     { new: true }
   );
 
-  if (!updated) {
-    res.status(404).json({ error: 'Job not found' });
+  if (finalized) {
+    const { consumeReservedCredits, releaseReservedCredits } = await import('../services/uploadLimitService.js');
+    if (nextStatus === 'success') {
+      await consumeReservedCredits(job.userId.toString(), requestedCount).catch(console.error);
+      await appendRecentTopic(finalized.userId.toString(), String((finalized as any).chosenSubTopic || '')).catch(console.error);
+    } else if (acceptedWarning && uploadRequested) {
+      await consumeReservedCredits(job.userId.toString(), requestedCount).catch(console.error);
+    } else {
+      await releaseReservedCredits(job.userId.toString(), requestedCount).catch(console.error);
+    }
+    res.status(200).json({ success: true });
     return;
   }
+
+  await JobModel.updateOne(
+    { _id: jobId },
+    { $set: updatePayload }
+  );
 
   res.status(200).json({ success: true });
 });

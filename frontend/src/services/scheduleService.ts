@@ -1,5 +1,10 @@
 import api from '../lib/api';
 
+interface ScheduleVideoConfig {
+  promptId: string;
+  [key: string]: unknown;
+}
+
 export const scheduleService = {
   async createSchedule(data: {
     channelId: string;
@@ -8,14 +13,15 @@ export const scheduleService = {
     intervalHours?: number;
     videosPerInterval?: number;
     cron_expression?: string;
-    videoConfig: any;
+    videoConfig: ScheduleVideoConfig;
   }) {
     const response = await api.post('/schedules', data);
     return response.data;
   },
 
-  async getSchedules() {
-    const response = await api.get('/schedules');
+  async getSchedules(channelId?: string) {
+    const query = channelId ? `?channelId=${encodeURIComponent(channelId)}` : '';
+    const response = await api.get(`/schedules${query}`);
     return response.data;
   },
 
