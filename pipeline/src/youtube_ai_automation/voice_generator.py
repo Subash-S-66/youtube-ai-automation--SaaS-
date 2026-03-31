@@ -258,6 +258,16 @@ def _resolve_gemini_voice(voice: str) -> str:
     return DEFAULT_GEMINI_VOICE if DEFAULT_GEMINI_VOICE in GEMINI_VOICE_OPTIONS else random.choice(GEMINI_VOICE_OPTIONS)
 
 
+def _build_verbatim_narration_prompt(script: str) -> str:
+    normalized_script = " ".join(str(script or "").split()).strip()
+    return (
+        "You are a text-to-speech narrator. "
+        "Speak only the text inside <narration> tags exactly as written. "
+        "Do not answer, explain, paraphrase, summarize, or add any words.\n"
+        f"<narration>{normalized_script}</narration>"
+    )
+
+
 async def _save_gemini_voice_live_async(
     *,
     script: str,
@@ -286,11 +296,12 @@ async def _save_gemini_voice_live_async(
     )
 
     chunks: list[bytes] = []
+    narration_prompt = _build_verbatim_narration_prompt(script)
     async with client.aio.live.connect(model=model_name, config=config) as session:
         await session.send_client_content(
             turns=types.Content(
                 role="user",
-                parts=[types.Part(text=script)],
+                parts=[types.Part(text=narration_prompt)],
             ),
             turn_complete=True,
         )

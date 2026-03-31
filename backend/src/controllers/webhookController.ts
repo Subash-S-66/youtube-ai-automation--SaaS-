@@ -294,22 +294,6 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
     return;
   }
 
-  const { connection } = await import('../config/redis.js');
-  if (connection) {
-    const idempotencyKey = `webhook:pipeline-complete:${jobId}`;
-    const setNxResult = await connection.set(idempotencyKey, 'processing', 'EX', 60 * 60, 'NX');
-    if (!setNxResult) {
-      res.status(200).json({ success: true, duplicate: true });
-      return;
-    }
-  }
-
-  const job = await JobModel.findById(jobId);
-  if (!job) {
-    res.status(404).json({ error: 'Job not found' });
-    return;
-  }
-
   const resultPayload = payload.result ?? payload;
   const normalizedStatus = String(payload.status || payload.state || '').toLowerCase();
   const resultStatus = String(resultPayload?.status || resultPayload?.state || '').toLowerCase();
@@ -328,6 +312,34 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
     ''
   ).trim();
 
+  const { connection } = await import('../config/redis.js');
+  if (connection) {
+    const signatureHash = crypto
+      .createHash('sha1')
+      .update(
+        JSON.stringify({
+          statusHint,
+          resolvedVideoUrl,
+          resolvedYoutubeVideoId,
+          errorMessage: String(resultPayload?.errorMessage || payload?.errorMessage || '').trim(),
+        })
+      )
+      .digest('hex')
+      .slice(0, 16);
+    const idempotencyKey = `webhook:pipeline-complete:${jobId}:${signatureHash}`;
+    const setNxResult = await connection.set(idempotencyKey, 'processing', 'EX', 60 * 60, 'NX');
+    if (!setNxResult) {
+      res.status(200).json({ success: true, duplicate: true });
+      return;
+    }
+  }
+
+  const job = await JobModel.findById(jobId);
+  if (!job) {
+    res.status(404).json({ error: 'Job not found' });
+    return;
+  }
+
   const uploadRequested = typeof resultPayload?.uploadRequested === 'boolean'
     ? resultPayload.uploadRequested
     : (job.pipelineConfig?.upload !== false);
@@ -339,17 +351,23 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
 
   const acceptedWarning = Boolean((job as any)?.acceptedYouTubeLimitWarning);
   const requestedCount = Math.max(1, Number(job.videoCount || 1));
+  const warningList = Array.isArray(resultPayload?.metadata?.warnings)
+    ? resultPayload.metadata.warnings.map((warning: unknown) => String(warning || '').toLowerCase())
+    : [];
+  const uploadWarning = warningList.find((warning: string) => warning.includes('upload_error'));
 
-  let nextStatus: 'success' | 'failed' = 'success';
+  let nextStatus: 'success' | 'failed' | 'processing' = 'processing';
   if (statusHint && ['failed', 'error', 'errored'].includes(statusHint)) {
     nextStatus = 'failed';
-  }
-  if (!uploadConfirmed) {
+  } else if (uploadWarning && uploadRequested && !uploadConfirmed) {
     nextStatus = 'failed';
+  } else if (!uploadRequested || uploadSkipped || uploadConfirmed) {
+    nextStatus = 'success';
   }
 
   const failureMessage = nextStatus === 'failed'
     ? (String(resultPayload?.errorMessage || payload?.errorMessage || '').trim() ||
+        (uploadWarning ? String(uploadWarning).replace(/^upload_error:/, '').trim() : '') ||
         (uploadConfirmed ? 'Pipeline failed' : 'Upload failed or was skipped.'))
     : '';
   const failureStage = nextStatus === 'failed'
@@ -361,14 +379,36 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
   const updatePayload: Record<string, any> = {
     result: resultPayload,
     progress: {
-      progress: 100,
-      stage: nextStatus === 'success' ? 'completed' : 'failed',
-      message: nextStatus === 'success' ? 'Job completed successfully' : 'Job failed',
+      progress: nextStatus === 'processing' ? 95 : 100,
+      stage: nextStatus === 'success' ? 'completed' : (nextStatus === 'failed' ? 'failed' : 'upload_confirmation_pending'),
+      message: nextStatus === 'success'
+        ? 'Job completed successfully'
+        : (nextStatus === 'failed' ? 'Job failed' : 'Waiting for final upload confirmation'),
       timestamp: new Date().toISOString(),
     },
   };
   if (resolvedVideoUrl) updatePayload.videoUrl = resolvedVideoUrl;
   if (resolvedYoutubeVideoId) updatePayload.youtubeVideoId = resolvedYoutubeVideoId;
+
+  if (nextStatus === 'processing') {
+    await JobModel.updateOne(
+      { _id: jobId, status: { $in: ['pending', 'processing'] } },
+      {
+        $set: {
+          ...updatePayload,
+          status: 'processing',
+        },
+        $unset: {
+          completedAt: '',
+          error: '',
+          errorMessage: '',
+          errorStage: '',
+        },
+      }
+    );
+    res.status(200).json({ success: true, deferred: true });
+    return;
+  }
 
   const finalized = await JobModel.findOneAndUpdate(
     { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },

@@ -1,4 +1,7 @@
-﻿import 'dotenv/config';
+﻿import dotenv from 'dotenv';
+import path from 'path';
+
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
 import app from './app';
 import connectDB from './config/db';
 import { initializeFirebaseAdmin } from './config/firebaseAdmin';

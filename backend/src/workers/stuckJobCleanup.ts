@@ -6,6 +6,7 @@ import { pipelineQueue } from '../queues/pipelineQueue';
 
 const MAX_QUEUE_WAIT_TIME = 2 * 60 * 60 * 1000; // 2 hours
 const QUEUE_TIMEOUT_ERROR = 'Queue timeout: job waited more than 2 hours before processing.';
+const RECOVERY_REQUEUE_GRACE_MS = 5 * 60 * 1000;
 
 export const safelyFailJob = async (job: any, errorMessage: string) => {
   const existingLogs = typeof job.logs === 'string' ? job.logs : '';
@@ -44,8 +45,85 @@ export const recoverCrashedJobs = async () => {
     });
 
     if (crashedJobs.length > 0) {
-      console.log(`[CrashRecovery] Found ${crashedJobs.length} stuck jobs from previous runs. Marking failed.`);
+      console.log(`[CrashRecovery] Found ${crashedJobs.length} processing jobs from previous runs. Reconciling state...`);
+      const systemConfig = await SystemConfig.findOne().sort({ updatedAt: -1 });
+      const timeoutConfig = {
+        baseTimeoutMs: systemConfig?.baseTimeoutMs || 2 * 60 * 1000,
+        perVideoTimeoutMs: systemConfig?.perVideoTimeoutMs || 6 * 60 * 1000,
+      };
+
       for (const job of crashedJobs) {
+        const startedAt = job.startedAt instanceof Date ? job.startedAt : null;
+        const runTime = startedAt ? Date.now() - startedAt.getTime() : Number.MAX_SAFE_INTEGER;
+        const allowedTime = calculateJobTimeout(job.videoCount || 1, timeoutConfig, job.processedVideos || 0);
+        const shouldRequeue = Boolean(startedAt && runTime <= (allowedTime + RECOVERY_REQUEUE_GRACE_MS));
+
+        if (shouldRequeue) {
+          const requeued = await JobModel.findOneAndUpdate(
+            { _id: job._id, status: 'processing' },
+            {
+              $set: {
+                status: 'pending',
+                queuedAt: new Date(),
+              },
+              $unset: {
+                startedAt: '',
+                executionLockedAt: '',
+                completedAt: '',
+                error: '',
+                errorMessage: '',
+                errorStage: '',
+              },
+            },
+            { new: true }
+          );
+
+          if (requeued) {
+            try {
+              const existingBullJob = await pipelineQueue.getJob(job._id.toString());
+              if (!existingBullJob) {
+                const planPriorities: Record<string, number> = {
+                  premium: 1,
+                  pro: 2,
+                  basic: 3,
+                  free: 4,
+                };
+                const jobPriority = planPriorities[job.pipelineConfig?.plan || 'free'] || 4;
+                const count = job.videoCount || 1;
+                const jobTimeoutMinutes = 10 + (count - 1) * 5;
+                const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
+
+                await pipelineQueue.add(
+                  'runPipeline',
+                  {
+                    userId: job.userId.toString(),
+                    promptId: job.promptId.toString(),
+                    jobId: job._id.toString(),
+                    settings: job.pipelineConfig,
+                  },
+                  {
+                    priority: jobPriority,
+                    jobId: job._id.toString(),
+                    attempts: 3,
+                    timeout: jobTimeoutMs,
+                    backoff: {
+                      type: 'exponential',
+                      delay: 5000,
+                    },
+                  }
+                );
+              }
+              console.log(`[CrashRecovery] Re-queued recent processing job ${job._id}.`);
+            } catch (requeueError) {
+              console.error(`[CrashRecovery] Failed to re-queue job ${job._id}:`, requeueError);
+            }
+          }
+          continue;
+        }
+
+        console.log(
+          `[CrashRecovery] Marking stale job ${job._id} as failed. Runtime=${runTime}ms allowed=${allowedTime}ms`
+        );
         const updatedJob = await JobModel.findOneAndUpdate(
             { _id: job._id, holdConsumed: false, holdReleased: false },
             {

@@ -17,6 +17,8 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
 
   const limit = parseInt(req.query.limit as string) || 10;
   const cursor = req.query.cursor as string;
+  const includeLogs = String(req.query.includeLogs ?? 'true').toLowerCase() !== 'false';
+  const includeTotal = String(req.query.includeTotal ?? 'false').toLowerCase() === 'true';
   const query: any = { userId: req.user.id };
 
   if (cursor) {
@@ -24,8 +26,16 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
     query._id = { $lt: cursor };
   }
 
+  const projection = includeLogs
+    ? '_id createdAt status progress logs error errorMessage errorStage videoUrl youtubeVideoId completedAt'
+    : '_id createdAt status progress error errorMessage errorStage videoUrl youtubeVideoId completedAt';
+
   // Request limit + 1 to check if there is a next page
-  const jobs = await Job.find(query).sort({ _id: -1 }).limit(limit + 1);
+  const jobs = await Job.find(query)
+    .select(projection)
+    .sort({ _id: -1 })
+    .limit(limit + 1)
+    .lean();
 
   let nextCursor = null;
   if (jobs.length > limit) {
@@ -33,14 +43,27 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
     nextCursor = nextJob?._id;
   }
 
-  const total = await Job.countDocuments({ userId: req.user.id });
+  const MAX_LOG_RESPONSE_CHARS = 12000;
+  const sanitizedJobs = jobs.map((job: any) => {
+    if (includeLogs && typeof job.logs === 'string' && job.logs.length > MAX_LOG_RESPONSE_CHARS) {
+      return {
+        ...job,
+        logs: `...[logs trimmed for performance]...\n${job.logs.slice(-MAX_LOG_RESPONSE_CHARS)}`,
+      };
+    }
+    return job;
+  });
+
+  const total = includeTotal ? await Job.countDocuments({ userId: req.user.id }) : undefined;
+  const pages = typeof total === 'number' ? Math.max(1, Math.ceil(total / limit)) : undefined;
 
   res.status(200).json({
     success: true,
-    data: jobs,
+    data: sanitizedJobs,
     pagination: {
       limit,
-      total,
+      ...(typeof total === 'number' ? { total } : {}),
+      ...(typeof pages === 'number' ? { pages } : {}),
       nextCursor,
     },
   });

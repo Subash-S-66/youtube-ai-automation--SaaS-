@@ -580,6 +580,18 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         ? (executionJob.captions?.[0] || [])
         : (Array.isArray(executionJob.captions) ? executionJob.captions : []);
       const fallbackCaptions = Array.isArray(firstPreparedItem.captions) ? firstPreparedItem.captions : [];
+      const preparedSearchQueries = Array.isArray((firstPreparedItem as any)?.searchQueries)
+        ? (firstPreparedItem as any).searchQueries
+        : [];
+      const generatedSearchQueries = Array.isArray((executionJob as any)?.generatedMetadata?.[0]?.searchQueries)
+        ? (executionJob as any).generatedMetadata[0].searchQueries
+        : [];
+      const payloadSearchQueries = (preparedSearchQueries.length > 0 ? preparedSearchQueries : generatedSearchQueries)
+        .filter((item: unknown) => typeof item === 'string' && item.trim().length > 0)
+        .map((item: string) => item.trim());
+      const payloadMetadata = payloadSearchQueries.length > 0
+        ? [{ searchQueries: payloadSearchQueries }]
+        : [];
       if (!Array.isArray(payloadScript) || payloadScript.length === 0) {
         const err: any = new Error('Prepared script is missing or empty. Cannot dispatch pipeline execution.');
         err.stage = 'CONTENT_GENERATION';
@@ -683,6 +695,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         topic: String((executionJob as any)?.topic || (firstPreparedItem as any)?.topic || '').trim(),
         script: payloadScript,
         captions: payloadCaptions.length > 0 ? payloadCaptions : fallbackCaptions,
+        metadata: payloadMetadata,
         videoConfig: payloadVideoConfig,
         targetDuration: settings.targetDuration || settings.duration || 40,
         ctaEnabled: !!settings.ctaEnabled,

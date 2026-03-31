@@ -109,6 +109,15 @@ interface DashboardUser {
 interface JobRecord {
   _id: string;
   status?: string;
+  completedAt?: string;
+  errorMessage?: string;
+  error?: string;
+  progress?: {
+    progress?: number;
+    stage?: string;
+    message?: string;
+    timestamp?: string;
+  } | number;
 }
 
 interface MediaRecord {
@@ -550,10 +559,36 @@ function Dashboard() {
 
     let cancelled = false;
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    let pollingDelayMs = 5000; // FIXED: Start polling at 5s.
+    let pollingDelayMs = 10000; // FIXED: Start polling at 10s.
 
     const activeStatuses = new Set(['pending', 'processing', 'queued', 'running']);
     const terminalStatuses = new Set(['success', 'completed', 'failed', 'cancelled', 'canceled']);
+    const runtimeStages = new Set([
+      'processing',
+      'dispatch',
+      'content_load',
+      'content_generation',
+      'payload_build',
+      'token_validation',
+      'pipeline_runtime',
+      'upload_confirmation_pending',
+    ]);
+
+    const isRuntimeInFlight = (job: JobRecord) => {
+      const progressValue = typeof job.progress === 'number'
+        ? job.progress
+        : (typeof job.progress === 'object' ? Number(job.progress?.progress || 0) : 0);
+      const stage = String(typeof job.progress === 'object' ? (job.progress?.stage || '') : '').toLowerCase();
+      return Number.isFinite(progressValue) && progressValue >= 0 && progressValue < 100 && runtimeStages.has(stage);
+    };
+
+    const getEffectiveStatus = (job: JobRecord) => {
+      const normalized = String(job.status || '').toLowerCase();
+      if (normalized !== 'success' && normalized !== 'completed' && isRuntimeInFlight(job)) {
+        return 'processing';
+      }
+      return normalized;
+    };
 
     const scheduleNextPoll = () => {
       if (cancelled) {
@@ -563,21 +598,28 @@ function Dashboard() {
     };
 
     const pollJobs = async () => {
+      if (document.hidden) {
+        pollingDelayMs = Math.max(pollingDelayMs, 30000);
+        scheduleNextPoll();
+        return;
+      }
       try {
         const jobsData = await pipelineService.getJobs() as JobsResponse;
         const currentJobs = jobsData.data || [];
         const nextStatusMap: Record<string, string> = {};
 
         for (const job of currentJobs) {
-          nextStatusMap[job._id] = String(job.status || '');
+          nextStatusMap[job._id] = getEffectiveStatus(job);
         }
+
+        const hasActiveJobs = currentJobs.some((job) => activeStatuses.has(getEffectiveStatus(job)));
 
         if (!notificationsPrimedRef.current) {
           // Prime with current snapshot so old completed/failed jobs don't trigger popups.
           jobStatusRef.current = nextStatusMap;
           notificationsPrimedRef.current = true;
           setJobs(currentJobs);
-          pollingDelayMs = 5000; // FIXED: Keep fast poll cadence after initial prime.
+          pollingDelayMs = hasActiveJobs ? 10000 : 30000;
           scheduleNextPoll();
           return;
         }
@@ -621,7 +663,11 @@ function Dashboard() {
         jobStatusRef.current = nextStatusMap;
         setJobs(currentJobs);
 
-        pollingDelayMs = resetBackoff ? 5000 : Math.min(pollingDelayMs + 2000, 30000); // FIXED: Exponential-style backoff with +2s steps capped at 30s.
+        if (!hasActiveJobs) {
+          pollingDelayMs = Math.max(pollingDelayMs, 30000);
+        } else {
+          pollingDelayMs = resetBackoff ? 10000 : Math.min(pollingDelayMs + 2000, 30000);
+        }
       } catch {
         // Silently ignore polling errors and back off to avoid request storms.
         pollingDelayMs = Math.min(pollingDelayMs + 2000, 30000); // FIXED: Back off on polling failures.

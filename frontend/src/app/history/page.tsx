@@ -18,6 +18,7 @@ const POLL_INTERVAL_MS = 15000;
 interface HistoryJob {
   _id: string;
   createdAt: string;
+  completedAt?: string;
   status?: string;
   errorMessage?: string;
   error?: string;
@@ -52,9 +53,28 @@ export default function HistoryPage() {
   const [totalPages, setTotalPages] = useState(1);
   const jobsRef = useRef<HistoryJob[]>([]);
 
+  const runtimeStages = new Set([
+    'processing',
+    'dispatch',
+    'content_load',
+    'content_generation',
+    'payload_build',
+    'token_validation',
+    'pipeline_runtime',
+    'upload_confirmation_pending',
+  ]);
+
+  const isRuntimeInFlight = (job: HistoryJob) => {
+    const progressValue = typeof job.progress === 'number'
+      ? job.progress
+      : (typeof job.progress === 'object' ? Number(job.progress?.progress || 0) : 0);
+    const stage = String(typeof job.progress === 'object' ? (job.progress?.stage || '') : '').toLowerCase();
+    return Number.isFinite(progressValue) && progressValue >= 0 && progressValue < 100 && runtimeStages.has(stage);
+  };
+
   const isActiveJob = (job: HistoryJob) => {
     const status = String(job?.status || '').toLowerCase();
-    return ['queued', 'pending', 'processing', 'running'].includes(status);
+    return ['queued', 'pending', 'processing', 'running'].includes(status) || isRuntimeInFlight(job);
   };
 
   useEffect(() => {
@@ -71,7 +91,7 @@ export default function HistoryPage() {
       try {
         const [userData, jobsData] = await Promise.all([
           includeUser ? authService.getMe() : Promise.resolve(null),
-          pipelineService.getJobs(page, 10)
+          pipelineService.getJobs(page, 10, { includeTotal: !silent })
         ]) as [UserResult | null, JobsResult];
         if (!active) return;
         if (includeUser && userData) {
@@ -110,7 +130,7 @@ export default function HistoryPage() {
   const handleManualRefresh = async () => {
     setRefreshing(true);
     try {
-      const jobsData = await pipelineService.getJobs(page, 10);
+      const jobsData = await pipelineService.getJobs(page, 10, { includeTotal: true });
       setJobs(jobsData.data);
       jobsRef.current = jobsData.data;
       setTotalPages(jobsData.pagination?.pages || 1);
@@ -128,7 +148,15 @@ export default function HistoryPage() {
     return haystack.includes('queue timeout') || haystack.includes('waiting in queue for more than 2 hours');
   };
 
+  const looksLikeTransientFailed = (job: HistoryJob) => {
+    const normalizedStatus = String(job?.status || '').toLowerCase();
+    return normalizedStatus === 'failed' && isRuntimeInFlight(job);
+  };
+
   const getDisplayStatus = (job: HistoryJob) => {
+    if (isRuntimeInFlight(job) || looksLikeTransientFailed(job)) {
+      return 'processing';
+    }
     if (job?.status === 'failed' && isQueueTimeoutJob(job)) {
       return 'timeout';
     }
