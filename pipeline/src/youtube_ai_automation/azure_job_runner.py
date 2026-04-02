@@ -37,18 +37,29 @@ def _decrypt_env_value(raw: str, encryption_key: str) -> str | None:
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
         parts = raw.split(":")
-        if len(parts) != 2:
-            return None
-        iv = bytes.fromhex(parts[0])
-        encrypted_data = bytes.fromhex(parts[1])
         key_bytes = encryption_key.encode("utf-8")[:32]
         if len(key_bytes) < 32:
             key_bytes = key_bytes.ljust(32, b"0")
+
+        if len(parts) == 3:
+            iv = bytes.fromhex(parts[0])
+            auth_tag = bytes.fromhex(parts[1])
+            encrypted_data = bytes.fromhex(parts[2])
+            cipher = Cipher(algorithms.AES(key_bytes), modes.GCM(iv, auth_tag), backend=default_backend())
+            decryptor = cipher.decryptor()
+            decrypted = decryptor.update(encrypted_data) + decryptor.finalize()
+            return decrypted.decode("utf-8")
+
+        if len(parts) != 2:
+            return None
+
+        iv = bytes.fromhex(parts[0])
+        encrypted_data = bytes.fromhex(parts[1])
         cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
         decryptor = cipher.decryptor()
         decrypted_padded = decryptor.update(encrypted_data) + decryptor.finalize()
         pad_len = int(decrypted_padded[-1])
-        if pad_len <= 0 or pad_len > 32:
+        if pad_len <= 0 or pad_len > 16:
             return None
         return decrypted_padded[:-pad_len].decode("utf-8")
     except Exception:

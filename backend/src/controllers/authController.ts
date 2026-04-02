@@ -11,6 +11,38 @@ import { getUploadLimits } from '../services/uploadLimitService';
 import { google } from 'googleapis';
 import validator from 'validator';
 
+const oauthCookieSameSite: 'none' | 'lax' = process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+const oauthCookieSecure = process.env.NODE_ENV === 'production';
+
+const setOauthStateCookie = (res: Response, stateValue: string) => {
+  res.cookie('oauth_state', stateValue, {
+    httpOnly: true,
+    secure: oauthCookieSecure,
+    sameSite: oauthCookieSameSite,
+    maxAge: 10 * 60 * 1000,
+    domain: process.env.COOKIE_DOMAIN || undefined,
+  });
+};
+
+const clearOauthStateCookie = (res: Response) => {
+  res.cookie('oauth_state', '', {
+    httpOnly: true,
+    expires: new Date(0),
+    secure: oauthCookieSecure,
+    sameSite: oauthCookieSameSite,
+    domain: process.env.COOKIE_DOMAIN || undefined,
+  });
+};
+
+const isTimingSafeEqual = (left: string, right: string): boolean => {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
 // Generate JWT
 const generateToken = (id: string): string => {
   const secret = process.env.JWT_SECRET;
@@ -250,12 +282,7 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
     sameSite: 'none',
   });
 
-  res.cookie('oauth_state', '', {
-    httpOnly: true,
-    expires: new Date(0),
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
-  });
+  clearOauthStateCookie(res);
 
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 });
@@ -575,14 +602,20 @@ export const resetPassword = asyncHandler(
 // @access  Public
 export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
   const oauth2Client = getGoogleOAuth2Client();
-  const stateParam = typeof req.query.state === 'string' ? req.query.state : undefined;
+  const stateParam = typeof req.query.state === 'string' ? req.query.state.trim() : '';
+  const nonce = crypto.randomBytes(24).toString('hex');
+  const encodedState = stateParam ? Buffer.from(stateParam, 'utf8').toString('base64url') : '';
+  const oauthState = encodedState ? `${nonce}.${encodedState}` : nonce;
+
+  setOauthStateCookie(res, oauthState);
+
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: [
       'https://www.googleapis.com/auth/userinfo.profile',
       'https://www.googleapis.com/auth/userinfo.email',
     ],
-    ...(stateParam ? { state: stateParam } : {}),
+    state: oauthState,
     prompt: 'consent',
   });
   res.redirect(authUrl);
@@ -593,12 +626,23 @@ export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
 // @access  Public
 export const googleCallback = asyncHandler(async (req: Request, res: Response) => {
   const code = req.query.code as string;
+  const callbackState = typeof req.query.state === 'string' ? req.query.state : '';
+  const cookieState = typeof req.cookies?.oauth_state === 'string' ? req.cookies.oauth_state : '';
   const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
   if (!code) {
+    clearOauthStateCookie(res);
     res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
     return;
   }
+
+  if (!callbackState || !cookieState || !isTimingSafeEqual(callbackState, cookieState)) {
+    clearOauthStateCookie(res);
+    res.redirect(`${FRONTEND_URL}/login?error=Invalid_OAuth_State`);
+    return;
+  }
+
+  clearOauthStateCookie(res);
 
   const oauth2Client = getGoogleOAuth2Client();
   const { tokens } = await oauth2Client.getToken(code);
@@ -636,7 +680,15 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
     }
   } else {
     // Create Google User
-    const stateStr = req.query.state as string;
+    let stateStr = '';
+    const stateChunks = callbackState.split('.', 2);
+    if (stateChunks.length === 2) {
+      try {
+        stateStr = Buffer.from(stateChunks[1] || '', 'base64url').toString('utf8');
+      } catch {
+        stateStr = '';
+      }
+    }
     let referredBy: string | undefined = undefined;
     if (stateStr && stateStr.startsWith('ref:')) {
       const refCode = stateStr.split(':')[1];

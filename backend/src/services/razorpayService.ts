@@ -71,6 +71,24 @@ const getRazorpayAuthHeader = () => {
   return `Basic ${token}`;
 };
 
+const parseExpectedAmountPaise = (value: unknown, fallback: number): number => {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.floor(parsed);
+  }
+  return Math.max(0, Math.floor(Number(fallback || 0)));
+};
+
+const ensureAmountNotUnderpaid = (paidAmountPaise: number, expectedAmountPaise: number, context: string) => {
+  const safePaid = Math.max(0, Math.floor(Number(paidAmountPaise || 0)));
+  const safeExpected = Math.max(0, Math.floor(Number(expectedAmountPaise || 0)));
+  if (safeExpected <= 0) return;
+  // Allow 1 paise tolerance for rounding/parsing edge cases.
+  if (safePaid + 1 < safeExpected) {
+    throw new AppError(`${context}: payment amount mismatch`, 400);
+  }
+};
+
 export const createPaymentLink = async (userId: string, planId?: string): Promise<string> => {
   const user = await User.findById(userId);
   if (!user) {
@@ -85,9 +103,9 @@ export const createPaymentLink = async (userId: string, planId?: string): Promis
   const currentRank = planValueMap[currentPlanName] ?? 0;
   const requestedRank = planValueMap[requestedLower] ?? 0;
 
-  const planObj = await Plan.findOne({ name: requestedPlanName });
+    const planObj = await Plan.findOne({ name: requestedPlanName, is_active: true });
   if (!planObj) {
-      throw new AppError(`Plan '${requestedPlanName}' not found`, 404);
+      throw new AppError(`Plan '${requestedPlanName}' not found or inactive`, 404);
   }
 
   if (user.subscriptionStatus === 'active' && currentRank > requestedRank) {
@@ -134,6 +152,7 @@ export const createPaymentLink = async (userId: string, planId?: string): Promis
     notes: {
       userId,
       plan: planObj.name,
+      expectedAmountPaise: String(amountPaise),
     },
   };
 
@@ -171,9 +190,9 @@ export const createOrder = async (userId: string, planId?: string) => {
   const planValueMap = await getPlanValueMap();
   const currentRank = planValueMap[currentPlanName] ?? 0;
   const requestedRank = planValueMap[requestedLower] ?? 0;
-  const planObj = await Plan.findOne({ name: requestedPlanName });
+  const planObj = await Plan.findOne({ name: requestedPlanName, is_active: true });
   if (!planObj) {
-    throw new AppError(`Plan '${requestedPlanName}' not found`, 404);
+    throw new AppError(`Plan '${requestedPlanName}' not found or inactive`, 404);
   }
 
   if (user.subscriptionStatus === 'active' && currentRank > requestedRank) {
@@ -205,6 +224,7 @@ export const createOrder = async (userId: string, planId?: string) => {
     notes: {
       userId,
       plan: planObj.name,
+      expectedAmountPaise: String(amountPaise),
     },
   };
 
@@ -250,9 +270,9 @@ export const createRenewOrder = async (userId: string) => {
     throw new AppError('Free plan cannot be renewed.', 400);
   }
 
-  const planObj = await Plan.findOne({ name: currentPlan });
+  const planObj = await Plan.findOne({ name: currentPlan, is_active: true });
   if (!planObj) {
-    throw new AppError(`Plan '${currentPlan}' not found`, 404);
+    throw new AppError(`Plan '${currentPlan}' not found or inactive`, 404);
   }
 
   const exchangeRate = 80;
@@ -277,6 +297,7 @@ export const createRenewOrder = async (userId: string) => {
       userId,
       plan: planObj.name,
       renew: '1',
+      expectedAmountPaise: String(amountPaise),
     },
   };
 
@@ -318,6 +339,7 @@ type ApplyPaymentInput = {
   currency: string;
   transactionId: string;
   receiptUrl?: string | undefined;
+  expectedAmountPaise?: number;
 };
 
 const applySuccessfulPayment = async ({
@@ -327,10 +349,19 @@ const applySuccessfulPayment = async ({
   currency,
   transactionId,
   receiptUrl,
+  expectedAmountPaise,
 }: ApplyPaymentInput) => {
   const existing = await Payment.findOne({ transactionId });
   if (existing) {
     return { alreadyProcessed: true, payment: existing };
+  }
+
+  ensureAmountNotUnderpaid(amount, Number(expectedAmountPaise || 0), 'Payment verification');
+
+  const normalizedPurchasedPlan = String(purchasedPlan || '').toLowerCase();
+  const planObj = await Plan.findOne({ name: normalizedPurchasedPlan, is_active: true });
+  if (!planObj) {
+    throw new AppError(`Invalid or inactive plan '${normalizedPurchasedPlan}' in payment payload`, 400);
   }
 
   const currentUser = await User.findById(userId);
@@ -352,7 +383,7 @@ const applySuccessfulPayment = async ({
   const updatedUser = await User.findByIdAndUpdate(
     userId,
     {
-      plan: purchasedPlan,
+      plan: planObj.name,
       subscriptionStatus: 'active',
       subscriptionExpiresAt,
       uploadsUsedToday: 0,
@@ -399,7 +430,7 @@ const applySuccessfulPayment = async ({
 
   const paymentPayload: any = {
     userId: updatedUser._id,
-    planId: purchasedPlan,
+    planId: planObj.name,
     amount: amount / 100, // Convert from paise/cents to standard unit
     currency,
     status: 'success',
@@ -459,6 +490,7 @@ export const confirmPaymentLink = async (userId: string, input: ConfirmInput) =>
   const currency = data.currency || 'INR';
   const transactionId = data.id || paymentLinkId;
   const receiptUrl = data.short_url;
+  const expectedAmountPaise = parseExpectedAmountPaise(notes.expectedAmountPaise, amount);
 
   return applySuccessfulPayment({
     userId,
@@ -467,6 +499,7 @@ export const confirmPaymentLink = async (userId: string, input: ConfirmInput) =>
     currency,
     transactionId,
     receiptUrl,
+    expectedAmountPaise,
   });
 };
 
@@ -530,6 +563,14 @@ export const confirmOrderPayment = async (userId: string, input: ConfirmOrderPay
   const purchasedPlan = notes.plan || 'pro';
   const amount = data.amount || 0;
   const currency = data.currency || 'INR';
+  const expectedAmountPaise = parseExpectedAmountPaise(notes.expectedAmountPaise, amount);
+
+  ensureAmountNotUnderpaid(amount, expectedAmountPaise, 'Order payment verification');
+  const normalizedPurchasedPlan = String(purchasedPlan || '').toLowerCase();
+  const planObj = await Plan.findOne({ name: normalizedPurchasedPlan, is_active: true });
+  if (!planObj) {
+    throw new AppError(`Invalid or inactive plan '${normalizedPurchasedPlan}' in payment payload`, 400);
+  }
 
   if (String(notes.renew || '') === '1') {
     const user = await User.findById(userId);
@@ -544,7 +585,7 @@ export const confirmOrderPayment = async (userId: string, input: ConfirmOrderPay
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       {
-        plan: purchasedPlan,
+        plan: planObj.name,
         subscriptionStatus: 'active',
         subscriptionExpiresAt: baseDate,
       },
@@ -559,10 +600,11 @@ export const confirmOrderPayment = async (userId: string, input: ConfirmOrderPay
 
   return applySuccessfulPayment({
     userId,
-    purchasedPlan,
+    purchasedPlan: planObj.name,
     amount,
     currency,
     transactionId: paymentId,
+    expectedAmountPaise,
   });
 };
 
@@ -651,6 +693,7 @@ export const handleRazorpayWebhook = async (rawBody: Buffer | string, signature:
     const amount = paymentLink?.amount || 0;
     const currency = paymentLink?.currency || 'INR';
     const transactionId = paymentLink?.id;
+    const expectedAmountPaise = parseExpectedAmountPaise(paymentLink?.notes?.expectedAmountPaise, amount);
 
     if (!transactionId) {
       console.error('Webhook event missing transaction ID', event);
@@ -666,6 +709,7 @@ export const handleRazorpayWebhook = async (rawBody: Buffer | string, signature:
           currency,
           transactionId,
           receiptUrl: paymentLink?.short_url,
+          expectedAmountPaise,
         });
         if (!result.alreadyProcessed) {
           console.log(`Successfully processed Razorpay payment ${transactionId} for user ${userId}`);

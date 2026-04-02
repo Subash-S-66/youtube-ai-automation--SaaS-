@@ -24,7 +24,7 @@ const callNativeGemini = async (prompt: string, timeoutMs = 15000): Promise<stri
     throw new Error('GEMINI_API_KEY is not configured');
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
+  const modelName = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
   console.log(`[AIService] Trying Native Google Gemini model: ${modelName}`);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });

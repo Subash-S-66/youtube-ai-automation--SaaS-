@@ -5,7 +5,6 @@ import base64
 import logging
 import os
 from pathlib import Path
-import random
 import re
 import shutil
 import subprocess
@@ -20,13 +19,29 @@ DEFAULT_GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Puck")
 GEMINI_VOICE_OPTIONS = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
 GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash-native-audio-latest").strip()
 GEMINI_AUDIO_MODELS = [GEMINI_AUDIO_MODEL]
+GEMINI_AUDIO_SAMPLE_RATE = max(16000, min(48000, int(os.getenv("GEMINI_AUDIO_SAMPLE_RATE", "24000") or 24000)))
+MAX_TTS_SPEED_FACTOR = max(1.0, min(1.8, float(os.getenv("MAX_TTS_SPEED_FACTOR", "1.35") or 1.35)))
 
 
-def pick_voice_profile(voice: str = "", rate: str = "") -> tuple[str, str]:
+def pick_voice_profile(voice: str = "", rate: str = "", script: str = "") -> tuple[str, str]:
     clean = voice.strip()
-    if clean and clean in GEMINI_VOICE_OPTIONS:
-        return clean, ""
-    return random.choice(GEMINI_VOICE_OPTIONS), ""
+    script_text = str(script or "").lower()
+
+    if clean and clean in GEMINI_VOICE_OPTIONS and clean != DEFAULT_GEMINI_VOICE:
+        return clean, (rate or "")
+
+    if any(token in script_text for token in ["warning", "urgent", "alert", "risk", "danger"]):
+        return "Fenrir", (rate or "")
+    if any(token in script_text for token in ["story", "history", "journey", "narrative", "myth"]):
+        return "Aoede", (rate or "")
+    if any(token in script_text for token in ["finance", "market", "data", "analytics", "tutorial"]):
+        return "Kore", (rate or "")
+    if any(token in script_text for token in ["ai", "future", "space", "robot", "technology"]):
+        return "Puck", (rate or "")
+
+    if DEFAULT_GEMINI_VOICE in GEMINI_VOICE_OPTIONS:
+        return DEFAULT_GEMINI_VOICE, (rate or "")
+    return GEMINI_VOICE_OPTIONS[0], (rate or "")
 
 
 def _validate_audio_file(path: Path) -> None:
@@ -88,7 +103,7 @@ def _concat_wav_files(inputs: list[Path], output_path: Path) -> Path:
 def _ensure_wav_container(path: Path) -> None:
     """
     Gemini audio responses may arrive as raw PCM bytes.
-    If the file is not a WAV container, wrap bytes as PCM16 mono @24kHz WAV.
+    If the file is not a WAV container, wrap bytes as PCM16 mono WAV.
     """
     try:
         with wave.open(str(path), "rb") as wf:
@@ -103,8 +118,8 @@ def _ensure_wav_container(path: Path) -> None:
 
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(1)
-        wf.setsampwidth(2)  # PCM16
-        wf.setframerate(24000)
+        wf.setsampwidth(2)
+        wf.setframerate(GEMINI_AUDIO_SAMPLE_RATE)
         wf.writeframes(raw)
 
 
@@ -121,17 +136,17 @@ def get_audio_duration_seconds(audio_path: Path) -> float:
 
 
 def _count_words(text: str) -> int:
-    return len(str(text or "").split())  # FIXED: Reusable word counting for script budget enforcement.
+    return len(str(text or "").split())
 
 
 def _build_atempo_chain(factor: float) -> str:
-    value = max(0.25, min(4.0, float(factor)))  # FIXED: Clamp atempo factor to stable range before chain decomposition.
+    value = max(0.25, min(4.0, float(factor)))
     parts: list[float] = []
     while value < 0.5:
-        parts.append(0.5)  # FIXED: Build chained atempo filters for factors below ffmpeg lower bound.
+        parts.append(0.5)
         value /= 0.5
     while value > 2.0:
-        parts.append(2.0)  # FIXED: Build chained atempo filters for factors above ffmpeg upper bound.
+        parts.append(2.0)
         value /= 2.0
     parts.append(value)
     return ",".join(f"atempo={p:.6f}" for p in parts)
@@ -142,9 +157,10 @@ def _speed_up_audio_to_target(input_path: Path, output_path: Path, target_second
     if current_seconds <= 0 or target_seconds <= 0:
         return input_path, current_seconds
     if current_seconds <= target_seconds:
-        return input_path, current_seconds  # FIXED: Never slow audio down when already at/below target duration.
+        return input_path, current_seconds
 
-    speed_factor = current_seconds / float(target_seconds)  # FIXED: Compute playback speed required to land exactly on target duration.
+    required_speed_factor = current_seconds / float(target_seconds)
+    speed_factor = min(required_speed_factor, MAX_TTS_SPEED_FACTOR)
     filter_chain = _build_atempo_chain(speed_factor)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
@@ -175,20 +191,20 @@ def _expand_script_with_sentences(script: str, sentence_count: int = 2) -> str:
     ]
     expanded = str(script or "").strip()
     for idx in range(max(1, min(2, int(sentence_count)))):
-        expanded = f"{expanded} {additions[idx % len(additions)]}".strip()  # FIXED: Expand short scripts by adding 1-2 factual narration sentences.
+        expanded = f"{expanded} {additions[idx % len(additions)]}".strip()
     return expanded
 
 
 def _normalize_script_word_window(script: str, min_words: int | None, hard_cap_words: int | None) -> str:
     normalized = " ".join(str(script or "").split()).strip()
     if hard_cap_words is not None and hard_cap_words > 0 and _count_words(normalized) > hard_cap_words:
-        normalized = " ".join(normalized.split()[: int(hard_cap_words)]).strip()  # FIXED: Enforce hard word cap before TTS.
+        normalized = " ".join(normalized.split()[: int(hard_cap_words)]).strip()
     if min_words is not None and min_words > 0:
         safety = 0
         while _count_words(normalized) < min_words and safety < 6:
-            normalized = _expand_script_with_sentences(normalized, sentence_count=2)  # FIXED: Enforce minimum word floor before TTS.
+            normalized = _expand_script_with_sentences(normalized, sentence_count=2)
             if hard_cap_words is not None and hard_cap_words > 0 and _count_words(normalized) > hard_cap_words:
-                normalized = " ".join(normalized.split()[: int(hard_cap_words)]).strip()  # FIXED: Keep expanded script within hard cap.
+                normalized = " ".join(normalized.split()[: int(hard_cap_words)]).strip()
             safety += 1
     return normalized
 
@@ -211,12 +227,13 @@ def generate_voice_with_duration_control(
     """
     retries = 0
     current_script = _normalize_script_word_window(script, min_words=min_words, hard_cap_words=hard_cap_words)
+    resolved_voice = _resolve_gemini_voice(voice)
 
     while True:
         attempt_audio_path = output_path.parent / f"{output_path.stem}_attempt_{retries + 1}.wav"
         generated_path, _ = generate_voice(
             script=current_script,
-            voice=voice,
+            voice=resolved_voice,
             output_path=attempt_audio_path,
             rate=rate,
             rotate_profile=False,
@@ -230,19 +247,19 @@ def generate_voice_with_duration_control(
                 output_path=sped_path,
                 target_seconds=float(target_seconds),
             )
-            shutil.copy2(adjusted_path, output_path)  # FIXED: Publish normalized audio at canonical output path.
-            LOGGER.info("[DURATION_CHECK] target=%ss actual=%.2fs action=speed_up", int(round(target_seconds)), adjusted_seconds)  # FIXED: Required duration action log for speed-up path.
+            shutil.copy2(adjusted_path, output_path)
+            LOGGER.info("[DURATION_CHECK] target=%ss actual=%.2fs action=speed_up", int(round(target_seconds)), adjusted_seconds)
             return output_path, adjusted_seconds, current_script, "speed_up", retries
 
         if actual_seconds < float(min_seconds) and retries < int(max_expand_retries):
-            LOGGER.info("[DURATION_CHECK] target=%ss actual=%.2fs action=expand", int(round(target_seconds)), actual_seconds)  # FIXED: Required duration action log for expansion retry path.
+            LOGGER.info("[DURATION_CHECK] target=%ss actual=%.2fs action=expand", int(round(target_seconds)), actual_seconds)
             current_script = _expand_script_with_sentences(current_script, sentence_count=2)
             current_script = _normalize_script_word_window(current_script, min_words=min_words, hard_cap_words=hard_cap_words)
             retries += 1
             continue
 
-        shutil.copy2(generated_path, output_path)  # FIXED: Keep original-speed narration when within target window.
-        LOGGER.info("[DURATION_CHECK] target=%ss actual=%.2fs action=ok", int(round(target_seconds)), actual_seconds)  # FIXED: Required duration action log for in-window audio.
+        shutil.copy2(generated_path, output_path)
+        LOGGER.info("[DURATION_CHECK] target=%ss actual=%.2fs action=ok", int(round(target_seconds)), actual_seconds)
         return output_path, actual_seconds, current_script, "ok", retries
 
 
@@ -255,17 +272,37 @@ def _resolve_gemini_voice(voice: str) -> str:
     clean = (voice or "").strip()
     if clean in GEMINI_VOICE_OPTIONS:
         return clean
-    return DEFAULT_GEMINI_VOICE if DEFAULT_GEMINI_VOICE in GEMINI_VOICE_OPTIONS else random.choice(GEMINI_VOICE_OPTIONS)
+    return DEFAULT_GEMINI_VOICE if DEFAULT_GEMINI_VOICE in GEMINI_VOICE_OPTIONS else GEMINI_VOICE_OPTIONS[0]
 
 
 def _build_verbatim_narration_prompt(script: str) -> str:
     normalized_script = " ".join(str(script or "").split()).strip()
     return (
-        "You are a text-to-speech narrator. "
-        "Speak only the text inside <narration> tags exactly as written. "
-        "Do not answer, explain, paraphrase, summarize, or add any words.\n"
+        "You are a narration engine for short-form videos. "
+        "Read only the text inside <narration> tags exactly as written. "
+        "Never answer as an assistant, never add commentary, and never paraphrase. "
+        "Preserve sentence order and punctuation.\n"
         f"<narration>{normalized_script}</narration>"
     )
+
+
+def _run_async_compatible(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    try:
+        import nest_asyncio
+
+        nest_asyncio.apply(loop)
+        return loop.run_until_complete(coro)
+    except Exception:
+        temp_loop = asyncio.new_event_loop()
+        try:
+            return temp_loop.run_until_complete(coro)
+        finally:
+            temp_loop.close()
 
 
 async def _save_gemini_voice_live_async(
@@ -309,7 +346,6 @@ async def _save_gemini_voice_live_async(
         async for response in session.receive():
             server_content = getattr(response, "server_content", None)
             if not server_content:
-                # Log non-content responses for debugging (e.g. setup, turn_complete)
                 LOGGER.debug("Gemini Live received response without server_content: %s", response)
                 continue
 
@@ -360,7 +396,7 @@ def _save_gemini_voice_sync(script: str, voice: str, output_path: Path) -> Path:
             last_error: Exception | None = None
             for key in keys:
                 try:
-                    output = asyncio.run(
+                    output = _run_async_compatible(
                         _save_gemini_voice_live_async(
                             script=script,
                             gemini_voice=gemini_voice,
@@ -395,7 +431,6 @@ def generate_voice(
         raise RuntimeError("Script is empty after sanitization, unable to generate voice.")
 
     selected_voice = _resolve_gemini_voice(voice)
-    # Long scripts can be truncated by a single TTS call; synthesize in chunks and stitch.
     chunks = _split_script_chunks(clean_script, max_chars=700)
     if len(chunks) <= 1:
         audio_path = _save_gemini_voice_sync(clean_script, selected_voice, output_path)

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import dynamic from "next/dynamic";
+import Script from "next/script";
 import { getApiOrigin } from "../lib/apiBase";
 import FramerMotionProvider from "../components/layout/FramerMotionProvider";
 
@@ -47,10 +48,52 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const apiOrigin = getApiOrigin();
+  const performanceApiPolyfill = `
+    (function () {
+      if (typeof globalThis === 'undefined') return;
+      var scope = globalThis;
+      var perf = scope.performance;
+      var noop = function () {};
+      var ensureFn = function (target, method, fallback) {
+        if (!target) return;
+        var next = fallback || noop;
+        if (typeof target[method] === 'function') return;
+        try {
+          Object.defineProperty(target, method, {
+            configurable: true,
+            enumerable: false,
+            writable: true,
+            value: next,
+          });
+          return;
+        } catch (_) {}
+        try {
+          target[method] = next;
+        } catch (_) {}
+      };
+
+      if (!perf) return;
+      ensureFn(perf, 'mark', noop);
+      ensureFn(perf, 'measure', noop);
+      ensureFn(perf, 'clearMarks', noop);
+      ensureFn(perf, 'clearMeasures', noop);
+      ensureFn(perf, 'getEntriesByName', function () { return []; });
+
+      var proto = Object.getPrototypeOf(perf);
+      ensureFn(proto, 'mark', noop);
+      ensureFn(proto, 'measure', noop);
+      ensureFn(proto, 'clearMarks', noop);
+      ensureFn(proto, 'clearMeasures', noop);
+      ensureFn(proto, 'getEntriesByName', function () { return []; });
+    })();
+  `;
 
   return (
     <html lang="en">
       <head>
+        <Script id="performance-api-polyfill" strategy="beforeInteractive">
+          {performanceApiPolyfill}
+        </Script>
         <link rel="preconnect" href={apiOrigin} />
         <link rel="dns-prefetch" href={apiOrigin} />
       </head>

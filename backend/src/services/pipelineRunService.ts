@@ -5,7 +5,7 @@ import StoryProgress from '../models/StoryProgress';
 import Job from '../models/Job';
 import User from '../models/User';
 import { pipelineQueue } from '../queues/pipelineQueue';
-import { getUploadLimits, reserveCredits } from './uploadLimitService';
+import { getUploadLimits, releaseReservedCredits, reserveCredits } from './uploadLimitService';
 import { buildStandardPrompt } from './promptBuilderService';
 import { generateSubTopics } from './subTopicService';
 import { ensureValidYouTubeToken } from './youtubeTokenService';
@@ -385,14 +385,14 @@ export const enqueuePipelineJob = async ({
     userId,
     channelId: selectedChannelId, // FIXED: Scope rolling upload checks to selected channel only.
     status: 'success',
-    createdAt: { $gte: oneDayAgo },
+    completedAt: { $gte: oneDayAgo },
   });
   const uploadsLast24h = recentJobs.reduce((sum, job) => sum + (job.videoCount || 1), 0);
 
   if (uploadsLast24h + finalSettings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
     return {
       warningOnly: true,
-      warning: 'YouTube daily upload limit reached. If you upload now it may not publish and will still consume your upload. Continue?',
+      warning: 'YouTube daily upload limit reached. If you try to upload now it may not be uploaded and it will still consume your upload. Continue?',
     };
   }
 
@@ -420,6 +420,18 @@ export const enqueuePipelineJob = async ({
 
   const finalLimitCheck = await getUploadLimits(userId);
   const persistedPipelineConfig = { ...finalSettings, channelId: selectedChannelId }; // FIXED: Explicitly persist selected channelId in pipelineConfig.channelId.
+  const immutableInputSnapshot = {
+    promptId,
+    userPrompt: String(prompt.user_prompt || '').trim(),
+    geminiPrompt: String(prompt.gemini_prompt || '').trim(),
+    chosenSubTopic: String(chosenSubTopic || '').trim(),
+    standardizedPrompt: String(standardizedPrompt || '').trim(),
+    requestedAt: new Date().toISOString(),
+    uploadTargetChannelId: selectedChannelId,
+    requestedVideoCount: Math.max(1, Number(finalSettings.videoCount || 1)),
+    acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
+    settings: persistedPipelineConfig,
+  };
 
   const jobData: Record<string, any> = {
     userId,
@@ -451,6 +463,12 @@ export const enqueuePipelineJob = async ({
     generatedMetadata: [],
     preparedContent: [],
     pipelineConfig: persistedPipelineConfig, // FIXED: Store canonical selected channel id in job pipeline config.
+    inputSnapshot: immutableInputSnapshot,
+    result: {
+      status: 'queued',
+      queuedAt: new Date().toISOString(),
+      inputSnapshot: immutableInputSnapshot,
+    },
     youtubeAccountId: selectedChannelId, // FIXED: Keep legacy field aligned with selected channel for backward compatibility.
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
     videoCount: finalSettings.videoCount,
@@ -467,10 +485,6 @@ export const enqueuePipelineJob = async ({
 
   const job = await Job.create(jobData);
 
-  if (idempotencyKey && connection) {
-    await connection.set(`idempotency:job:${idempotencyKey}`, job._id.toString(), 'EX', 24 * 60 * 60); // 24 hour expiry
-  }
-
   const planPriorities: Record<string, number> = {
     premium: 1,
     pro: 2,
@@ -484,26 +498,64 @@ export const enqueuePipelineJob = async ({
   const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
   const queueJobId = `${userId}-${promptId}-${Date.now()}`;
 
-  await pipelineQueue.add(
-    'runPipeline',
-    {
-      userId,
-      promptId,
-      jobId: job._id.toString(),
-      settings: persistedPipelineConfig, // FIXED: Forward settings with explicit selected channel id for worker parity.
-    },
-    {
-      priority: jobPriority,
-      jobId: queueJobId,
-      attempts: 3,
-      timeout: jobTimeoutMs,
-      backoff: {
-        type: 'exponential',
-        delay: 5000,
+  try {
+    await pipelineQueue.add(
+      'runPipeline',
+      {
+        userId,
+        promptId,
+        jobId: job._id.toString(),
+        settings: persistedPipelineConfig, // FIXED: Forward settings with explicit selected channel id for worker parity.
       },
-      removeOnFail: true,
-    }
-  );
+      {
+        priority: jobPriority,
+        jobId: queueJobId,
+        attempts: 3,
+        timeout: jobTimeoutMs,
+        backoff: {
+          type: 'exponential',
+          delay: 5000,
+        },
+        removeOnFail: true,
+      }
+    );
+  } catch (queueError) {
+    const rollbackCount = Math.max(1, Number(finalSettings.videoCount || 1));
+
+    await releaseReservedCredits(userId, rollbackCount).catch(console.error);
+    await User.updateOne(
+      { _id: userId, 'youtubeChannels.channelId': selectedChannelId, 'youtubeChannels.videosOnHold': { $gte: rollbackCount } },
+      { $inc: { 'youtubeChannels.$.videosOnHold': -rollbackCount } }
+    ).catch(console.error);
+
+    await Job.findByIdAndUpdate(job._id, {
+      status: 'failed',
+      completedAt: new Date(),
+      holdReleased: true,
+      error: 'Queue dispatch failed',
+      errorMessage: 'Queue dispatch failed',
+      errorStage: 'RENDER',
+      progress: {
+        progress: 100,
+        stage: 'failed',
+        message: 'Queue dispatch failed',
+        timestamp: new Date().toISOString(),
+      },
+      result: {
+        success: false,
+        stage: 'RENDER',
+        message: 'Queue dispatch failed',
+        error: String((queueError as Error)?.message || queueError || ''),
+        failedAt: new Date().toISOString(),
+      },
+    }).catch(console.error);
+
+    throw new AppError('Failed to dispatch pipeline job. Please try again.', 500);
+  }
+
+  if (idempotencyKey && connection) {
+    await connection.set(`idempotency:job:${idempotencyKey}`, job._id.toString(), 'EX', 24 * 60 * 60); // 24 hour expiry
+  }
 
   const result: EnqueuePipelineResult = {
     jobId: job._id.toString(),
@@ -520,7 +572,7 @@ export const enqueuePipelineJob = async ({
   };
 
   if (uploadsLast24h + finalSettings.videoCount > 10) {
-    result.warning = 'YouTube daily upload limit reached. If you upload now it may not publish and will still consume your upload. Continue?';
+    result.warning = 'YouTube daily upload limit reached. If you try to upload now it may not be uploaded and it will still consume your upload. Continue?';
   }
 
   return result;

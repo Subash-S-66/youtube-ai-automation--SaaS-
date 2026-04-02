@@ -175,9 +175,9 @@ interface ApiErrorShape {
   };
 }
 
-interface DateTimePickerInput extends HTMLInputElement {
+type DateTimePickerInput = HTMLInputElement & {
   showPicker?: () => void;
-}
+};
 
 function Dashboard() {
   const [user, setUser] = useState<DashboardUser | null>(null);
@@ -629,7 +629,7 @@ function Dashboard() {
 
         for (const job of currentJobs) {
           const prevStatus = (prevStatusMap[job._id] || '').toLowerCase();
-          const currStatus = String(job.status || '').toLowerCase();
+          const currStatus = String(nextStatusMap[job._id] || '').toLowerCase();
           const wasActive = activeStatuses.has(prevStatus);
           const isTerminal = terminalStatuses.has(currStatus);
           const isSuccess = currStatus === 'success' || currStatus === 'completed';
@@ -1473,7 +1473,7 @@ function Dashboard() {
                       value={selectedChannelId}
                       onChange={(e) => {
                         const nextChannelId = e.target.value;
-                        confirmStoryReset(() => switchChannel(nextChannelId));
+                        switchChannel(nextChannelId);
                       }}
                     >
                       {!user?.isYoutubeConnected && (
@@ -1974,7 +1974,7 @@ function Dashboard() {
                         id="channel-select"
                         aria-label="Select Channel"
                         value={selectedChannelId}
-                        onChange={(e) => confirmStoryReset(() => switchChannel(e.target.value))}
+                        onChange={(e) => switchChannel(e.target.value)}
                         className="w-full bg-[#111827] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
                       >
                         {validYouTubeChannels.map((channel) => (

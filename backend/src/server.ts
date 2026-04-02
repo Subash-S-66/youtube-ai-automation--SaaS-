@@ -49,7 +49,7 @@ server.listen(PORT, () => {
 
   // AI Provider diagnostics
   const geminiConfigured = !!process.env.GEMINI_API_KEY;
-  const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
+  const geminiModel = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
   console.log('[AI Config] Provider: native-gemini only');
   console.log(`[AI Config] Gemini API: ${geminiConfigured ? 'configured' : 'NOT configured - generation will fail'}`);
   console.log(`[AI Config] Model: ${geminiModel}`);

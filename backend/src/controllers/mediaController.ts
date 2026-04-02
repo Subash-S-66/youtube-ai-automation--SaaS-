@@ -448,7 +448,84 @@ export const getSecureMediaFile = asyncHandler(async (req: Request, res: Respons
     throw new AppError('File not found', 404);
   }
 
-  res.sendFile(filePath);
+  const fileStat = fs.statSync(filePath);
+  const fileSize = fileStat.size;
+  const rangeHeader = req.headers.range;
+
+  res.type(filePath);
+  res.setHeader('Accept-Ranges', 'bytes');
+
+  if (rangeHeader) {
+    const parsed = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+    if (!parsed) {
+      res.status(416);
+      res.setHeader('Content-Range', `bytes */${fileSize}`);
+      res.end();
+      return;
+    }
+
+    const startRaw = parsed[1] || '';
+    const endRaw = parsed[2] || '';
+    let start = 0;
+    let end = fileSize - 1;
+
+    if (!startRaw && !endRaw) {
+      res.status(416);
+      res.setHeader('Content-Range', `bytes */${fileSize}`);
+      res.end();
+      return;
+    }
+
+    if (!startRaw && endRaw) {
+      const suffixLength = Number.parseInt(endRaw, 10);
+      if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+        res.status(416);
+        res.setHeader('Content-Range', `bytes */${fileSize}`);
+        res.end();
+        return;
+      }
+      start = Math.max(fileSize - suffixLength, 0);
+    } else {
+      start = Number.parseInt(startRaw, 10);
+      end = endRaw ? Number.parseInt(endRaw, 10) : (fileSize - 1);
+    }
+
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= fileSize) {
+      res.status(416);
+      res.setHeader('Content-Range', `bytes */${fileSize}`);
+      res.end();
+      return;
+    }
+
+    end = Math.min(end, fileSize - 1);
+    const chunkSize = (end - start) + 1;
+
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+    res.setHeader('Content-Length', String(chunkSize));
+
+    const partialStream = fs.createReadStream(filePath, { start, end });
+    partialStream.on('error', () => {
+      if (!res.headersSent) {
+        res.status(500).end();
+        return;
+      }
+      res.end();
+    });
+    partialStream.pipe(res);
+    return;
+  }
+
+  res.setHeader('Content-Length', String(fileSize));
+  const fullStream = fs.createReadStream(filePath);
+  fullStream.on('error', () => {
+    if (!res.headersSent) {
+      res.status(500).end();
+      return;
+    }
+    res.end();
+  });
+  fullStream.pipe(res);
 });
 
 export const deleteMedia = asyncHandler(async (req: Request, res: Response) => {

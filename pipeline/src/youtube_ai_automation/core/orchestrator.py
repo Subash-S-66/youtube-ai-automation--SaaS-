@@ -21,7 +21,7 @@ from youtube_ai_automation.services.webhook_service import send_pipeline_complet
 from youtube_ai_automation.stages.audio import AudioStageResult, generate_audio
 from youtube_ai_automation.stages.composition import CompositionStageResult, compose_scenes
 from youtube_ai_automation.stages.media import MediaStageResult, fetch_media
-from youtube_ai_automation.stages.script import ScriptStageResult, generate_script
+from youtube_ai_automation.stages.script import ScriptStageResult, build_visual_queries, generate_script
 from youtube_ai_automation.utils.logger import StageLogger
 from youtube_ai_automation.youtube_uploader import upload_video
 
@@ -81,18 +81,18 @@ def _resolve_content_type(payload: dict[str, Any]) -> str:
 
 
 def _extract_scenes(payload: dict[str, Any], script_lines: list[str]) -> list[str]:
-    scenes: list[str] = []
+    raw_scenes: list[str] = []
     # from metadata.searchQueries if present
     meta = payload.get("metadata", []) if isinstance(payload.get("metadata"), list) else []
     if meta and isinstance(meta[0], dict):
         sq = meta[0].get("searchQueries", [])
         if isinstance(sq, list):
-            scenes.extend([str(x).strip() for x in sq if str(x).strip()])
-    if not scenes:
-        scenes = [line for line in script_lines[:10] if line.strip()]
-    if not scenes:
-        scenes = ["technology cinematic b-roll"]
-    return scenes
+            raw_scenes.extend([str(x).strip() for x in sq if str(x).strip()])
+    if not raw_scenes:
+        raw_scenes = [line for line in script_lines[:10] if line.strip()]
+    if not raw_scenes:
+        raw_scenes = ["technology"]
+    return build_visual_queries(raw_scenes, max_queries=10)
 
 
 def run_orchestrated_pipeline(

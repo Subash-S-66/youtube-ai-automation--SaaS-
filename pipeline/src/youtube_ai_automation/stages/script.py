@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from youtube_ai_automation.content_generator import generate_content
 from youtube_ai_automation.utils.fallback import minimal_safe_script
@@ -13,6 +14,46 @@ class ScriptStageResult:
     provider_used: str
     warnings: list[str]
     hard_failed: bool = False
+
+
+_VISUAL_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "into", "is",
+    "it", "of", "on", "or", "that", "the", "this", "to", "was", "were", "with", "you", "your",
+}
+
+
+def rewrite_to_visual_query(text: str) -> str:
+    normalized = " ".join(str(text or "").split()).strip().lower()
+    if not normalized:
+        return "technology cinematic b-roll"
+
+    tokens = [
+        token
+        for token in re.findall(r"[a-z0-9]+", normalized)
+        if token not in _VISUAL_STOP_WORDS and not token.isdigit() and len(token) > 2
+    ]
+    if not tokens:
+        tokens = [token for token in re.findall(r"[a-z0-9]+", normalized) if len(token) > 2]
+
+    base = " ".join(tokens[:6]).strip()
+    if not base:
+        base = "technology"
+    return f"{base} cinematic b-roll"
+
+
+def build_visual_queries(lines: list[str], max_queries: int = 10) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        query = rewrite_to_visual_query(line)
+        key = query.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(query)
+        if len(out) >= max(1, int(max_queries)):
+            break
+    return out
 
 
 def generate_script(input_payload: dict, logger: StageLogger) -> ScriptStageResult:

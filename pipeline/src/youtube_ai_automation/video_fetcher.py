@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
+import random
 import shutil
 import subprocess
 import time
@@ -24,9 +25,19 @@ def _resolve_used_clips_file(output_dir: Path, explicit: Path | None = None) -> 
     if explicit is not None:
         return explicit
     user_id = str(os.getenv("USER_ID", "")).strip()
-    if user_id:
-        return output_dir.parent / "users" / user_id / "used_clips.json"
-    return output_dir.parent / "used_clips.json"
+    if not user_id:
+        user_id = "anonymous"
+    return output_dir.parent / "users" / user_id / "used_clips.json"
+
+
+def _duration_window(scene_duration: float) -> tuple[float, float]:
+    target = max(2.0, min(9.5, float(scene_duration or 4.0)))
+    lower = max(2.0, round(target * 0.6, 2))
+    upper = min(9.5, round(target * 1.4, 2))
+    if upper - lower < 1.5:
+        lower = max(2.0, round(target - 1.0, 2))
+        upper = min(9.5, round(target + 1.0, 2))
+    return lower, upper
 
 
 @dataclass
@@ -133,9 +144,15 @@ def _create_placeholder_video(output_dir: Path, name: str, duration_seconds: flo
     return None
 
 
-def fallback_media(scene: str, output_dir: Path, scene_idx: int) -> list[Path]:
+def fallback_media(scene: str, output_dir: Path, scene_idx: int, min_duration: float, max_duration: float) -> list[Path]:
     # 1) Reuse local clips if possible.
-    local = _build_fallback_scene_clips([scene], output_dir=output_dir, scene_duration=3.0, min_duration=2.0, max_duration=7.0)  # FIXED: Enforce 2-7 second clip bounds for fallback media.
+    local = _build_fallback_scene_clips(
+        [scene],
+        output_dir=output_dir,
+        scene_duration=3.0,
+        min_duration=min_duration,
+        max_duration=max_duration,
+    )
     if local:
         return local[:1]
     # 2) Create a deterministic placeholder video.
@@ -175,7 +192,7 @@ def get_media_for_scene(
             min_resolution=max(240, min_resolution // 2),
         )
     if not available_candidates:
-        return fallback_media(scene, output_dir, scene_idx)
+        return fallback_media(scene, output_dir, scene_idx, min_duration=min_duration, max_duration=max_duration)
     return choose_candidates(
         candidates=available_candidates,
         used_clips_file=used_file,
@@ -214,10 +231,12 @@ def _score_option(
 ) -> float:
     if width < min_resolution and height < min_resolution:
         return -1.0
-    orientation_bonus = 18.0 if height >= width else 6.0
-    resolution_score = min(55.0, (min(width, height) / max(1, min_resolution)) * 35.0)
+    orientation_bonus = 24.0 if height >= width else 8.0
+    resolution_score = min(60.0, (min(width, height) / max(1, min_resolution)) * 42.0)
     duration_center = (min_duration + max_duration) / 2.0
-    duration_score = max(0.0, 25.0 - abs(duration - duration_center) * 6.5)
+    duration_window = max(0.5, max_duration - min_duration)
+    duration_delta = abs(duration - duration_center)
+    duration_score = max(0.0, 30.0 - (duration_delta / duration_window) * 24.0)
     return orientation_bonus + resolution_score + duration_score
 
 
@@ -271,8 +290,7 @@ def _search_pexels_candidates(
     seen_urls: set[str] = set()
     for video in videos:
         duration = float(video.get("duration", 0) or 0)
-        # Enforce source-side duration policy strictly; do not download long clips for trimming.
-        if duration < 2.0 or duration > 7.0:  # FIXED: Hard filter Pexels candidates outside 2-7 second range.
+        if duration < min_duration or duration > max_duration:
             continue
         selected = _best_pexels_file(video.get("video_files", []), min_resolution=min_resolution)
         if not selected:
@@ -347,8 +365,7 @@ def _search_pixabay_candidates(
     seen_urls: set[str] = set()
     for item in hits:
         duration = float(item.get("duration", 0) or 0)
-        # Enforce source-side duration policy strictly; do not download long clips for trimming.
-        if duration < 2.0 or duration > 7.0:  # FIXED: Hard filter Pixabay candidates outside 2-7 second range.
+        if duration < min_duration or duration > max_duration:
             continue
         best = _best_pixabay_file(item, min_resolution=min_resolution)
         if not best:
@@ -405,9 +422,7 @@ def download_scene_videos(
     used_file = _resolve_used_clips_file(output_dir=output_dir, explicit=used_clips_file)
     all_paths: list[Path] = []
     selected_urls: set[str] = set()
-    # Hard policy: only download short b-roll clips (2s to 7s). # FIXED: Align runtime policy with requested clip duration window.
-    min_duration = 2.0  # FIXED: Minimum stock clip duration.
-    max_duration = 7.0  # FIXED: Maximum stock clip duration.
+    min_duration, max_duration = _duration_window(scene_duration)
     effective_min_resolution = max(720, int(min_resolution))
     min_per_scene = max(1, int(clips_per_scene_min))
     max_per_scene = max(min_per_scene, int(clips_per_scene_max))
@@ -427,6 +442,8 @@ def download_scene_videos(
     # Need a lock for thread-safe operations on shared collections
     import threading
     lock = threading.Lock()
+    api_parallel_limit = max(1, min(6, int(os.getenv("MEDIA_API_MAX_CONCURRENT", "3") or 3)))
+    api_semaphore = threading.Semaphore(api_parallel_limit)
     log_prefix = f"[JOB:{job_id}][MEDIA] " if job_id else "[MEDIA] "
 
     def process_scene(idx: int, scene: str) -> list[Path]:
@@ -440,15 +457,16 @@ def download_scene_videos(
             ordered_keys = normalized_pexels_keys[start_idx:] + normalized_pexels_keys[:start_idx]
             for key in ordered_keys:
                 try:
-                    pexels_candidates.extend(
-                        _search_pexels_candidates(
-                            query=query,
-                            api_key=key,
-                            min_resolution=effective_min_resolution,
-                            min_duration=min_duration,
-                            max_duration=max_duration,
+                    with api_semaphore:
+                        pexels_candidates.extend(
+                            _search_pexels_candidates(
+                                query=query,
+                                api_key=key,
+                                min_resolution=effective_min_resolution,
+                                min_duration=min_duration,
+                                max_duration=max_duration,
+                            )
                         )
-                    )
                     if pexels_candidates:
                         break
                 except Exception as exc:
@@ -459,15 +477,16 @@ def download_scene_videos(
             ordered_keys = normalized_pixabay_keys[start_idx:] + normalized_pixabay_keys[:start_idx]
             for key in ordered_keys:
                 try:
-                    pixabay_candidates.extend(
-                        _search_pixabay_candidates(
-                            query=query,
-                            api_key=key,
-                            min_resolution=effective_min_resolution,
-                            min_duration=min_duration,
-                            max_duration=max_duration,
+                    with api_semaphore:
+                        pixabay_candidates.extend(
+                            _search_pixabay_candidates(
+                                query=query,
+                                api_key=key,
+                                min_resolution=effective_min_resolution,
+                                min_duration=min_duration,
+                                max_duration=max_duration,
+                            )
                         )
-                    )
                     if pixabay_candidates:
                         break
                 except Exception as exc:
@@ -475,7 +494,7 @@ def download_scene_videos(
 
         with lock:
             exclude_all = selected_urls.union(mongo_used_clips)
-        target_clip_count = min_per_scene
+        target_clip_count = random.randint(min_per_scene, max_per_scene)
         selected_or_fallback = get_media_for_scene(
             scene=scene,
             scene_idx=idx,
@@ -527,7 +546,8 @@ def download_scene_videos(
 
         return local_paths
 
-    worker_count = min(len(scenes), 8) if scenes else 1  # FIXED: Scale parallel scene workers up to 8 as requested.
+    worker_limit = max(1, min(6, int(os.getenv("MEDIA_SCENE_WORKERS", "4") or 4)))
+    worker_count = min(len(scenes), worker_limit) if scenes else 1
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = [executor.submit(process_scene, idx, scene) for idx, scene in enumerate(scenes, start=1)]
         for future in futures:

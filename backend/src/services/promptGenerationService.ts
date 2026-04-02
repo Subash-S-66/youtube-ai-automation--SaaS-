@@ -96,7 +96,7 @@ const callNativeGeminiPrompt = async (prompt: string): Promise<string> => {
     throw new Error('GEMINI_API_KEY is not configured.');
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
+  const modelName = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
   console.log(`[PromptService] Trying Native Google Gemini model: ${modelName}`);
   
   const genAI = new GoogleGenerativeAI(apiKey);

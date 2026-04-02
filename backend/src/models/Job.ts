@@ -14,6 +14,7 @@ export interface IJob extends Document {
   generatedScenes?: string[][];
   generatedMetadata?: Array<Record<string, any>>;
   pipelineConfig?: Record<string, any>;
+  inputSnapshot?: Record<string, any>;
   youtubeAccountId?: string;
   preparedContent?: Array<Record<string, any>>;
   videoUrl?: string;
@@ -98,6 +99,10 @@ const JobSchema = new Schema<IJob>(
       default: [],
     },
     pipelineConfig: {
+      type: Schema.Types.Mixed,
+      default: {},
+    },
+    inputSnapshot: {
       type: Schema.Types.Mixed,
       default: {},
     },

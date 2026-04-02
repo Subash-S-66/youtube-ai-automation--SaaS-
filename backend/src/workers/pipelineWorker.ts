@@ -63,9 +63,11 @@ const flushLogs = async (jobId: string) => {
   const buffer = logBuffer[jobId];
   if (!buffer || !buffer.text) return;
 
-  const { text, status } = buffer;
+  const { text } = buffer;
+  const statusToApply = buffer.status;
   // Clear buffer
   buffer.text = '';
+  delete buffer.status;
   if (buffer.timeout) clearTimeout(buffer.timeout);
   buffer.timeout = null;
 
@@ -79,7 +81,13 @@ const flushLogs = async (jobId: string) => {
     }
 
     const updateData: any = { logs: combined };
-    if (status) updateData.status = status;
+    if (statusToApply) {
+      const currentStatus = String((dbJob as any).status || '').toLowerCase();
+      const terminalStatuses = new Set(['success', 'failed']);
+      if (!terminalStatuses.has(currentStatus)) {
+        updateData.status = statusToApply;
+      }
+    }
 
     await JobModel.findByIdAndUpdate(jobId, updateData);
   } catch (error) {
@@ -411,50 +419,68 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     console.log(`[PipelineWorker] Acquired lock for Job ${jobId} (User: ${userId})`);
 
     try {
-      // 1. Check Rolling Limit
+      // 1. Check channel-scoped 24h rolling upload limit (10 uploads per channel)
       if (settings.channelId) {
-         const recentJobs = await JobModel.find({
-            userId,
-            channelId: settings.channelId,
-            status: 'success'
-         }).sort({ createdAt: -1 }).limit(10);
+        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const recentSuccessfulJobs = await JobModel.find({
+          userId,
+          channelId: settings.channelId,
+          status: 'success',
+          completedAt: { $gte: oneDayAgo },
+        }).sort({ completedAt: -1, createdAt: -1 });
 
-         // We check length against 10 (or whatever max we consider, the instructions state if >= 10 get 10th item).
-         // Actually the soft limit is 10 uploads. Since a job can contain multiple videos,
-         // we need to sum up to the 10-video limit. But instructions simply said:
-         // "If uploads >= 10: get oldest upload (10th item). nextAllowedAt = oldest.createdAt + 24 hours"
-         if (recentJobs.length >= 10) {
-            const oldest = recentJobs[9];
-            if (oldest) {
-               const nextAllowedAt = new Date(oldest.createdAt.getTime() + 24 * 60 * 60 * 1000);
+        const uploadsLast24h = recentSuccessfulJobs.reduce((sum, successfulJob) => {
+          return sum + Math.max(1, Number(successfulJob.videoCount || 1));
+        }, 0);
 
-               const dbJob = await JobModel.findById(jobId);
-               const jobScheduledAt = dbJob?.createdAt || new Date();
+        const requestedUploads = Math.max(1, Number(settings.videoCount || 1));
+        const limitExceeded = (uploadsLast24h + requestedUploads) > 10;
+        const dbJob = await JobModel.findById(jobId);
+        const acceptedWarning = Boolean((dbJob as any)?.acceptedYouTubeLimitWarning);
 
-               if (jobScheduledAt.getTime() < nextAllowedAt.getTime()) {
-                  isSkipped = true;
-                  await appendLogSafe(jobId, `\nJob rejected due to YouTube 24-hour upload limit.\n`, 'failed');
-                  await JobModel.findByIdAndUpdate(jobId, { status: 'failed', errorMessage: 'Skipped due to YouTube 24-hour upload limit', errorStage: 'UPLOAD' });
+        if (limitExceeded && !acceptedWarning) {
+          isSkipped = true;
+          await appendLogSafe(jobId, `\nJob rejected due to YouTube 24-hour upload limit.\n`, 'failed');
+          await JobModel.findByIdAndUpdate(jobId, {
+            status: 'failed',
+            errorMessage: 'Skipped due to YouTube 24-hour upload limit',
+            errorStage: 'UPLOAD',
+            completedAt: new Date(),
+              result: {
+                success: false,
+                stage: 'UPLOAD',
+                message: 'Skipped due to YouTube 24-hour upload limit',
+                skippedAt: new Date().toISOString(),
+              },
+            progress: {
+             progress: 100,
+             stage: 'failed',
+             message: 'YouTube daily upload limit reached',
+             timestamp: new Date().toISOString(),
+            },
+          });
 
-                  // Notify user only once per limit window
-                  const u = await User.findById(userId);
-                  if (u) {
-                     const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
-                     if (ch) {
-                        const lastWarning = ch.lastLimitWarningSentAt;
-                        if (!lastWarning || lastWarning.getTime() < oldest.createdAt.getTime()) {
-                           await User.findOneAndUpdate(
-                              { _id: userId, 'youtubeChannels.channelId': settings.channelId },
-                              { $set: { 'youtubeChannels.$.lastLimitWarningSentAt': new Date() } }
-                           );
-                           await notifyUser(u, 'Scheduled Videos Skipped', '⚠️ Some scheduled videos were skipped due to YouTube 24-hour upload limit. Uploads will continue automatically.').catch(console.error);
-                        }
-                     }
-                  }
-                  return; // Do not consume upload, release hold in finally block
-               }
+          // Notify user only once per limit window
+          const u = await User.findById(userId);
+          if (u) {
+            const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
+            if (ch) {
+              const lastWarning = ch.lastLimitWarningSentAt;
+              if (!lastWarning || lastWarning.getTime() < oneDayAgo.getTime()) {
+                await User.findOneAndUpdate(
+                  { _id: userId, 'youtubeChannels.channelId': settings.channelId },
+                  { $set: { 'youtubeChannels.$.lastLimitWarningSentAt': new Date() } }
+                );
+                await notifyUser(u, 'Daily Upload Limit Reached', '⚠️ YouTube daily upload limit reached for this channel.').catch(console.error);
+              }
             }
-         }
+          }
+          return; // Do not consume upload, release hold in finally block
+        }
+
+        if (limitExceeded && acceptedWarning) {
+          await appendLogSafe(jobId, '[UPLOAD_LIMIT_WARNING] User accepted daily upload limit warning and chose to continue.\n');
+        }
       }
 
       // 2. Load backend-prepared content from DB (execution-only pipeline)
@@ -878,6 +904,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "GEMINI_AUDIO_ONLY", value: "true" },
         { name: "FORCE_GOOGLE_AUDIO_ONLY", value: "true" },
         { name: "GEMINI_AUDIO_MODEL", value: process.env.GEMINI_AUDIO_MODEL || "gemini-2.5-flash-native-audio-latest" },
+        { name: "GEMINI_AUDIO_SAMPLE_RATE", value: process.env.GEMINI_AUDIO_SAMPLE_RATE || "24000" },
         { name: "ALLOW_SILENT_AUDIO_FALLBACK", value: "false" },
         { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },
         { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
@@ -934,11 +961,27 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           outputJson?.youtube?.youtubeVideoId ||
           ''
         ).trim();
+        const requestedUploads = Math.max(1, Number(settings.videoCount || 1));
+        const successfulUploadsHintRaw = Number(
+          outputJson?.successfulUploads ??
+          outputJson?.result?.successfulUploads ??
+          outputJson?.processedVideos ??
+          outputJson?.result?.processedVideos
+        );
+        const successfulUploads = Number.isFinite(successfulUploadsHintRaw)
+          ? Math.max(0, Math.min(requestedUploads, Math.floor(successfulUploadsHintRaw)))
+          : 0;
         const uploadConfirmed = !requiresUpload || Boolean(
           outputYoutubeVideoId ||
           (outputVideoUrl && /^https?:\/\//i.test(outputVideoUrl))
         );
         const acceptedWarning = Boolean((executionJob as any)?.acceptedYouTubeLimitWarning);
+        const consumeCountOnFailedUpload = acceptedWarning
+          ? requestedUploads
+          : successfulUploads;
+        const releaseCountOnFailedUpload = Math.max(0, requestedUploads - consumeCountOnFailedUpload);
+        const consumeCountOnSuccess = successfulUploads > 0 ? successfulUploads : requestedUploads;
+        const releaseCountOnSuccess = Math.max(0, requestedUploads - consumeCountOnSuccess);
 
         if (!uploadConfirmed) {
           const failedLocal = await JobModel.findOneAndUpdate(
@@ -947,22 +990,23 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
               $set: {
                 status: 'failed',
                 completedAt: new Date(),
-                holdConsumed: acceptedWarning,
-                holdReleased: !acceptedWarning,
+                holdConsumed: consumeCountOnFailedUpload > 0,
+                holdReleased: releaseCountOnFailedUpload > 0,
                 error: 'Upload failed or was skipped.',
                 errorMessage: 'Upload failed or was skipped.',
                 errorStage: 'UPLOAD',
                 result: outputJson || { success: false },
-                processedVideos: settings.videoCount || 1,
+                processedVideos: successfulUploads,
               },
             },
             { returnDocument: 'after' }
           );
           if (failedLocal) {
-            if (acceptedWarning) {
-              await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
-            } else {
-              await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+            if (consumeCountOnFailedUpload > 0) {
+              await consumeReservedCredits(userId, consumeCountOnFailedUpload).catch(console.error);
+            }
+            if (releaseCountOnFailedUpload > 0) {
+              await releaseReservedCredits(userId, releaseCountOnFailedUpload).catch(console.error);
             }
             await appendLogSafe(jobId, `${JSON.stringify({ event: 'local_completion_failed_upload', output: outputJson || {} })}\n`, 'failed');
             await updateProgressSafe(job, 99, 'failed', 'Job failed');
@@ -976,17 +1020,23 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
             $set: {
               status: 'success',
               completedAt: new Date(),
-              holdConsumed: true,
+              holdConsumed: consumeCountOnSuccess > 0,
+              holdReleased: releaseCountOnSuccess > 0,
               errorMessage: '',
               errorStage: undefined as any,
               result: outputJson || { success: true },
-              processedVideos: settings.videoCount || 1,
+              processedVideos: consumeCountOnSuccess,
             },
           },
           { returnDocument: 'after' }
         );
         if (finalized) {
-          await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+          if (consumeCountOnSuccess > 0) {
+            await consumeReservedCredits(userId, consumeCountOnSuccess).catch(console.error);
+          }
+          if (releaseCountOnSuccess > 0) {
+            await releaseReservedCredits(userId, releaseCountOnSuccess).catch(console.error);
+          }
           const chosenSubTopic = String((finalized as any).chosenSubTopic || '').trim(); // FIXED: Read selected sub-topic from finalized job.
           if (chosenSubTopic) {
             const topicUser = await User.findById(userId); // FIXED: Load user to update recent topic memory after successful upload.
@@ -1288,6 +1338,14 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                   error: error.message,
                   errorMessage: error.message,
                   errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
+              result: {
+              success: false,
+              stage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
+              message: error.message,
+              stderrTail: typeof error?.stderrTail === 'string' ? error.stderrTail : '',
+              stdoutTail: typeof error?.stdoutTail === 'string' ? error.stdoutTail : '',
+              failedAt: new Date().toISOString(),
+              },
               }
           },
           { returnDocument: 'after' }
@@ -1306,6 +1364,14 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
               error: error.message,
               errorMessage: error.message,
               errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
+              result: {
+                success: false,
+                stage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
+                message: error.message,
+                stderrTail: typeof error?.stderrTail === 'string' ? error.stderrTail : '',
+                stdoutTail: typeof error?.stdoutTail === 'string' ? error.stdoutTail : '',
+                failedAt: new Date().toISOString(),
+              },
             },
           }
         ).catch((dbErr) => {

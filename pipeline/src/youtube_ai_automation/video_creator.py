@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 import random
@@ -197,8 +198,9 @@ def create_subtitles_from_script(
         text = _wrap_caption_text(text, max_words)
         text = _inject_highlight_ass(text, normalized_highlight)
         text = text.replace("\n", " ")
-        fade_ms = min(150, int(chunk_duration * 100))
-        anim_prefix = r"{\fad(" + str(fade_ms) + r",80)" + alignment_tag + r"}"
+        fade_in_ms = max(60, min(220, int(chunk_duration * 180)))
+        fade_out_ms = max(80, min(260, int(chunk_duration * 220)))
+        anim_prefix = r"{\fad(" + str(fade_in_ms) + r"," + str(fade_out_ms) + r")" + alignment_tag + r"}"
         lines.append(
             f"Dialogue: 0,{_format_ass_time(start)},{_format_ass_time(end)},Caption,,0,0,0,,{anim_prefix}{text}"
         )
@@ -349,11 +351,15 @@ def render_vertical_video(
             if _is_image(media):
                 seg_duration = image_duration
                 frames = max(1, int(round(seg_duration * 30)))
-                zoom_speeds = [0.0006, 0.0008, 0.0010, 0.0012]  # FIXED: Expand Ken Burns zoom speed variety for image segments.
-                zoom_speed = random.choice(zoom_speeds)  # FIXED: Randomize image zoom pacing per segment.
-                zoom_expr = f"min(1.20,zoom+{zoom_speed:.4f})"  # FIXED: Allow slightly deeper zoom while capping for visual stability.
-                pan_x = random.choice(["iw/2-(iw/zoom/2)", "0", "iw-(iw/zoom)"])  # FIXED: Vary horizontal pan direction for image motion diversity.
-                pan_y = random.choice(["ih/2-(ih/zoom/2)", "0", "ih-(ih/zoom)"])  # FIXED: Vary vertical pan direction for image motion diversity.
+                zoom_speeds = [0.0006, 0.0008, 0.0010, 0.0012]
+                zoom_speed = random.choice(zoom_speeds)
+                zoom_mode = random.choice(["in", "out"])
+                if zoom_mode == "out":
+                    zoom_expr = f"if(eq(on,1),1.18,max(1.00,zoom-{zoom_speed:.4f}))"
+                else:
+                    zoom_expr = f"if(eq(on,1),1.00,min(1.20,zoom+{zoom_speed:.4f}))"
+                pan_x = random.choice(["iw/2-(iw/zoom/2)", "0", "iw-(iw/zoom)"])
+                pan_y = random.choice(["ih/2-(ih/zoom/2)", "0", "ih-(ih/zoom)"])
                 _run_ffmpeg([
                     "ffmpeg", "-y",
                     "-loop", "1",
@@ -401,15 +407,15 @@ def render_vertical_video(
             ])
         else:
             # Join animation: cross-fade transitions between segments.
-            TRANSITION_STYLES = [  # FIXED: Use richer, randomized transition palette with tuned per-style durations.
-                ("fade", 0.35),
-                ("slideleft", 0.30),
-                ("slideright", 0.30),
-                ("wipeleft", 0.30),
-                ("wiperight", 0.30),
-                ("fadeblack", 0.40),
-                ("circlecrop", 0.35),
-                ("smoothleft", 0.30),
+            transition_styles = [
+                "fade",
+                "slideleft",
+                "slideright",
+                "wipeleft",
+                "wiperight",
+                "smoothleft",
+                "smoothright",
+                "circlecrop",
             ]
             cmd = ["ffmpeg", "-y"]
             for seg in segments:
@@ -418,16 +424,23 @@ def render_vertical_video(
             filters: list[str] = []
             previous_label = "[0:v]"
             cumulative = float(segment_durations[0])
+            last_transition = ""
             for i in range(1, len(segments)):
                 out_label = f"[v{i}]"
-                transition_name, transition_duration = random.choice(TRANSITION_STYLES)  # FIXED: Pick transition style/duration per segment boundary.
-                # Offset is measured on current composed timeline.
-                offset = max(0.0, cumulative - transition_duration)  # FIXED: Align transition start offset with selected transition duration.
+                prev_seg_duration = max(0.35, float(segment_durations[i - 1]))
+                next_seg_duration = max(0.35, float(segment_durations[i]))
+                max_safe_duration = min(prev_seg_duration, next_seg_duration) * 0.35
+                transition_duration = max(0.18, min(0.42, max_safe_duration))
+
+                style_pool = [style for style in transition_styles if style != last_transition] or transition_styles
+                transition_name = random.choice(style_pool)
+                offset = max(0.0, cumulative - transition_duration)
                 filters.append(
-                    f"{previous_label}[{i}:v]xfade=transition={transition_name}:duration={transition_duration:.2f}:offset={offset:.2f}{out_label}"  # FIXED: Apply per-boundary transition style and duration.
+                    f"{previous_label}[{i}:v]xfade=transition={transition_name}:duration={transition_duration:.2f}:offset={offset:.2f}{out_label}"
                 )
                 previous_label = out_label
-                cumulative += float(segment_durations[i]) - transition_duration  # FIXED: Keep timeline accumulation consistent with chosen transition duration.
+                cumulative += float(segment_durations[i]) - transition_duration
+                last_transition = transition_name
 
             filter_complex = ";".join(filters)
             cmd.extend([
@@ -455,11 +468,45 @@ def render_vertical_video(
             str(visual_padded),
         ])
 
+        # Optional: blend background music under narration with sidechain ducking.
+        final_audio_input = audio_path
+        background_music_raw = str(os.getenv("BACKGROUND_MUSIC_PATH", "") or "").strip()
+        if background_music_raw:
+            background_music_path = Path(background_music_raw)
+            if background_music_path.exists() and background_music_path.is_file():
+                mixed_audio = tmp / "mixed_audio.wav"
+                try:
+                    bg_volume = float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.12") or 0.12)
+                except Exception:
+                    bg_volume = 0.12
+                bg_volume = max(0.0, min(0.6, bg_volume))
+                try:
+                    _run_ffmpeg([
+                        "ffmpeg", "-y",
+                        "-i", str(audio_path),
+                        "-stream_loop", "-1",
+                        "-i", str(background_music_path),
+                        "-filter_complex",
+                        (
+                            f"[0:a]aresample=44100,volume=1.0[a_voice];"
+                            f"[1:a]aresample=44100,atrim=0:{final_duration:.2f},volume={bg_volume:.3f}[a_bed];"
+                            "[a_bed][a_voice]sidechaincompress=threshold=0.045:ratio=10:attack=15:release=220[ducked];"
+                            "[ducked][a_voice]amix=inputs=2:weights=1 1:normalize=0[a_mix]"
+                        ),
+                        "-map", "[a_mix]",
+                        "-t", f"{final_duration:.2f}",
+                        "-c:a", "pcm_s16le",
+                        str(mixed_audio),
+                    ])
+                    final_audio_input = mixed_audio
+                except Exception:
+                    final_audio_input = audio_path
+
         muxed_no_sub = tmp / "muxed_no_sub.mp4"
         _run_ffmpeg([
             "ffmpeg", "-y",
             "-i", str(visual_padded),
-            "-i", str(audio_path),
+            "-i", str(final_audio_input),
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-c:v", "libx264",

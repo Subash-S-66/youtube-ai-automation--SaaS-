@@ -126,6 +126,7 @@ from youtube_ai_automation.duration_controller import (
     validate_section_limits,
     WORDS_PER_SECOND,
 )
+from youtube_ai_automation.stages.script import build_visual_queries
 
 LOGGER = logging.getLogger("youtube_ai_automation")
 NARRATION_RETRY_ATTEMPTS = 5
@@ -516,8 +517,12 @@ def _generate_narration_with_retries(script: str, output_path: Path, preferred_v
     """
     Try multiple voice profiles before giving up on narration.
     """
+    selected_voice, selected_rate = pick_voice_profile(
+        voice=preferred_voice or DEFAULT_VOICE,
+        script=script,
+    )
+
     for attempt in range(1, NARRATION_RETRY_ATTEMPTS + 1):
-        selected_voice, selected_rate = pick_voice_profile(voice=preferred_voice or DEFAULT_VOICE)
         LOGGER.info(
             "Voice profile attempt %s/%s: %s at %s",
             attempt,
@@ -1548,6 +1553,13 @@ def run_prepared_pipeline(
     if not voice_name:
         voice_name = DEFAULT_VOICE
     voice_rate = str(video_config.get("voiceRate", "") or "").strip()
+    voice_name, resolved_rate = pick_voice_profile(
+        voice=voice_name,
+        rate=voice_rate,
+        script=script_text,
+    )
+    if not voice_rate and resolved_rate:
+        voice_rate = resolved_rate
     template_config = video_config.get("templateConfig", {}) if isinstance(video_config.get("templateConfig"), dict) else {}
     font_style = str(template_config.get("fontStyle", "Anton")).strip() or "Anton"
     subtitle_color = str(template_config.get("subtitleColor", "#FFFFFF")).strip() or "#FFFFFF"
@@ -1943,8 +1955,8 @@ def _derive_scene_queries_for_stock(payload: dict, prepared_payload: dict) -> li
                 if text:
                     queries.append(text)
 
-    # Normalize/dedupe and keep short search-friendly strings
-    out: list[str] = []
+    # Normalize/dedupe first, then rewrite to visual search terms.
+    deduped: list[str] = []
     seen: set[str] = set()
     for item in queries:
         clean = " ".join(str(item).split()).strip()
@@ -1954,19 +1966,34 @@ def _derive_scene_queries_for_stock(payload: dict, prepared_payload: dict) -> li
         if key in seen:
             continue
         seen.add(key)
-        out.append(clean[:90])
-        if len(out) >= 8:
+        deduped.append(clean[:90])
+        if len(deduped) >= 8:
             break
-    return out
+    if not deduped:
+        deduped = ["technology"]
+    return build_visual_queries(deduped, max_queries=8)
 
 
-def _plan_stock_asset_counts(target_seconds: float) -> tuple[int, int]:
+def _plan_stock_asset_counts(target_seconds: float, content_type: str = "clips") -> tuple[int, int]:
     """
-    Plan how many stock videos/images to download so total visual inventory is close to target.
-    Images are fixed 3s each; clips are mixed 2-6s (approx 4s average).
+    Plan stock videos/images to roughly cover target runtime based on selected media mode.
     """
     target = max(15.0, min(60.0, float(target_seconds or 60.0)))
-    # User policy: treat each clip as ~3s and keep a small buffer.
+    mode = str(content_type or "clips").strip().lower()
+
+    if mode == "images":
+        # Images are fixed to 3 seconds each.
+        image_count = min(24, max(1, int(math.ceil(target / 3.0)) + 2))
+        return 0, image_count
+
+    if mode == "mixed":
+        # Balanced mix for variety while still covering full duration.
+        half_target = max(8.0, target / 2.0)
+        clip_count = min(14, max(1, int(math.ceil(half_target / 3.5)) + 1))
+        image_count = min(14, max(1, int(math.ceil(half_target / 3.0)) + 1))
+        return clip_count, image_count
+
+    # Default clips mode.
     base_clips = int(math.ceil(target / 3.0))
     clip_count = min(22, max(1, base_clips + 2))
     image_count = 0
@@ -2029,18 +2056,19 @@ def run_full_pipeline(
     media_paths = _collect_media_paths_for_full_mode(payload, media_dir)
     scene_queries = _derive_scene_queries_for_stock(payload, prepared_payload)
     has_custom_media = len(media_paths) > 0
+    requested_content_type = str(video_config.get("contentType", video_config.get("content_type", "clips"))).strip().lower() or "clips"
 
     # Always auto-download stock media when no custom media is provided by user.
     if scene_queries and not has_custom_media:
         _log_job_stage(payload, "media", f"auto media download started for {len(scene_queries)} scene queries")
-        planned_clips, planned_images = _plan_stock_asset_counts(target_duration)
+        planned_clips, planned_images = _plan_stock_asset_counts(target_duration, requested_content_type)
         if planned_clips <= 0 and planned_images <= 0:
             planned_clips, planned_images = 22, 0
 
         media_fetch_start = time.time()
         media_fetch_budget_s = 8 * 60.0
         min_clips_to_proceed = min(planned_clips, 22)
-        min_images_to_proceed = min(planned_images, 0)
+        min_images_to_proceed = min(planned_images, 22)
 
         stock_dir = CLIPS_DIR / "stock_video"
         clip_queries = _extend_scene_queries(scene_queries, max(1, planned_clips))
