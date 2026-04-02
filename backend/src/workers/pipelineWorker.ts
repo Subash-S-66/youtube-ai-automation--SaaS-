@@ -683,6 +683,15 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       await updateProgressSafe(job, 40, 'payload_build', 'Media resolution and payload build');
 
       const configuredMaxWordsPerCaption = Number((settings.templateConfig as any)?.maxWordsPerCaption);
+      const configuredCaptionAnimationRaw = String((settings.templateConfig as any)?.captionAnimation || '').trim().toLowerCase();
+      const configuredCaptionAnimation =
+        configuredCaptionAnimationRaw === 'slide_left' ||
+        configuredCaptionAnimationRaw === 'slide_right' ||
+        configuredCaptionAnimationRaw === 'pop' ||
+        configuredCaptionAnimationRaw === 'none' ||
+        configuredCaptionAnimationRaw === 'fade'
+          ? configuredCaptionAnimationRaw
+          : 'fade';
 
       const payloadVideoConfig = sanitizePayloadValue({
         ...(executionJob.pipelineConfig || settings || {}),
@@ -693,6 +702,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           fontStyle: settings.templateConfig?.fontStyle || 'Anton',
           subtitleColor: settings.templateConfig?.subtitleColor || '#FFFFFF',
           captionPosition: (settings.templateConfig as any)?.captionPosition || 'bottom',
+          captionAnimation: configuredCaptionAnimation,
           maxWordsPerCaption: Number.isFinite(configuredMaxWordsPerCaption)
             ? Math.max(1, Math.min(8, Math.floor(configuredMaxWordsPerCaption)))
             : 4,

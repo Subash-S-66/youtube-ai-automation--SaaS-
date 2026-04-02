@@ -40,6 +40,7 @@ const updateSettingsSchema = z.object({
         templateFont: z.string().optional(),
         templateColor: z.string().optional(),
         captionPosition: z.enum(['top', 'middle', 'bottom']).optional(),
+        captionAnimation: z.enum(['fade', 'slide_left', 'slide_right', 'pop', 'none']).optional(),
         maxWordsPerCaption: z.number().int().min(1).max(8).optional(),
         useCustomMedia: z.boolean().optional(),
         selectedThumbnailId: z.string().optional(),

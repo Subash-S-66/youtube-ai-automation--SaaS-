@@ -53,7 +53,15 @@ export interface ContentGenerationResult {
 // ─────────────────────────────────────────────────────────────────────────────
 const WORDS_PER_SECOND = 3.6;
 const VALIDATION_WPS = 2.5;
-const PRE_CONTENT_GEN_DELAY_MS = 2000;
+const parseEnvMs = (raw: unknown, fallback: number): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.floor(parsed));
+};
+
+// Keep a small debounce to avoid immediate back-to-back provider calls after prompt generation.
+const PRE_CONTENT_GEN_DELAY_MS = parseEnvMs(process.env.PRE_CONTENT_GEN_DELAY_MS, 250);
+const CONTENT_GEN_RETRY_BASE_DELAY_MS = parseEnvMs(process.env.CONTENT_GEN_RETRY_BASE_DELAY_MS, 350);
 
 const clean = (value: unknown): string => String(value ?? '').trim();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -375,7 +383,7 @@ const generateWithRetry = async (
     } catch (err) {
       lastError = err;
       if (i < MAX_RETRIES - 1) {
-        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+        await new Promise(r => setTimeout(r, CONTENT_GEN_RETRY_BASE_DELAY_MS * (i + 1)));
       }
     }
   }

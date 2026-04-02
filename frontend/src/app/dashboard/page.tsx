@@ -40,6 +40,7 @@ const DEFAULT_AUTO_UPLOAD_VIDEOS_PER_INTERVAL = 1;
 type InputMode = 'topic' | 'prompt';
 type ContentType = 'clips' | 'images' | 'mixed';
 type CaptionPosition = 'top' | 'middle' | 'bottom';
+type CaptionAnimation = 'fade' | 'slide_left' | 'slide_right' | 'pop' | 'none';
 
 interface ChannelInputCacheEntry {
   inputMode?: InputMode;
@@ -60,6 +61,7 @@ interface ChannelInputCacheEntry {
   templateFont?: string;
   templateColor?: string;
   captionPosition?: CaptionPosition;
+  captionAnimation?: CaptionAnimation;
   maxWordsPerCaption?: number;
   useCustomMedia?: boolean;
   selectedThumbnailId?: string;
@@ -212,6 +214,7 @@ function Dashboard() {
   const [templateFont, setTemplateFont] = usePersistentSettings<string>('clipforge_templateFont', 'Arial');
   const [templateColor, setTemplateColor] = usePersistentSettings<string>('clipforge_templateColor', '#FFFFFF');
   const [captionPosition, setCaptionPosition] = usePersistentSettings<CaptionPosition>('clipforge_captionPosition', 'bottom');
+  const [captionAnimation, setCaptionAnimation] = usePersistentSettings<CaptionAnimation>('clipforge_captionAnimation', 'fade');
   const [maxWordsPerCaption, setMaxWordsPerCaption] = usePersistentSettings<number>('clipforge_maxWordsPerCaption', 3);
   const [templateConfigOpen, setTemplateConfigOpen] = usePersistentSettings<boolean>('clipforge_templateConfigOpen', true);
   const [useCustomMedia, setUseCustomMedia] = usePersistentSettings<boolean>('clipforge_useCustomMedia', false);
@@ -281,6 +284,7 @@ function Dashboard() {
     templateFont,
     templateColor,
     captionPosition,
+    captionAnimation,
     maxWordsPerCaption,
     useCustomMedia,
     selectedThumbnailId,
@@ -308,6 +312,7 @@ function Dashboard() {
     templateFont,
     templateColor,
     captionPosition,
+    captionAnimation,
     maxWordsPerCaption,
     useCustomMedia,
     selectedThumbnailId,
@@ -355,6 +360,15 @@ function Dashboard() {
     setTemplateFont(cached?.templateFont || 'Arial');
     setTemplateColor(cached?.templateColor || '#FFFFFF');
     setCaptionPosition(cached?.captionPosition || 'bottom');
+    setCaptionAnimation(
+      cached?.captionAnimation === 'slide_left' ||
+      cached?.captionAnimation === 'slide_right' ||
+      cached?.captionAnimation === 'pop' ||
+      cached?.captionAnimation === 'none' ||
+      cached?.captionAnimation === 'fade'
+        ? cached.captionAnimation
+        : 'fade'
+    );
     const wordsCandidate = Number(cached?.maxWordsPerCaption);
     setMaxWordsPerCaption(
       Number.isFinite(wordsCandidate)
@@ -401,6 +415,7 @@ function Dashboard() {
     setTemplateFont,
     setTemplateColor,
     setCaptionPosition,
+    setCaptionAnimation,
     setMaxWordsPerCaption,
     setUseCustomMedia,
     setSelectedThumbnailId,
@@ -911,8 +926,9 @@ function Dashboard() {
     }
 
     // Strict upload limit enforcement before hitting backend
-    if (user?.remainingUploads < videoCount) {
-      setMessage({ text: `Not enough uploads remaining. You requested ${videoCount} videos but only have ${user?.remainingUploads} uploads available today.`, type: 'error' });
+    const remainingUploads = user?.remainingUploads;
+    if (typeof remainingUploads === 'number' && remainingUploads < videoCount) {
+      setMessage({ text: `Not enough uploads remaining. You requested ${videoCount} videos but only have ${remainingUploads} uploads available today.`, type: 'error' });
       return;
     }
 
@@ -1103,6 +1119,7 @@ function Dashboard() {
           fontStyle: templateFont,
           subtitleColor: templateColor,
           captionPosition,
+          captionAnimation,
           maxWordsPerCaption: normalizedMaxWordsPerCaption,
         },
         customVideoIds: useCustomMedia ? mediaList.filter(m => m.type === 'video').map(m => m._id) : [],
@@ -1823,6 +1840,25 @@ function Dashboard() {
                                     <option value="top">Top</option>
                                     <option value="middle">Middle</option>
                                     <option value="bottom">Bottom</option>
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-xs text-slate-400 mb-1 block">Caption Animation</label>
+                                  <select
+                                    id="template-caption-animation"
+                                    aria-label="Caption Animation"
+                                    value={captionAnimation}
+                                    onChange={(e) => {
+                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                      setCaptionAnimation(e.target.value as CaptionAnimation);
+                                    }}
+                                    className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                                  >
+                                    <option value="fade">Fade In/Out</option>
+                                    <option value="slide_left">Slide From Left</option>
+                                    <option value="slide_right">Slide From Right</option>
+                                    <option value="pop">Pop In</option>
+                                    <option value="none">No Animation</option>
                                   </select>
                                 </div>
                                 <div className="col-span-2 sm:col-span-1">

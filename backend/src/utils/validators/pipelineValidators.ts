@@ -32,6 +32,7 @@ export const runPipelineSchema = z.object({
          fontStyle: z.string().optional(),
          subtitleColor: z.string().optional(),
          captionPosition: z.enum(['top', 'middle', 'bottom']).optional(),
+        captionAnimation: z.enum(['fade', 'slide_left', 'slide_right', 'pop', 'none']).optional(),
          maxWordsPerCaption: z.number().int().min(1).max(8).optional(),
       }).optional(),
       upload: z.boolean().optional(),

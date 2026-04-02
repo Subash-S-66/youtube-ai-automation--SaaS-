@@ -108,6 +108,62 @@ def _resolve_caption_position(position: str) -> tuple[int, int, str]:
     return 2, 140, r"\an2"
 
 
+def _resolve_caption_anchor(position: str) -> tuple[int, int]:
+    normalized = str(position or "bottom").strip().lower()
+    if normalized == "top":
+        return 540, 220
+    if normalized == "middle":
+        return 540, 960
+    return 540, 1680
+
+
+def _normalize_caption_animation(animation: str) -> str:
+    normalized = str(animation or "fade").strip().lower()
+    aliases = {
+        "fade": "fade",
+        "fade_in_out": "fade",
+        "shade": "fade",
+        "shade_in_out": "fade",
+        "slide_left": "slide_left",
+        "slideleft": "slide_left",
+        "left": "slide_left",
+        "slide_right": "slide_right",
+        "slideright": "slide_right",
+        "right": "slide_right",
+        "pop": "pop",
+        "zoom": "pop",
+        "zoom_pop": "pop",
+        "none": "none",
+        "static": "none",
+        "off": "none",
+    }
+    return aliases.get(normalized, "fade")
+
+
+def _build_caption_animation_override(caption_animation: str, chunk_duration: float, caption_position: str) -> str:
+    mode = _normalize_caption_animation(caption_animation)
+    fade_in_ms = max(80, min(260, int(chunk_duration * 220)))
+    fade_out_ms = max(90, min(280, int(chunk_duration * 240)))
+
+    if mode == "none":
+        return ""
+
+    if mode == "slide_left":
+        end_x, anchor_y = _resolve_caption_anchor(caption_position)
+        start_x = max(0, end_x - 220)
+        return rf"\move({start_x},{anchor_y},{end_x},{anchor_y},0,{fade_in_ms})\fad(0,{fade_out_ms})"
+
+    if mode == "slide_right":
+        end_x, anchor_y = _resolve_caption_anchor(caption_position)
+        start_x = min(1080, end_x + 220)
+        return rf"\move({start_x},{anchor_y},{end_x},{anchor_y},0,{fade_in_ms})\fad(0,{fade_out_ms})"
+
+    if mode == "pop":
+        return rf"\fscx72\fscy72\t(0,{fade_in_ms},\fscx105\fscy105)\fad(0,{fade_out_ms})"
+
+    return rf"\fad({fade_in_ms},{fade_out_ms})"
+
+
 def _build_ass_header(font_name: str = "Anton", hex_color: str = "#FFFFFF", caption_position: str = "bottom") -> str:
     ass_color = _hex_to_ass_color(hex_color)
     alignment, margin_v, _ = _resolve_caption_position(caption_position)
@@ -159,6 +215,7 @@ def create_subtitles_from_script(
     font_style: str = "Anton",
     subtitle_color: str = "#FFFFFF",
     caption_position: str = "bottom",
+    caption_animation: str = "fade",
 ) -> Path:
     words = script.split()
     if not words:
@@ -198,9 +255,12 @@ def create_subtitles_from_script(
         text = _wrap_caption_text(text, max_words)
         text = _inject_highlight_ass(text, normalized_highlight)
         text = text.replace("\n", " ")
-        fade_in_ms = max(60, min(220, int(chunk_duration * 180)))
-        fade_out_ms = max(80, min(260, int(chunk_duration * 220)))
-        anim_prefix = r"{\fad(" + str(fade_in_ms) + r"," + str(fade_out_ms) + r")" + alignment_tag + r"}"
+        animation_directives = _build_caption_animation_override(
+            caption_animation=caption_animation,
+            chunk_duration=chunk_duration,
+            caption_position=caption_position,
+        )
+        anim_prefix = "{" + alignment_tag + animation_directives + "}"
         lines.append(
             f"Dialogue: 0,{_format_ass_time(start)},{_format_ass_time(end)},Caption,,0,0,0,,{anim_prefix}{text}"
         )
@@ -267,6 +327,15 @@ def _probe_duration_seconds(path: Path) -> float:
         return float((proc.stdout or "").strip() or 0.0)
     except Exception:
         return 0.0
+
+
+def _escape_subtitle_filter_path(path: Path) -> str:
+    raw = str(path.resolve()).replace("\\", "/")
+    if re.match(r"^[A-Za-z]:/", raw):
+        raw = raw[0] + r"\:" + raw[2:]
+    raw = raw.replace("'", r"\'")
+    raw = raw.replace("[", r"\[").replace("]", r"\]").replace(",", r"\,")
+    return raw
 
 
 def _is_image(path: Path) -> bool:
@@ -517,20 +586,27 @@ def render_vertical_video(
         ])
 
         if subtitle_path and subtitle_path.exists() and subtitle_path.suffix.lower() == ".ass":
-            # Keep subtitles optional; if burn fails, return muxed video.
-            try:
-                _run_ffmpeg([
-                    "ffmpeg", "-y",
-                    "-i", str(muxed_no_sub),
-                    "-vf", f"subtitles={subtitle_path.as_posix()}",
-                    "-c:v", "libx264",
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "copy",
-                    str(output_path),
-                ])
-                return output_path
-            except Exception:
-                pass
+            escaped_subtitle_path = _escape_subtitle_filter_path(subtitle_path)
+            subtitle_filters = [
+                f"subtitles='{escaped_subtitle_path}':charenc=UTF-8",
+                f"ass='{escaped_subtitle_path}'",
+            ]
+            subtitle_burn_errors: list[str] = []
+            for subtitle_filter in subtitle_filters:
+                try:
+                    _run_ffmpeg([
+                        "ffmpeg", "-y",
+                        "-i", str(muxed_no_sub),
+                        "-vf", subtitle_filter,
+                        "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p",
+                        "-c:a", "copy",
+                        str(output_path),
+                    ])
+                    return output_path
+                except Exception as exc:
+                    subtitle_burn_errors.append(str(exc))
+            print(f"[VideoCreator] subtitle burn failed: {' | '.join(subtitle_burn_errors)}")
 
         _run_ffmpeg([
             "ffmpeg", "-y",

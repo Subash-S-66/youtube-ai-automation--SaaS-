@@ -51,6 +51,7 @@ const VideoConfigSchema = z.object({
     fontStyle: z.string().optional(),
     subtitleColor: z.string().regex(/^#?[0-9a-fA-F]{6}$/).optional(),
     captionPosition: z.enum(['top', 'middle', 'bottom']).optional(),
+    captionAnimation: z.enum(['fade', 'slide_left', 'slide_right', 'pop', 'none']).optional(),
     maxWordsPerCaption: z.number().int().min(1).max(8).optional(),
   }).optional(),
   customVideoIds: z.array(z.string().max(100)).max(50).optional(),

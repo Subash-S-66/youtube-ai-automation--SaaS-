@@ -1566,6 +1566,26 @@ def run_prepared_pipeline(
     caption_position = str(template_config.get("captionPosition", "bottom")).strip().lower() or "bottom"
     if caption_position not in {"top", "middle", "bottom"}:
         caption_position = "bottom"
+    raw_caption_animation = str(template_config.get("captionAnimation", "fade")).strip().lower() or "fade"
+    caption_animation_aliases = {
+        "fade": "fade",
+        "fade_in_out": "fade",
+        "shade": "fade",
+        "shade_in_out": "fade",
+        "slide_left": "slide_left",
+        "slideleft": "slide_left",
+        "left": "slide_left",
+        "slide_right": "slide_right",
+        "slideright": "slide_right",
+        "right": "slide_right",
+        "pop": "pop",
+        "zoom": "pop",
+        "zoom_pop": "pop",
+        "none": "none",
+        "static": "none",
+        "off": "none",
+    }
+    caption_animation = caption_animation_aliases.get(raw_caption_animation, "fade")
     try:
         max_words_per_caption = int(template_config.get("maxWordsPerCaption", 4) or 4)
     except Exception:
@@ -1722,6 +1742,7 @@ def run_prepared_pipeline(
     audio_retry_count = 0
     audio_failed = False
     min_acceptable_duration = max(1.0, float(target_duration) - 10.0)  # FIXED: Enforce lower duration bound at T-10 seconds.
+    max_expand_retries = max(0, min(2, int(os.getenv("TTS_MAX_EXPAND_RETRIES", "1") or 1)))
     current_script = str(best_package["script"]).strip()
 
     try:
@@ -1734,7 +1755,7 @@ def run_prepared_pipeline(
             rate=voice_rate,
             min_words=min_words,
             hard_cap_words=hard_max_words,
-            max_expand_retries=2,
+            max_expand_retries=max_expand_retries,
         )
         full_audio_path = final_audio_path  # FIXED: Persist duration-controlled audio output path.
         best_package["script"] = adjusted_script  # FIXED: Keep subtitle/script text aligned with any expansion retries used for short audio.
@@ -1803,6 +1824,7 @@ def run_prepared_pipeline(
         font_style=font_style,
         subtitle_color=subtitle_color,
         caption_position=caption_position,
+        caption_animation=caption_animation,
     )
 
     sectionAudio = {
@@ -1832,6 +1854,7 @@ def run_prepared_pipeline(
             "font": font_style,
             "color": subtitle_color,
             "position": caption_position,
+            "animation": caption_animation,
             "maxWordsPerCaption": max_words_per_caption,
         },
         "hashtags": [str(tag).strip() for tag in hashtags if str(tag).strip()],

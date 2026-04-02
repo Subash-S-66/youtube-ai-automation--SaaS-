@@ -20,7 +20,7 @@ GEMINI_VOICE_OPTIONS = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"]
 GEMINI_AUDIO_MODEL = os.getenv("GEMINI_AUDIO_MODEL", "gemini-2.5-flash-native-audio-latest").strip()
 GEMINI_AUDIO_MODELS = [GEMINI_AUDIO_MODEL]
 GEMINI_AUDIO_SAMPLE_RATE = max(16000, min(48000, int(os.getenv("GEMINI_AUDIO_SAMPLE_RATE", "24000") or 24000)))
-MAX_TTS_SPEED_FACTOR = max(1.0, min(1.8, float(os.getenv("MAX_TTS_SPEED_FACTOR", "1.35") or 1.35)))
+MAX_TTS_SPEED_FACTOR = max(1.0, min(1.8, float(os.getenv("MAX_TTS_SPEED_FACTOR", "1.0") or 1.0)))
 
 
 def pick_voice_profile(voice: str = "", rate: str = "", script: str = "") -> tuple[str, str]:
@@ -240,7 +240,7 @@ def generate_voice_with_duration_control(
         )
         actual_seconds = get_audio_duration_seconds(generated_path)
 
-        if actual_seconds > float(target_seconds):
+        if actual_seconds > float(target_seconds) and MAX_TTS_SPEED_FACTOR > 1.0:
             sped_path = output_path.parent / f"{output_path.stem}_speed.wav"
             adjusted_path, adjusted_seconds = _speed_up_audio_to_target(
                 input_path=generated_path,
@@ -259,8 +259,9 @@ def generate_voice_with_duration_control(
             continue
 
         shutil.copy2(generated_path, output_path)
-        LOGGER.info("[DURATION_CHECK] target=%ss actual=%.2fs action=ok", int(round(target_seconds)), actual_seconds)
-        return output_path, actual_seconds, current_script, "ok", retries
+        action = "ok_no_speed" if actual_seconds > float(target_seconds) else "ok"
+        LOGGER.info("[DURATION_CHECK] target=%ss actual=%.2fs action=%s", int(round(target_seconds)), actual_seconds, action)
+        return output_path, actual_seconds, current_script, action, retries
 
 
 def _uses_live_native_audio(model_name: str) -> bool:

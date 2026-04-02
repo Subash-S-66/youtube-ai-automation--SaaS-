@@ -67,6 +67,7 @@ export interface IUser extends Document {
     templateFont?: string;
     templateColor?: string;
     captionPosition?: 'top' | 'middle' | 'bottom';
+    captionAnimation?: 'fade' | 'slide_left' | 'slide_right' | 'pop' | 'none';
     maxWordsPerCaption?: number;
     useCustomMedia?: boolean;
     selectedThumbnailId?: string;

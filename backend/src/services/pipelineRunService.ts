@@ -29,6 +29,7 @@ export interface PipelineInputSettings {
     fontStyle?: string;
     subtitleColor?: string;
     captionPosition?: 'top' | 'middle' | 'bottom';
+    captionAnimation?: 'fade' | 'slide_left' | 'slide_right' | 'pop' | 'none';
     maxWordsPerCaption?: number;
   };
   customVideoIds?: string[];
@@ -148,6 +149,36 @@ export const normalizePipelineSettings = (rawSettings: Record<string, any>): Pip
         sanitizedTemplateConfig.captionPosition = rawCaptionPosition as 'top' | 'middle' | 'bottom';
       } else {
         notes.push('templateConfig.captionPosition must be top, middle, or bottom.');
+      }
+    }
+
+    const rawCaptionAnimation = typeof rawTemplateConfig.captionAnimation === 'string'
+      ? rawTemplateConfig.captionAnimation.trim().toLowerCase()
+      : '';
+    if (rawCaptionAnimation) {
+      const captionAnimationAliases: Record<string, 'fade' | 'slide_left' | 'slide_right' | 'pop' | 'none'> = {
+        fade: 'fade',
+        fade_in_out: 'fade',
+        shade: 'fade',
+        shade_in_out: 'fade',
+        slide_left: 'slide_left',
+        slideleft: 'slide_left',
+        left: 'slide_left',
+        slide_right: 'slide_right',
+        slideright: 'slide_right',
+        right: 'slide_right',
+        pop: 'pop',
+        zoom: 'pop',
+        zoom_pop: 'pop',
+        none: 'none',
+        static: 'none',
+        off: 'none',
+      };
+      const normalizedCaptionAnimation = captionAnimationAliases[rawCaptionAnimation];
+      if (normalizedCaptionAnimation) {
+        sanitizedTemplateConfig.captionAnimation = normalizedCaptionAnimation;
+      } else {
+        notes.push('templateConfig.captionAnimation must be fade, slide_left, slide_right, pop, or none.');
       }
     }
 
