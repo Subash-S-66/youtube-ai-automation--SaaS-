@@ -2,11 +2,12 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { m, AnimatePresence } from 'framer-motion';
 
 
-import { Sparkles, ArrowRight, Lock } from 'lucide-react';
+import { ArrowRight, Lock } from 'lucide-react';
 import { authService } from '../../services/authService';
 
 import { Eye, EyeOff } from 'lucide-react';
@@ -147,12 +148,18 @@ export default function ResetPassword() {
       </div>
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md flex justify-center items-center relative z-10">
-        <div className="relative mr-3">
-          <Sparkles className="h-8 w-8 text-[#7C5CFF]" />
-          <div className="absolute inset-0 bg-[#7C5CFF] blur-xl opacity-50 rounded-full"></div>
+        <div className="relative mr-3 h-10 w-10 overflow-hidden rounded-xl border border-[#1A2235] bg-white/5">
+          <Image
+            src="/brand-logo.png"
+            alt="Project logo"
+            width={40}
+            height={40}
+            className="h-10 w-10 object-cover"
+            priority
+          />
         </div>
         <h2 className="text-center text-4xl font-extrabold text-white tracking-tight">
-          Clip<span className="text-gradient-primary">Forge</span>
+          YouTube Automation
         </h2>
       </div>
 

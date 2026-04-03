@@ -53,8 +53,8 @@ export const openRazorpayCheckout = async (
     amount: order.amount,
     currency: order.currency,
     order_id: order.orderId,
-    name: 'ClipForge',
-    description: `ClipForge ${order.planName} Subscription`,
+    name: 'YouTube Automation',
+    description: `YouTube Automation ${order.planName} Subscription`,
     prefill: {
       email: order.email,
     },

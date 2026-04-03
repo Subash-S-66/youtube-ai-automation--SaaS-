@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
-import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, Sparkles, HelpCircle, Shield, Users, MessageSquare } from 'lucide-react';
+import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, HelpCircle, Shield, Users, MessageSquare } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
 import InstallPwaButton from '../InstallPwaButton';
@@ -103,8 +104,17 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
         <div className="h-full min-h-0 flex flex-col overflow-y-auto">
           {/* Logo Area */}
           <div className="h-16 flex items-center px-6 border-b border-[#1A2235]">
-            <Sparkles className="h-6 w-6 text-[#7C5CFF] mr-2 shadow-glow-primary" />
-            <span className="text-xl font-bold tracking-wider text-white">Clip<span className="text-gradient-primary">Forge</span></span>
+            <div className="mr-2 h-8 w-8 overflow-hidden rounded-lg border border-[#1A2235] bg-white/5">
+              <Image
+                src="/brand-logo.png"
+                alt="Project logo"
+                width={32}
+                height={32}
+                className="h-8 w-8 object-cover"
+                priority
+              />
+            </div>
+            <span className="font-bold tracking-wide text-white">YouTube Automation</span>
             <button
               aria-label="Close sidebar menu"
               className="ml-auto md:hidden text-slate-400 hover:text-white"

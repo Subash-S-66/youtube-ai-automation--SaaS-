@@ -9,7 +9,7 @@ export default function OfflinePage() {
       </div>
       <h1 className="text-3xl font-extrabold text-white mb-2">You're Offline</h1>
       <p className="text-slate-400 max-w-md">
-        ClipForge requires an active internet connection to generate premium video content. Please check your network and try again.
+        YouTube Automation requires an active internet connection to generate premium video content. Please check your network and try again.
       </p>
     </div>
   );

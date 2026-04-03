@@ -683,7 +683,7 @@ export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
       'https://www.googleapis.com/auth/userinfo.email',
     ],
     state: oauthState,
-    prompt: 'consent',
+    prompt: 'select_account',
   });
   res.redirect(authUrl);
 });
