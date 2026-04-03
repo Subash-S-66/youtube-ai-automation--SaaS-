@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import LandingPage from './landing/page';
 
 export default async function Home() {
   const cookieStore = await cookies();
@@ -12,5 +13,5 @@ export default async function Home() {
     redirect('/dashboard');
   }
 
-  redirect('/landing');
+  return <LandingPage />;
 }

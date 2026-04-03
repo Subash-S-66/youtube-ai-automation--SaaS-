@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const PUBLIC_PATHS = [
   '/',
-  '/landing',
   '/login',
   '/register',
   '/forgot-password',
@@ -17,6 +16,10 @@ const AUTH_PATHS = ['/login', '/register', '/admin-login'];
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  if (pathname === '/landing' || pathname.startsWith('/landing/')) {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
+
   const tokenCookie =
     request.cookies.get('token') ||
     request.cookies.get('jwt') ||
@@ -24,6 +27,10 @@ export async function middleware(request: NextRequest) {
     request.cookies.get('authToken');
 
   const isLoggedIn = Boolean(tokenCookie);
+
+  if (isLoggedIn && pathname === '/') {
+    return NextResponse.redirect(new URL('/dashboard', request.url));
+  }
 
   if (isLoggedIn && AUTH_PATHS.some((p) => pathname.startsWith(p))) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
@@ -46,4 +53,3 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icons/).*)'],
 };
-

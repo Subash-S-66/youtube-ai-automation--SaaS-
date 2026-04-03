@@ -1,4 +1,4 @@
-name: Deploy Backend
+name: Deploy Backend (DigitalOcean)
 
 on:
   workflow_dispatch:
@@ -47,21 +47,27 @@ jobs:
         working-directory: ./backend
         run: npm run build
 
-      - name: Deploy to Render
+      - name: Validate DigitalOcean Secrets
+        id: do_secrets
         run: |
-          if [ -z "${RENDER_DEPLOY_HOOK}" ]; then
-            echo "RENDER_DEPLOY_HOOK is not set. Skipping Render deploy."
+          if [ -z "${DIGITALOCEAN_ACCESS_TOKEN}" ] || [ -z "${DIGITALOCEAN_APP_ID}" ]; then
+            echo "Missing DigitalOcean secrets. Skipping deploy."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          case "${RENDER_DEPLOY_HOOK}" in
-            http://*|https://*) ;;
-            *)
-              echo "RENDER_DEPLOY_HOOK must be a valid http(s) URL"
-              exit 1
-              ;;
-          esac
-
-          curl -fsSL -X POST "${RENDER_DEPLOY_HOOK}"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
         env:
-          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          DIGITALOCEAN_APP_ID: ${{ secrets.DIGITALOCEAN_APP_ID }}
+
+      - name: Setup doctl
+        if: ${{ steps.do_secrets.outputs.ready == 'true' }}
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Deploy to DigitalOcean App Platform
+        if: ${{ steps.do_secrets.outputs.ready == 'true' }}
+        run: doctl apps create-deployment "${DIGITALOCEAN_APP_ID}" --wait
+        env:
+          DIGITALOCEAN_APP_ID: ${{ secrets.DIGITALOCEAN_APP_ID }}

@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { m, AnimatePresence } from 'framer-motion';
 import {
   Sparkles,
@@ -23,7 +22,6 @@ import {
   CircleDashed,
   type LucideIcon,
 } from 'lucide-react';
-import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
 
 type HowStep = {
@@ -247,7 +245,6 @@ const pipelineStages = [
 const statTargets = [2000, 150000, 49, 992];
 
 export default function LandingPage() {
-  const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [pipelineProgress, setPipelineProgress] = useState(0);
   const [pipelineStageIndex, setPipelineStageIndex] = useState(0);
@@ -255,13 +252,6 @@ export default function LandingPage() {
   const [statsStarted, setStatsStarted] = useState(false);
   const [statValues, setStatValues] = useState([0, 0, 0, 0]);
   const statsRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    authService
-      .getMe()
-      .then(() => router.replace('/dashboard'))
-      .catch(() => {});
-  }, [router]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -351,7 +341,7 @@ export default function LandingPage() {
 
       <header className="fixed top-0 z-50 w-full border-b border-[#1A2235] bg-[#111827]/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
-          <Link href="/landing" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-[#7C5CFF]" />
             <span className="text-lg font-extrabold tracking-tight text-white">
               Clip<span className="text-gradient-primary">Forge</span>
