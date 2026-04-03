@@ -6,7 +6,7 @@ import { m } from 'framer-motion';
 import { Sparkles, ArrowRight, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { OtpInput } from '../../components/OtpInput';
-import { getApiOrigin } from '../../lib/apiBase';
+import { buildApiUrl } from '../../lib/apiBase';
 
 
 
@@ -180,7 +180,7 @@ function LoginContent() {
 
   const handleGoogleLogin = () => {
     if (typeof window === 'undefined') return;
-    window.location.href = `${getApiOrigin()}/api/auth/google`;
+    window.location.href = buildApiUrl('/api/auth/google');
   };
 
   const handleRequestOtp = async () => {

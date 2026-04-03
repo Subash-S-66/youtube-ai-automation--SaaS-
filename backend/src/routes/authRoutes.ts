@@ -14,6 +14,10 @@ router.post('/logout', logout);
 router.post('/admin-login', validate(adminLoginSchema), adminLogin);
 router.get('/google', googleLogin);
 router.get('/google/callback', googleCallback);
+// Guard against malformed frontend URL joins that append extra path segments after /google.
+router.get(/^\/google\/.+$/, (_req, res) => {
+	res.redirect('/api/auth/google');
+});
 router.get('/verify-email', verifyEmail);
 router.post('/resend-verification', resendVerificationLimiter, validate(resendVerificationSchema), resendVerificationEmail);
 router.post('/send-otp', sendOtpLimiter, sendOtpHourlyLimiter, validate(sendOtpSchema), sendOtp);

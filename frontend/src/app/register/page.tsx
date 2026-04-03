@@ -6,7 +6,7 @@ import { m } from 'framer-motion';
 import { Sparkles, ArrowRight, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { OtpInput } from '../../components/OtpInput';
-import { getApiOrigin } from '../../lib/apiBase';
+import { buildApiUrl } from '../../lib/apiBase';
 
 function RegisterContent() {
   const [email, setEmail] = useState('');
@@ -168,7 +168,7 @@ function RegisterContent() {
   const handleGoogleLogin = () => {
     if (typeof window === 'undefined') return;
     const state = refCode ? `?state=ref:${encodeURIComponent(refCode)}` : '';
-    window.location.href = `${getApiOrigin()}/api/auth/google${state}`;
+    window.location.href = `${buildApiUrl('/api/auth/google')}${state}`;
   };
 
   const handleResendEmail = async () => {

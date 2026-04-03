@@ -241,7 +241,7 @@ const pipelineStages = [
   'Fetching Stock Media...',
   'Mixing Audio...',
   'Uploading to YouTube...',
-  'Complete (Done)',
+  'Complete ✓',
 ];
 
 const statTargets = [2000, 150000, 49, 992];
@@ -316,7 +316,7 @@ export default function LandingPage() {
     () => [
       `${statValues[0].toLocaleString()}+`,
       `${statValues[1].toLocaleString()}+`,
-      `${(statValues[2] / 10).toFixed(1)}*`,
+      `${(statValues[2] / 10).toFixed(1)}★`,
       `${(statValues[3] / 10).toFixed(1)}%`,
     ],
     [statValues]
@@ -449,7 +449,7 @@ export default function LandingPage() {
               className="inline-flex rounded-full bg-gradient-primary p-[1px]"
             >
               <div className="rounded-full bg-[#111827]/80 px-4 py-1.5 text-xs font-semibold tracking-wide text-slate-100 md:text-sm">
-                AI-Powered · Auto-Upload · Fully Automated
+                🤖 AI-Powered · Auto-Upload · Fully Automated
               </div>
             </m.div>
 
@@ -819,7 +819,7 @@ export default function LandingPage() {
             <p className="mt-4 text-sm text-slate-400">
               Already have an account?{' '}
               <Link href="/login" className="font-semibold text-[#00D4FF] hover:text-[#7C5CFF]">
-                Sign in ->
+                Sign in →
               </Link>
             </p>
           </div>
