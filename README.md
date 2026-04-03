@@ -2,7 +2,7 @@
 
 ClipForge is a comprehensive SaaS platform bridging the gap between automated Python video generation pipelines and modern web architecture. It features a complete Node.js/Express backend powered by MongoDB and Redis, and a sleek, fast Next.js dashboard.
 
-The system natively handles YouTube OAuth workflows, asynchronous video generation leveraging Google's Gemini, Stripe-based subscription management, and reliable background process scaling via BullMQ.
+The system natively handles YouTube OAuth workflows, asynchronous video generation leveraging Google's Gemini, Razorpay-based subscription management, and reliable background process scaling via BullMQ.
 
 ---
 
@@ -24,10 +24,10 @@ To run the application, you must define environment variables. Example `.env.exa
 
 - **Core & DB:** `MONGO_URI`, `JWT_SECRET`, `FRONTEND_URL`
 - **Integrations:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GEMINI_API_KEY`
-- **Payments:** `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+- **Payments:** `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
 - **Queue:** `REDIS_URL`
 - **Notifications:** `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `TELEGRAM_BOT_TOKEN`
-- **Pipeline Runtime:** `PIPELINE_RUNNER=local`, `PIPELINE_PYTHON_CMD=python`, `WEBHOOK_SECRET`, `BACKEND_URL`, `WEBHOOK_URL`
+- **Pipeline Runtime:** `PIPELINE_RUNNER=local`, `PIPELINE_PYTHON_CMD=python`, `WEBHOOK_SECRET`, `BACKEND_URL`, `WEBHOOK_URL`, `RUN_EMBEDDED_WORKER`
 
 ### Frontend (`/frontend/.env.local`)
 
@@ -52,6 +52,8 @@ npm run dev
 cd backend
 npm run worker
 ```
+
+`RUN_EMBEDDED_WORKER` is disabled by default in the API process. Set `RUN_EMBEDDED_WORKER=true` only if you explicitly want the API process to consume queue jobs.
 
 ### Run Pipeline Worker In GitHub Codespaces With Local Backend
 If backend is running on your local machine, expose it with a tunnel and set these in `backend/.env` (or Codespaces secrets):
@@ -103,6 +105,20 @@ npm install
 npm run dev
 ```
 
+### Run Pipeline Tests
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -r pipeline/requirements-dev.txt
+set PYTHONPATH=pipeline/src
+python -m pytest -q tests
+```
+
+### Run Full Deployment Preflight
+```bash
+npm run preflight
+```
+
 ---
 
 ## 4. Production Deployment & Hosting Strategy
@@ -124,12 +140,14 @@ Before pushing to `main`, ensure the following repository **GitHub Secrets** are
 
 *   `MONGO_URI`
 *   `JWT_SECRET`
-*   `STRIPE_SECRET_KEY`
+*   `RAZORPAY_KEY_ID`
+*   `RAZORPAY_KEY_SECRET`
+*   `RAZORPAY_WEBHOOK_SECRET`
 *   `REDIS_URL`
 *   `GOOGLE_CLIENT_SECRET`
 *   `GEMINI_API_KEY`
 *   `NEXT_PUBLIC_API_URL`
-*   *Azure Specific:* `ACR_LOGIN_SERVER`, `ACR_USERNAME`, `ACR_PASSWORD`
+*   *Azure Specific:* `AZURE_CREDENTIALS`, `AZURE_RESOURCE_GROUP`, `AZURE_ACR_NAME`, `AZURE_JOB_NAME`, `AZURE_ENVIRONMENT_RESOURCE_ID`
 
 ### Security Requirements (CRITICAL)
 - **HTTPS Enforcement:** Production environments MUST be served over HTTPS. OAuth integrations and Next.js require it.

@@ -22,7 +22,7 @@ import requests
 
 LOGGER = logging.getLogger(__name__)
 
-WORDS_PER_SECOND = 2.5
+WORDS_PER_SECOND = 1.9  # Calibrated for Gemini native audio narration.
 GEMINI_RETRY_STATUS_CODES = {429, 503}
 GEMINI_MAX_RETRIES_PER_MODEL = 2
 GEMINI_RETRY_DELAYS_SECONDS = (2, 5, 10)

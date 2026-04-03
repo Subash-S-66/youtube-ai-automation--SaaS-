@@ -599,7 +599,7 @@ function Dashboard() {
 
     const getEffectiveStatus = (job: JobRecord) => {
       const normalized = String(job.status || '').toLowerCase();
-      if (normalized !== 'success' && normalized !== 'completed' && isRuntimeInFlight(job)) {
+      if (activeStatuses.has(normalized) && isRuntimeInFlight(job)) {
         return 'processing';
       }
       return normalized;
@@ -1719,76 +1719,106 @@ function Dashboard() {
                   </div>
 
                   {/* Story Mode + Subtitle Styling */}
-                  <div className="col-span-1 sm:col-span-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="p-2 bg-gradient-to-r from-[#7C5CFF]/10 to-[#00D4FF]/10 rounded-xl border border-[#7C5CFF]/30">
-                      <div className="flex items-center justify-between m-4">
-                        <div className="flex items-center">
-                          <BookOpen className="h-5 w-5 text-[#00D4FF] mr-2" />
-                          <h3 className="text-sm font-semibold text-white">Story Mode</h3>
-                        </div>
-                        <label className={cn("relative inline-flex items-center", isFreeUser ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
-                          <input id="story-mode-toggle" aria-label="Toggle Story Mode" type="checkbox" className="sr-only peer" checked={effectiveStoryMode} onChange={handleStoryModeToggle} disabled={isFreeUser} />
-                          <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
-                        </label>
+                  <div className="col-span-1 sm:col-span-2 space-y-4">
+                    <div className="p-4 bg-gradient-to-r from-[#7C5CFF]/10 to-[#00D4FF]/10 rounded-xl border border-[#7C5CFF]/30">
+                      <div className="flex items-center mb-4">
+                        <BookOpen className="h-5 w-5 text-[#00D4FF] mr-2" />
+                        <h3 className="text-sm font-semibold text-white">Story Mode</h3>
                       </div>
-                      {isFreeUser && (
-                        <p className="text-xs text-slate-500 mb-2">
-                          {canUseStoryMode ? 'Story Mode is available on your plan.' : 'Story Mode is not included in your plan.'}
-                        </p>
-                      )}
 
-                      <AnimatePresence>
-                        {effectiveStoryMode && (
-                          <m.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-4 pt-2 border-t border-[#7C5CFF]/20">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
-                              <button type="button" onClick={resetStoryProgress} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
-                                Reset Story
-                              </button>
+                      <div className="space-y-3">
+                        <label className={cn("flex items-center justify-between rounded-lg border px-3 py-2.5 transition-colors", isFreeUser ? "cursor-not-allowed border-[#1A2235] bg-[#0B0F1A]/50 opacity-70" : "cursor-pointer border-[#1A2235] bg-[#0B0F1A] hover:border-[#7C5CFF]/50")}>
+                          <div className="flex items-center">
+                            <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", effectiveStoryMode ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
+                              {effectiveStoryMode && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                             </div>
-                            <label className="flex items-center space-x-3 cursor-pointer group">
-                              <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#0B0F1A] border-[#1A2235] group-hover:border-[#7C5CFF]", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
-                                {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
-                              </div>
-                              <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-600" : recapEnabled ? "text-white" : "text-slate-300 group-hover:text-white")}>
-                                Add Recap of Previous Parts (Disabled on Part 1)
-                              </span>
-                              <input id="recap-enabled-toggle" aria-label="Enable Story Recap" type="checkbox" className="hidden" checked={recapEnabled} onChange={() => setRecapEnabled(!recapEnabled)} disabled={currentPart === 1} />
-                            </label>
-                          </m.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-
-                      <div className="p-4 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 rounded-xl border border-[#00D4FF]/30">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center">
-                              <Sparkles className="h-5 w-5 text-[#00D4FF] mr-3" />
-                              <div>
-                                <p className="text-sm font-bold text-white">Subtitle Styling</p>
-                                <p className="text-xs text-slate-400">Customize font and subtitle color.</p>
-                              </div>
-                            </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                              <input
-                                id="template-config-toggle"
-                                aria-label="Toggle Subtitle Styling"
-                                type="checkbox"
-                                className="sr-only peer"
-                                checked={templateConfigOpen}
-                                onChange={(e) => {
-                                  if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
-                                  setTemplateConfigOpen(e.target.checked);
-                                }}
-                              />
-                              <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
-                            </label>
+                            <span className="text-sm text-slate-200">Enable Story Mode</span>
                           </div>
+                          <input
+                            id="story-mode-toggle"
+                            aria-label="Toggle Story Mode"
+                            type="checkbox"
+                            className="hidden"
+                            checked={effectiveStoryMode}
+                            onChange={handleStoryModeToggle}
+                            disabled={isFreeUser}
+                          />
+                        </label>
+
+                        {isFreeUser && (
+                          <p className="text-xs text-slate-500">
+                            {canUseStoryMode ? 'Story Mode is available on your plan.' : 'Story Mode is not included in your plan.'}
+                          </p>
+                        )}
 
                         <AnimatePresence>
-                          {templateConfigOpen && (
-                            <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                              <div className="mt-4 pt-4 border-t border-[#00D4FF]/20 grid grid-cols-2 gap-4">
+                          {effectiveStoryMode && (
+                            <m.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-3 overflow-hidden rounded-lg border border-[#7C5CFF]/20 bg-[#0B0F1A]/60 p-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
+                                <button type="button" onClick={resetStoryProgress} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
+                                  Reset Story
+                                </button>
+                              </div>
+
+                              <label className="flex items-center justify-between rounded-lg border border-[#1A2235] bg-[#0B0F1A] px-3 py-2.5 cursor-pointer group">
+                                <div className="flex items-center">
+                                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235] group-hover:border-[#7C5CFF]", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
+                                    {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                                  </div>
+                                  <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-500" : "text-slate-300 group-hover:text-white")}>
+                                    Add Recap of Previous Parts
+                                  </span>
+                                </div>
+                                <span className={cn("text-[11px]", currentPart === 1 ? "text-slate-500" : "text-slate-600")}>
+                                  {currentPart === 1 ? 'Available from Part 2' : 'Optional'}
+                                </span>
+                                <input
+                                  id="recap-enabled-toggle"
+                                  aria-label="Enable Story Recap"
+                                  type="checkbox"
+                                  className="hidden"
+                                  checked={recapEnabled}
+                                  onChange={() => setRecapEnabled(!recapEnabled)}
+                                  disabled={currentPart === 1}
+                                />
+                              </label>
+                            </m.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 rounded-xl border border-[#00D4FF]/30">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <Sparkles className="h-5 w-5 text-[#00D4FF] mr-3" />
+                          <div>
+                            <p className="text-sm font-bold text-white">Subtitle Styling</p>
+                            <p className="text-xs text-slate-400">Customize font and subtitle color.</p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            id="template-config-toggle"
+                            aria-label="Toggle Subtitle Styling"
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={templateConfigOpen}
+                            onChange={(e) => {
+                              if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                              setTemplateConfigOpen(e.target.checked);
+                            }}
+                          />
+                          <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                        </label>
+                      </div>
+
+                      <AnimatePresence>
+                        {templateConfigOpen && (
+                          <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                            <div className="mt-4 pt-4 border-t border-[#00D4FF]/20 space-y-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
                                   <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
                                   <select
@@ -1825,6 +1855,9 @@ function Dashboard() {
                                     className="w-full h-9 bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-1 cursor-pointer"
                                   />
                                 </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
                                   <label className="text-xs text-slate-400 mb-1 block">Caption Position</label>
                                   <select
@@ -1861,30 +1894,32 @@ function Dashboard() {
                                     <option value="none">No Animation</option>
                                   </select>
                                 </div>
-                                <div className="col-span-2 sm:col-span-1">
-                                  <label className="text-xs text-slate-400 mb-1 block">Max Words Per Caption</label>
-                                  <input
-                                    id="template-max-words"
-                                    aria-label="Max Words Per Caption"
-                                    type="number"
-                                    min="1"
-                                    max="8"
-                                    value={maxWordsPerCaption}
-                                    onChange={(e) => {
-                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
-                                      const nextValue = Number(e.target.value);
-                                      const boundedValue = Math.min(8, Math.max(1, Number.isFinite(nextValue) ? nextValue : 3));
-                                      setMaxWordsPerCaption(boundedValue);
-                                    }}
-                                    className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
-                                  />
-                                  <p className="text-[11px] text-slate-500 mt-1">Recommended range: 2-5 words per caption.</p>
-                                </div>
                               </div>
-                            </m.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
+
+                              <div className="sm:max-w-xs">
+                                <label className="text-xs text-slate-400 mb-1 block">Max Words Per Caption</label>
+                                <input
+                                  id="template-max-words"
+                                  aria-label="Max Words Per Caption"
+                                  type="number"
+                                  min="1"
+                                  max="8"
+                                  value={maxWordsPerCaption}
+                                  onChange={(e) => {
+                                    if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                    const nextValue = Number(e.target.value);
+                                    const boundedValue = Math.min(8, Math.max(1, Number.isFinite(nextValue) ? nextValue : 3));
+                                    setMaxWordsPerCaption(boundedValue);
+                                  }}
+                                  className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
+                                />
+                                <p className="text-[11px] text-slate-500 mt-1">Recommended range: 2-5 words per caption.</p>
+                              </div>
+                            </div>
+                          </m.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   </div>
 
                 </div>

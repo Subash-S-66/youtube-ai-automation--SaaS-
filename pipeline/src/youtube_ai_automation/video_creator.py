@@ -167,7 +167,8 @@ def _build_caption_animation_override(caption_animation: str, chunk_duration: fl
 def _build_ass_header(font_name: str = "Anton", hex_color: str = "#FFFFFF", caption_position: str = "bottom") -> str:
     ass_color = _hex_to_ass_color(hex_color)
     alignment, margin_v, _ = _resolve_caption_position(caption_position)
-    # FIXED: Tune ASS caption style for clearer bottom-center subtitles (size 58, ScaleX 105).
+    # Use requested font; if unavailable, libass will pick a system fallback.
+    safe_font = font_name.strip() if font_name.strip() else "Liberation Sans"
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -179,7 +180,7 @@ def _build_ass_header(font_name: str = "Anton", hex_color: str = "#FFFFFF", capt
         "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,"
         "Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,"
         "Alignment,MarginL,MarginR,MarginV,Encoding\n"
-        f"Style: Caption,{font_name},58,{ass_color},&H0000FFFF,"
+        f"Style: Caption,{safe_font},58,{ass_color},&H0000FFFF,"
         f"&H00000000,&HC0000000,1,0,0,0,105,100,0.5,0,1,2.5,1,{alignment},100,100,{margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n"
@@ -330,7 +331,13 @@ def _probe_duration_seconds(path: Path) -> float:
 
 
 def _escape_subtitle_filter_path(path: Path) -> str:
-    raw = str(path.resolve()).replace("\\", "/")
+    """
+    Escape a filesystem path for ffmpeg filter syntax (NOT shell quoting).
+    ffmpeg filter special chars: backslash, colon (drive letter only on Windows),
+    brackets, commas, and single quotes within the value.
+    """
+    raw = str(path.resolve())
+    raw = raw.replace("\\", "/")
     if re.match(r"^[A-Za-z]:/", raw):
         raw = raw[0] + r"\:" + raw[2:]
     raw = raw.replace("'", r"\'")
@@ -371,6 +378,91 @@ def _allocate_mixed_clip_durations(video_count: int, total_for_videos: float) ->
             current -= 0.1
         idx += 1
     return scaled
+
+
+def _burn_captions_drawtext(
+    input_path: Path,
+    output_path: Path,
+    subtitle_path: Path,
+) -> bool:
+    """
+    Fallback caption burning using ffmpeg drawtext filter (no libass required).
+    Parses ASS dialogue lines and renders each line via drawtext.
+    """
+    try:
+        ass_content = subtitle_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        print(f"[VideoCreator] drawtext: cannot read subtitle file: {exc}")
+        return False
+
+    lines_data: list[tuple[float, float, str]] = []
+    for line in ass_content.splitlines():
+        if not line.startswith("Dialogue:"):
+            continue
+        parts = line.split(",", 9)
+        if len(parts) < 10:
+            continue
+        try:
+            start_str = parts[1].strip()
+            end_str = parts[2].strip()
+            raw_text = parts[9].strip()
+            clean_text = re.sub(r"\{[^}]*\}", "", raw_text).strip()
+            clean_text = clean_text.replace(r"\N", " ").replace(r"\n", " ").strip()
+            if not clean_text:
+                continue
+
+            def _parse_ass_t(t: str) -> float:
+                p = t.split(":")
+                return int(p[0]) * 3600 + int(p[1]) * 60 + float(p[2])
+
+            lines_data.append((_parse_ass_t(start_str), _parse_ass_t(end_str), clean_text))
+        except Exception:
+            continue
+
+    if not lines_data:
+        print("[VideoCreator] drawtext: no parseable dialogue lines found")
+        return False
+
+    drawtext_filters: list[str] = []
+    for start_s, end_s, text in lines_data:
+        escaped = (
+            text
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace(":", "\\:")
+            .replace("%", "\\%")
+        )
+        drawtext_filters.append(
+            (
+                f"drawtext=text='{escaped}'"
+                f":fontsize=52"
+                f":fontcolor=white"
+                f":bordercolor=black"
+                f":borderw=3"
+                f":x=(w-text_w)/2"
+                f":y=h-text_h-140"
+                f":enable='between(t,{start_s:.3f},{end_s:.3f})'"
+            )
+        )
+
+    if not drawtext_filters:
+        return False
+
+    combined_filter = ",".join(drawtext_filters)
+    try:
+        _run_ffmpeg([
+            "ffmpeg", "-y",
+            "-i", str(input_path),
+            "-vf", combined_filter,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "copy",
+            str(output_path),
+        ])
+        return True
+    except Exception as exc:
+        print(f"[VideoCreator] drawtext filter failed: {str(exc)[:200]}")
+        return False
 
 
 def render_vertical_video(
@@ -587,11 +679,15 @@ def render_vertical_video(
 
         if subtitle_path and subtitle_path.exists() and subtitle_path.suffix.lower() == ".ass":
             escaped_subtitle_path = _escape_subtitle_filter_path(subtitle_path)
+            # Try ass= first, then subtitles=, with quoted variants for paths with spaces.
             subtitle_filters = [
-                f"subtitles='{escaped_subtitle_path}':charenc=UTF-8",
+                f"ass={escaped_subtitle_path}",
+                f"subtitles={escaped_subtitle_path}:charenc=UTF-8",
                 f"ass='{escaped_subtitle_path}'",
+                f"subtitles='{escaped_subtitle_path}':charenc=UTF-8",
             ]
             subtitle_burn_errors: list[str] = []
+            subtitle_burned = False
             for subtitle_filter in subtitle_filters:
                 try:
                     _run_ffmpeg([
@@ -603,10 +699,21 @@ def render_vertical_video(
                         "-c:a", "copy",
                         str(output_path),
                     ])
+                    subtitle_burned = True
                     return output_path
                 except Exception as exc:
-                    subtitle_burn_errors.append(str(exc))
-            print(f"[VideoCreator] subtitle burn failed: {' | '.join(subtitle_burn_errors)}")
+                    subtitle_burn_errors.append(f"[{subtitle_filter[:30]}]: {str(exc)[:100]}")
+                    continue
+            if not subtitle_burned:
+                print(
+                    f"[VideoCreator] WARNING: libass subtitle burn failed ({len(subtitle_burn_errors)} attempts). "
+                    f"First error: {subtitle_burn_errors[0] if subtitle_burn_errors else 'unknown'}"
+                )
+                print("[VideoCreator] Trying drawtext fallback for captions...")
+                if _burn_captions_drawtext(muxed_no_sub, output_path, subtitle_path):
+                    print("[VideoCreator] drawtext caption fallback succeeded.")
+                    return output_path
+                print("[VideoCreator] All caption rendering methods failed - outputting video without captions.")
 
         _run_ffmpeg([
             "ffmpeg", "-y",

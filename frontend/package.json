@@ -34,5 +34,11 @@
     "eslint-config-next": "16.1.7",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "brace-expansion": "^2.0.3",
+    "lodash": "^4.18.1",
+    "picomatch": "^4.0.4",
+    "serialize-javascript": "^7.0.5"
   }
 }

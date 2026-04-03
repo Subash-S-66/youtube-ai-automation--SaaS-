@@ -17,7 +17,5 @@ COPY src/ /app/src/
 # Set PYTHONPATH so python can find the modules
 ENV PYTHONPATH="/app/src"
 
-# Run the main pipeline script
-# Assuming Azure Container Apps Job will override this with args like:
-# ["--userId=123", "--prompt=...", "--token=...", "--settings=..."]
-ENTRYPOINT ["python", "-m", "youtube_ai_automation.main"]
+# Use the Azure job runner entrypoint so token bootstrap/sync logic always runs in ACA Jobs.
+ENTRYPOINT ["python", "-m", "youtube_ai_automation.azure_job_runner"]

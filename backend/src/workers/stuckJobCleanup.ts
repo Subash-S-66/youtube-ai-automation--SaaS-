@@ -3,12 +3,24 @@ import SystemConfig from '../models/SystemConfig';
 import { releaseReservedCredits } from '../services/uploadLimitService';
 import { calculateJobTimeout } from '../utils/timeoutHelper';
 import { pipelineQueue } from '../queues/pipelineQueue';
+import { decrementChannelVideosOnHold, resolveJobChannelId } from '../services/channelHoldService';
+import { getPipelineAttemptsForPlan } from '../services/pipelineRetryPolicyService';
 
 const MAX_QUEUE_WAIT_TIME = 2 * 60 * 60 * 1000; // 2 hours
+const MAX_PROCESSING_RUNTIME_MS = 2 * 60 * 60 * 1000; // 2 hours hard cap for active processing
 const QUEUE_TIMEOUT_ERROR = 'Queue timeout: job waited more than 2 hours before processing.';
 const RECOVERY_REQUEUE_GRACE_MS = 5 * 60 * 1000;
 
+const getRequestedUploadCount = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return Math.max(1, Math.floor(parsed));
+};
+
 export const safelyFailJob = async (job: any, errorMessage: string) => {
+  const requestedCount = getRequestedUploadCount(job.videoCount || 1);
   const existingLogs = typeof job.logs === 'string' ? job.logs : '';
   const timeoutLog =
     errorMessage === QUEUE_TIMEOUT_ERROR
@@ -17,7 +29,9 @@ export const safelyFailJob = async (job: any, errorMessage: string) => {
   const result = await JobModel.findOneAndUpdate(
     {
       _id: job._id,
-      status: { $in: ['processing', 'pending'] } // Ensure it's not already succeeded/failed
+      status: { $in: ['processing', 'pending'] },
+      holdConsumed: false,
+      holdReleased: false,
     },
     {
       status: 'failed',
@@ -26,16 +40,35 @@ export const safelyFailJob = async (job: any, errorMessage: string) => {
       errorMessage: errorMessage,
       errorStage: 'RENDER',
       logs: `${existingLogs}${timeoutLog}`,
-      holdReleased: true, // we will attempt release below if it was atomic
+      holdConsumed: false,
+      holdReleased: true,
+      processedVideos: 0,
     },
     { returnDocument: 'after' } // Return updated doc
   );
 
   if (result) {
-    if (!job.holdConsumed && !job.holdReleased) {
-      await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
+    await releaseReservedCredits(job.userId.toString(), requestedCount).catch(console.error);
+    const channelId = resolveJobChannelId(job);
+    if (channelId) {
+      await decrementChannelVideosOnHold(job.userId.toString(), channelId, requestedCount).catch(console.error);
     }
+    return;
   }
+
+  // Keep status consistent even if holds were already settled by a parallel path.
+  await JobModel.updateOne(
+    { _id: job._id, status: { $in: ['processing', 'pending'] } },
+    {
+      $set: {
+        status: 'failed',
+        completedAt: new Date(),
+        error: errorMessage,
+        errorMessage,
+        errorStage: 'RENDER',
+      },
+    }
+  ).catch(console.error);
 };
 
 export const recoverCrashedJobs = async () => {
@@ -92,6 +125,8 @@ export const recoverCrashedJobs = async () => {
                 const count = job.videoCount || 1;
                 const jobTimeoutMinutes = 10 + (count - 1) * 5;
                 const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
+                const planName = String(job.pipelineConfig?.plan || 'free').toLowerCase();
+                const jobAttempts = getPipelineAttemptsForPlan(planName, systemConfig as any);
 
                 await pipelineQueue.add(
                   'runPipeline',
@@ -104,7 +139,7 @@ export const recoverCrashedJobs = async () => {
                   {
                     priority: jobPriority,
                     jobId: job._id.toString(),
-                    attempts: 3,
+                    attempts: jobAttempts,
                     timeout: jobTimeoutMs,
                     backoff: {
                       type: 'exponential',
@@ -124,25 +159,7 @@ export const recoverCrashedJobs = async () => {
         console.log(
           `[CrashRecovery] Marking stale job ${job._id} as failed. Runtime=${runTime}ms allowed=${allowedTime}ms`
         );
-        const updatedJob = await JobModel.findOneAndUpdate(
-            { _id: job._id, holdConsumed: false, holdReleased: false },
-            {
-                $set: {
-                    status: 'failed',
-                    completedAt: new Date(),
-                    error: 'Server crash during processing',
-                    errorMessage: 'Server crash during processing',
-                    errorStage: 'RENDER',
-                    holdReleased: true
-                }
-            },
-            { new: true }
-        );
-        if (updatedJob) {
-           await releaseReservedCredits(job.userId.toString(), job.videoCount || 1).catch(console.error);
-        } else {
-           console.log(`[CrashRecovery] Job ${job._id} was already processed (holds handled) by another routine.`);
-        }
+        await safelyFailJob(job, 'Server crash during processing');
       }
     }
   } catch (error) {
@@ -169,10 +186,30 @@ export const startStuckJobCleanupInterval = () => {
         if (job.status === 'processing' && job.startedAt) {
           const runTime = Date.now() - job.startedAt.getTime();
           const allowedTime = calculateJobTimeout(job.videoCount || 1, config, job.processedVideos || 0);
+          const hardTimeoutExceeded = runTime > MAX_PROCESSING_RUNTIME_MS;
 
-          if (runTime > allowedTime) {
+          if (runTime > allowedTime || hardTimeoutExceeded) {
             console.log(`[StuckJobCleanup] Job ${job._id} timed out. Run time: ${runTime}ms, Allowed: ${allowedTime}ms`);
-            await safelyFailJob(job, 'Job timed out (dynamic timeout exceeded)');
+            await safelyFailJob(
+              job,
+              hardTimeoutExceeded
+                ? 'Job timed out after running more than 2 hours.'
+                : 'Job timed out (dynamic timeout exceeded)'
+            );
+          }
+        } else if (job.status === 'processing' && !job.startedAt) {
+          const staleSince =
+            job.executionLockedAt instanceof Date
+              ? job.executionLockedAt
+              : (job.updatedAt instanceof Date ? job.updatedAt : (job.createdAt instanceof Date ? job.createdAt : null));
+          if (staleSince) {
+            const processingAge = Date.now() - staleSince.getTime();
+            if (processingAge > MAX_PROCESSING_RUNTIME_MS) {
+              console.log(
+                `[StuckJobCleanup] Job ${job._id} has no startedAt and exceeded 2 hours in processing.`
+              );
+              await safelyFailJob(job, 'Job timed out after running more than 2 hours.');
+            }
           }
         } else if (job.status === 'pending' && job.queuedAt) {
           const queueWait = Date.now() - job.queuedAt.getTime();
@@ -193,6 +230,7 @@ export const startStuckJobCleanupInterval = () => {
 export const reconcileQueueWithDatabase = async () => {
   try {
     const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000);
+    const systemConfig = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRetriesByPlan');
     const pendingJobs = await JobModel.find({
       status: 'pending',
       createdAt: { $lt: tenMinsAgo }
@@ -214,6 +252,8 @@ export const reconcileQueueWithDatabase = async () => {
           const count = job.videoCount || 1;
           const jobTimeoutMinutes = 10 + (count - 1) * 5;
           const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
+          const planName = String(job.pipelineConfig?.plan || 'free').toLowerCase();
+          const jobAttempts = getPipelineAttemptsForPlan(planName, systemConfig as any);
 
           await pipelineQueue.add(
             'runPipeline',
@@ -226,7 +266,7 @@ export const reconcileQueueWithDatabase = async () => {
             {
               priority: jobPriority,
               jobId: job._id.toString(),
-              attempts: 3,
+              attempts: jobAttempts,
               timeout: jobTimeoutMs,
               backoff: {
                 type: 'exponential',

@@ -1,12 +1,38 @@
 param(
-    [string]$ResourceGroup = "subash-rg",
-    [string]$RegistryName = "subash",
-    [string]$JobName = "subash-new-automation",
-    [string]$EnvironmentResourceId = "/subscriptions/f508189d-6f3f-42e0-9ddd-2e3d5455e9e6/resourceGroups/ISL-centralindia/providers/Microsoft.App/managedEnvironments/isl-collage-env"
- 
+    [string]$ResourceGroup = $env:AZURE_RESOURCE_GROUP,
+    [string]$RegistryName = $env:AZURE_ACR_NAME,
+    [string]$JobName = $env:AZURE_JOB_NAME,
+    [string]$ImageRepository = "clipforge-pipeline-worker",
+    [string]$EnvironmentResourceId = $env:AZURE_ENVIRONMENT_RESOURCE_ID,
+    [int]$Parallelism = 2,
+    [int]$ReplicaCompletionCount = 1,
+    [int]$ReplicaRetryLimit = 0,
+    [int]$ReplicaTimeout = 3600
+
 )
-$tag = (Get-Date -Format "yyyyMMddHHmmss")
-$ImageName = "${JobName}:$tag"
+
+if ([string]::IsNullOrWhiteSpace($ResourceGroup)) {
+    $ResourceGroup = "subash-rg"
+}
+
+if ([string]::IsNullOrWhiteSpace($RegistryName)) {
+    $RegistryName = "subash"
+}
+
+if ([string]::IsNullOrWhiteSpace($JobName)) {
+    $JobName = "clipforge"
+}
+
+if ([string]::IsNullOrWhiteSpace($EnvironmentResourceId)) {
+    $EnvironmentResourceId = "/subscriptions/f508189d-6f3f-42e0-9ddd-2e3d5455e9e6/resourceGroups/ISL-centralindia/providers/Microsoft.App/managedEnvironments/isl-collage-env"
+}
+
+$tag = (Get-Date -Format "yyyyMMdd-HHmmss")
+$normalizedImageRepository = ($ImageRepository.Trim().ToLowerInvariant() -replace "[^a-z0-9._/-]", "-")
+if ([string]::IsNullOrWhiteSpace($normalizedImageRepository)) {
+    $normalizedImageRepository = "clipforge-pipeline-worker"
+}
+$ImageName = "${normalizedImageRepository}:$tag"
 $ErrorActionPreference = "Stop"
 
 function Invoke-ExternalCommand {
@@ -60,6 +86,26 @@ function Add-KeyValueIfPresent {
     $Target.Add("${Key}=${Value}")
 }
 
+function Resolve-IntSetting {
+    param(
+        [string]$EnvName,
+        [int]$DefaultValue
+    )
+
+    $rawValue = [Environment]::GetEnvironmentVariable($EnvName)
+    if ([string]::IsNullOrWhiteSpace($rawValue)) {
+        return $DefaultValue
+    }
+
+    $parsed = 0
+    if ([int]::TryParse($rawValue, [ref]$parsed)) {
+        return $parsed
+    }
+
+    Write-Warning "Invalid integer for $EnvName='$rawValue'. Falling back to $DefaultValue."
+    return $DefaultValue
+}
+
 function Get-EnvMap {
     param([string]$Path)
 
@@ -109,6 +155,20 @@ $clientSecretJsonB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.Ge
 $tokenJsonB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($tokenJson))
 $jobCpu = if ([string]::IsNullOrWhiteSpace($env:AZURE_JOB_CPU)) { "1" } else { $env:AZURE_JOB_CPU }
 $jobMemory = if ([string]::IsNullOrWhiteSpace($env:AZURE_JOB_MEMORY)) { "2Gi" } else { $env:AZURE_JOB_MEMORY }
+$jobParallelism = Resolve-IntSetting -EnvName "AZURE_JOB_PARALLELISM" -DefaultValue $Parallelism
+$jobReplicaCompletionCount = Resolve-IntSetting -EnvName "AZURE_JOB_REPLICA_COMPLETION_COUNT" -DefaultValue $ReplicaCompletionCount
+$jobReplicaRetryLimit = Resolve-IntSetting -EnvName "AZURE_JOB_REPLICA_RETRY_LIMIT" -DefaultValue $ReplicaRetryLimit
+$jobReplicaTimeout = Resolve-IntSetting -EnvName "AZURE_JOB_REPLICA_TIMEOUT" -DefaultValue $ReplicaTimeout
+
+$resolvedSubscriptionId = $envMap["AZURE_SUBSCRIPTION_ID"]
+if ([string]::IsNullOrWhiteSpace($resolvedSubscriptionId)) {
+    try {
+        $subscriptionIdOutput = Invoke-ExternalCommand -CommandParts @("az", "account", "show", "--query", "id", "-o", "tsv") -CaptureOutput
+        $resolvedSubscriptionId = ($subscriptionIdOutput | Out-String).Trim()
+    } catch {
+        $resolvedSubscriptionId = ""
+    }
+}
 
 $loginServer = "$RegistryName.azurecr.io"
 $fullImage = "$loginServer/$ImageName"
@@ -116,17 +176,29 @@ $fullImage = "$loginServer/$ImageName"
 try {
     Invoke-ExternalCommand -CommandParts @("az", "acr", "build", "-r", $RegistryName, "-t", $ImageName, ".")
 } catch {
-    Write-Host "ACR Tasks unavailable. Falling back to local Docker build and push."
-    $acrTempJson = Invoke-ExternalCommand -CommandParts @("az", "acr", "credential", "show", "-n", $RegistryName) -CaptureOutput
-    $acrTemp = $acrTempJson | ConvertFrom-Json
+    Write-Host "ACR build with streaming logs failed. Retrying with --no-logs..."
+    try {
+        Invoke-ExternalCommand -CommandParts @("az", "acr", "build", "-r", $RegistryName, "-t", $ImageName, ".", "--no-logs")
+    } catch {
+        Write-Host "ACR Tasks unavailable or failed. Falling back to local Docker build and push."
 
-    Invoke-ExternalCommand -CommandParts @(
-        "docker", "login", $loginServer,
-        "--username", $acrTemp.username,
-        "--password", $acrTemp.passwords[0].value
-    )
-    Invoke-ExternalCommand -CommandParts @("docker", "build", "-t", $fullImage, ".")
-    Invoke-ExternalCommand -CommandParts @("docker", "push", $fullImage)
+        try {
+            Invoke-ExternalCommand -CommandParts @("docker", "version") | Out-Null
+        } catch {
+            throw "ACR build failed and Docker daemon is unavailable. Start Docker Desktop or resolve ACR build errors, then retry."
+        }
+
+        $acrTempJson = Invoke-ExternalCommand -CommandParts @("az", "acr", "credential", "show", "-n", $RegistryName) -CaptureOutput
+        $acrTemp = $acrTempJson | ConvertFrom-Json
+
+        Invoke-ExternalCommand -CommandParts @(
+            "docker", "login", $loginServer,
+            "--username", $acrTemp.username,
+            "--password", $acrTemp.passwords[0].value
+        )
+        Invoke-ExternalCommand -CommandParts @("docker", "build", "-t", $fullImage, ".")
+        Invoke-ExternalCommand -CommandParts @("docker", "push", $fullImage)
+    }
 }
 
 $acrJson = Invoke-ExternalCommand -CommandParts @("az", "acr", "credential", "show", "-n", $RegistryName) -CaptureOutput
@@ -186,13 +258,13 @@ Add-KeyValueIfPresent -Target $envArgs -Key "YOUTUBE_REGION_CODE" -Value $envMap
 Add-KeyValueIfPresent -Target $envArgs -Key "TELEGRAM_POLL_TIMEOUT" -Value $envMap["TELEGRAM_POLL_TIMEOUT"]
 Add-KeyValueIfPresent -Target $envArgs -Key "TELEGRAM_MAX_COUNT" -Value $envMap["TELEGRAM_MAX_COUNT"]
 Add-KeyValueIfPresent -Target $envArgs -Key "TELEGRAM_RUN_TARGET" -Value $envMap["TELEGRAM_RUN_TARGET"]
-Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_JOB_NAME" -Value $envMap["AZURE_JOB_NAME"]
+Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_JOB_NAME" -Value $JobName
 Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_JOB_NAME_PRIMARY" -Value $envMap["AZURE_JOB_NAME_PRIMARY"]
 Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_JOB_NAME_SECONDARY" -Value $envMap["AZURE_JOB_NAME_SECONDARY"]
 Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_JOB_LABEL_PRIMARY" -Value $envMap["AZURE_JOB_LABEL_PRIMARY"]
 Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_JOB_LABEL_SECONDARY" -Value $envMap["AZURE_JOB_LABEL_SECONDARY"]
-Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_RESOURCE_GROUP" -Value $envMap["AZURE_RESOURCE_GROUP"]
-Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_SUBSCRIPTION_ID" -Value $envMap["AZURE_SUBSCRIPTION_ID"]
+Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_RESOURCE_GROUP" -Value $ResourceGroup
+Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_SUBSCRIPTION_ID" -Value $resolvedSubscriptionId
 Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_TENANT_ID" -Value $envMap["AZURE_TENANT_ID"]
 Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_CLIENT_ID" -Value $envMap["AZURE_CLIENT_ID"]
 Add-KeyValueIfPresent -Target $envArgs -Key "AZURE_ARM_API_VERSION" -Value $envMap["AZURE_ARM_API_VERSION"]
@@ -270,9 +342,13 @@ if ($jobExists) {
             "--image", $fullImage,
             "--cpu", $jobCpu,
             "--memory", $jobMemory,
+            "--parallelism", "$jobParallelism",
+            "--replica-completion-count", "$jobReplicaCompletionCount",
+            "--replica-retry-limit", "$jobReplicaRetryLimit",
+            "--replica-timeout", "$jobReplicaTimeout",
             "--set-env-vars"
         ) + $envArgs
-    ) -DisplayText "az containerapp job update -n $JobName -g $ResourceGroup --image $fullImage --cpu $jobCpu --memory $jobMemory --set-env-vars <configured>"
+    ) -DisplayText "az containerapp job update -n $JobName -g $ResourceGroup --image $fullImage --cpu $jobCpu --memory $jobMemory --parallelism $jobParallelism --replica-completion-count $jobReplicaCompletionCount --replica-retry-limit $jobReplicaRetryLimit --replica-timeout $jobReplicaTimeout --set-env-vars <configured>"
 } else {
     Invoke-ExternalCommand -CommandParts (
         @(
@@ -281,18 +357,19 @@ if ($jobExists) {
             "-g", $ResourceGroup,
             "--environment", $EnvironmentResourceId,
             "--trigger-type", "Manual",
+            "--image", $fullImage,
             "--cpu", $jobCpu,
             "--memory", $jobMemory,
-            "--parallelism", "1",
-            "--replica-completion-count", "1",
-            "--replica-retry-limit", "0",
-            "--replica-timeout", "3600",
+            "--parallelism", "$jobParallelism",
+            "--replica-completion-count", "$jobReplicaCompletionCount",
+            "--replica-retry-limit", "$jobReplicaRetryLimit",
+            "--replica-timeout", "$jobReplicaTimeout",
             "--registry-server", $loginServer,
             "--registry-username", $acrUser,
             "--registry-password", $acrPass,
             "--secrets"
         ) + $secretArgs + @("--env-vars") + $envArgs
-    ) -DisplayText "az containerapp job create -n $JobName -g $ResourceGroup --environment $EnvironmentResourceId --trigger-type Manual --image $fullImage --cpu $jobCpu --memory $jobMemory --parallelism 1 --replica-completion-count 1 --replica-retry-limit 0 --replica-timeout 3600 --registry-server $loginServer --registry-username <hidden> --registry-password <hidden> --secrets <hidden> --env-vars <configured>"
+    ) -DisplayText "az containerapp job create -n $JobName -g $ResourceGroup --environment $EnvironmentResourceId --trigger-type Manual --image $fullImage --cpu $jobCpu --memory $jobMemory --parallelism $jobParallelism --replica-completion-count $jobReplicaCompletionCount --replica-retry-limit $jobReplicaRetryLimit --replica-timeout $jobReplicaTimeout --registry-server $loginServer --registry-username <hidden> --registry-password <hidden> --secrets <hidden> --env-vars <configured>"
 }
 
 Write-Host "Azure job ready: $JobName"

@@ -10,9 +10,9 @@ import { ensureSystemConfigSingleton } from './utils/ensureSystemConfig';
 import { startScheduleRunner } from './workers/scheduleRunner';
 import { ensureDefaultPlans } from './config/plans';
 import { recoverCrashedJobs, startStuckJobCleanupInterval } from './workers/stuckJobCleanup';
-// Side-effect import: instantiates the BullMQ Worker so pipeline jobs are consumed automatically
-import './workers/pipelineWorker';
 import mongoose from 'mongoose';
+
+const runEmbeddedWorker = process.env.RUN_EMBEDDED_WORKER === 'true';
 
 // Initialize Firebase Admin
 initializeFirebaseAdmin();
@@ -27,6 +27,12 @@ connectDB().then(async () => {
       await recoverCrashedJobs();
       startStuckJobCleanupInterval();
       await startScheduleRunner();
+      if (runEmbeddedWorker) {
+        require('./workers/pipelineWorker');
+        console.log('[Bootstrap] Embedded pipeline worker is enabled for this API process.');
+      } else {
+        console.log('[Bootstrap] Embedded pipeline worker is disabled. Run a dedicated worker process (npm run worker).');
+      }
     } catch (bootErr) {
       console.error('[Bootstrap] Startup task failed:', bootErr);
     }
@@ -53,7 +59,7 @@ server.listen(PORT, () => {
   console.log('[AI Config] Provider: native-gemini only');
   console.log(`[AI Config] Gemini API: ${geminiConfigured ? 'configured' : 'NOT configured - generation will fail'}`);
   console.log(`[AI Config] Model: ${geminiModel}`);
-  console.log('[AI Config] Pipeline Worker: started (BullMQ consumer active)');
+  console.log(`[AI Config] Embedded Pipeline Worker: ${runEmbeddedWorker ? 'enabled' : 'disabled'}`);
 });
 
 const shouldCrashOnUnhandled =

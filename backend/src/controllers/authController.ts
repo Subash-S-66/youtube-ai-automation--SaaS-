@@ -179,6 +179,11 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
   if (user) {
     // Get accurate current limits and plan for response
     const limitCheck = await getUploadLimits(user.id);
+    const refreshedCounters = await User.findById(user.id)
+      .select('uploadsUsedToday uploadsOnHold')
+      .lean();
+    const uploadsUsedToday = Number(refreshedCounters?.uploadsUsedToday ?? user.uploadsUsedToday ?? 0);
+    const uploadsOnHold = Number(refreshedCounters?.uploadsOnHold ?? user.uploadsOnHold ?? 0);
 
     res.json({
       success: true,
@@ -211,8 +216,8 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         isBetaMode: limitCheck.isBetaMode,
         planFeatures: limitCheck.features || {},
         remainingUploads: limitCheck.remainingUploads,
-        uploadsUsedToday: user.uploadsUsedToday || 0,
-        uploadsOnHold: user.uploadsOnHold || 0,
+        uploadsUsedToday,
+        uploadsOnHold,
         uploadLimitPerDay: limitCheck.dailyLimit,
         uploadLimit: limitCheck.dailyLimit,
       },

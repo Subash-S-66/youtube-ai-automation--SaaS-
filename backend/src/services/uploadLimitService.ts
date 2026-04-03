@@ -2,6 +2,7 @@ import User from '../models/User';
 import { PlanType } from '../config/plans';
 import SystemConfig from '../models/SystemConfig';
 import Plan from '../models/Plan';
+import Job from '../models/Job';
 
 interface UploadLimitCheckResult {
   canUpload: boolean;
@@ -21,6 +22,53 @@ interface UploadLimitCheckResult {
     custom_media?: boolean;
   };
 }
+
+const resolveConsumedCountForJob = (job: {
+  holdConsumed?: boolean;
+  videoCount?: number;
+  processedVideos?: number;
+}): number => {
+  if (!job?.holdConsumed) {
+    return 0;
+  }
+
+  const requestedCount = Math.max(1, Math.floor(Number(job.videoCount || 1)));
+  const processedCountRaw = Number(job.processedVideos);
+  if (Number.isFinite(processedCountRaw) && processedCountRaw > 0) {
+    return Math.max(1, Math.min(requestedCount, Math.floor(processedCountRaw)));
+  }
+  return requestedCount;
+};
+
+export const getConsumedUploadsLast24hForChannel = async (
+  userId: string,
+  channelId: string,
+  hours: number = 24
+): Promise<number> => {
+  const normalizedChannelId = String(channelId || '').trim();
+  if (!normalizedChannelId) {
+    return 0;
+  }
+
+  const lookbackHours = Number.isFinite(Number(hours)) ? Math.max(1, Math.floor(Number(hours))) : 24;
+  const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
+
+  const recentSettledJobs = await Job.find({
+    userId,
+    channelId: normalizedChannelId,
+    status: { $in: ['success', 'failed'] },
+    holdConsumed: true,
+    completedAt: { $gte: since },
+  }).select('holdConsumed videoCount processedVideos');
+
+  return recentSettledJobs.reduce((sum, job) => {
+    return sum + resolveConsumedCountForJob({
+      holdConsumed: Boolean((job as any).holdConsumed),
+      videoCount: Number((job as any).videoCount || 1),
+      processedVideos: Number((job as any).processedVideos || 0),
+    });
+  }, 0);
+};
 
 export const checkAndDowngradeExpiredPlan = async (user: any): Promise<any> => {
   if (user.subscriptionExpiresAt && new Date() > user.subscriptionExpiresAt) {

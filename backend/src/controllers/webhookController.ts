@@ -44,6 +44,19 @@ const verifyWebhookSecret = (req: Request, res: Response): boolean => {
   return true;
 };
 
+const isYouTubeLimitFailure = (message: string): boolean => {
+  const normalized = String(message || '').toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes('quotaexceeded') ||
+    normalized.includes('dailylimitexceeded') ||
+    normalized.includes('uploadlimitexceeded') ||
+    normalized.includes('too many uploads') ||
+    (normalized.includes('youtube') && normalized.includes('limit')) ||
+    (normalized.includes('quota') && normalized.includes('upload'))
+  );
+};
+
 // @desc    Receive job status updates from Python pipeline
 // @route   POST /api/webhook/job-status
 // @access  Private (verified via x-webhook-secret)
@@ -114,7 +127,6 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     (job as any)?.pipelineConfig?.publishNow === true ||
     (typeof (job as any)?.pipelineConfig?.channelId === 'string' && (job as any).pipelineConfig.channelId.trim().length > 0)
   );
-  const acceptedWarning = Boolean((job as any)?.acceptedYouTubeLimitWarning);
   const requestedCount = Math.max(1, Number(job.videoCount || 1));
   const processedCountRaw = typeof processedVideos === 'number' && processedVideos >= 0
     ? processedVideos
@@ -141,8 +153,8 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
      const releaseCount = Math.max(0, requestedCount - consumeCount);
 
      if (!uploadConfirmed) {
-       const failedConsumeCount = acceptedWarning ? requestedCount : processedCount;
-       const failedReleaseCount = Math.max(0, requestedCount - failedConsumeCount);
+       const failedConsumeCount = requestedCount;
+       const failedReleaseCount = 0;
        const updatedJob = await JobModel.findOneAndUpdate(
          { _id: jobId, status: { $in: ['processing', 'pending'] }, holdConsumed: false, holdReleased: false },
          {
@@ -211,9 +223,8 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
   } else if (normalizedStatus === 'failed') {
      const resolvedError = (typeof errorMessage === 'string' && errorMessage.trim()) ? errorMessage.trim() : (logs || 'Failed via webhook');
      const parsedErrorStage = (typeof errorStage === 'string' && ['TOKEN', 'CONTENT_GENERATION', 'RENDER', 'UPLOAD'].includes(errorStage)) ? errorStage as any : undefined;
-     const consumeCount = acceptedWarning && parsedErrorStage === 'UPLOAD'
-       ? requestedCount
-       : processedCount;
+     const isUploadFailure = parsedErrorStage === 'UPLOAD' || isYouTubeLimitFailure(resolvedError);
+     const consumeCount = isUploadFailure ? requestedCount : processedCount;
      const releaseCount = Math.max(0, requestedCount - consumeCount);
 
      const updatedJob = await JobModel.findOneAndUpdate(
@@ -249,7 +260,7 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
      }
   } else if (normalizedStatus === 'youtube_rejected') {
      const resolvedError = (typeof errorMessage === 'string' && errorMessage.trim()) ? errorMessage.trim() : 'YouTube limits rejected the upload';
-     const consumeCount = acceptedWarning ? requestedCount : processedCount;
+      const consumeCount = requestedCount;
      const releaseCount = Math.max(0, requestedCount - consumeCount);
 
      const updatedJob = await JobModel.findOneAndUpdate(
@@ -378,12 +389,16 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
     (resolvedVideoUrl && /^https?:\/\//i.test(resolvedVideoUrl))
   );
 
-  const acceptedWarning = Boolean((job as any)?.acceptedYouTubeLimitWarning);
   const requestedCount = Math.max(1, Number(job.videoCount || 1));
   const warningList = Array.isArray(resultPayload?.metadata?.warnings)
     ? resultPayload.metadata.warnings.map((warning: unknown) => String(warning || '').toLowerCase())
     : [];
   const uploadWarning = warningList.find((warning: string) => warning.includes('upload_error'));
+  const rawFailureMessage = String(resultPayload?.errorMessage || payload?.errorMessage || '').trim();
+  const hintedErrorStageRaw = String(resultPayload?.errorStage || payload?.errorStage || '').trim().toUpperCase();
+  const hintedErrorStage = ['TOKEN', 'CONTENT_GENERATION', 'RENDER', 'UPLOAD'].includes(hintedErrorStageRaw)
+    ? hintedErrorStageRaw
+    : '';
   const successfulUploadsHintRaw = Number(
     resultPayload?.successfulUploads ??
     resultPayload?.result?.successfulUploads ??
@@ -405,6 +420,14 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
     nextStatus = 'success';
   }
 
+  const uploadFailure = nextStatus === 'failed' && uploadRequested && (
+    !uploadConfirmed ||
+    Boolean(uploadWarning) ||
+    hintedErrorStage === 'UPLOAD' ||
+    statusHint === 'youtube_rejected' ||
+    isYouTubeLimitFailure(rawFailureMessage)
+  );
+
   const consumeCount = (() => {
     if (nextStatus === 'success') {
       if (typeof successfulUploadsHint === 'number') {
@@ -412,7 +435,7 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
       }
       return requestedCount;
     }
-    if (acceptedWarning && uploadRequested) {
+    if (uploadFailure) {
       return requestedCount;
     }
     if (typeof successfulUploadsHint === 'number') {
@@ -423,14 +446,12 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
   const releaseCount = Math.max(0, requestedCount - consumeCount);
 
   const failureMessage = nextStatus === 'failed'
-    ? (String(resultPayload?.errorMessage || payload?.errorMessage || '').trim() ||
+    ? (rawFailureMessage ||
         (uploadWarning ? String(uploadWarning).replace(/^upload_error:/, '').trim() : '') ||
         (uploadConfirmed ? 'Pipeline failed' : 'Upload failed or was skipped.'))
     : '';
   const failureStage = nextStatus === 'failed'
-    ? (uploadConfirmed
-        ? (typeof resultPayload?.errorStage === 'string' ? resultPayload.errorStage : undefined)
-        : 'UPLOAD')
+    ? (uploadFailure ? 'UPLOAD' : (hintedErrorStage || undefined))
     : undefined;
 
   const updatePayload: Record<string, any> = {

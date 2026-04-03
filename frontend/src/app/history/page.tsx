@@ -74,7 +74,13 @@ export default function HistoryPage() {
 
   const isActiveJob = (job: HistoryJob) => {
     const status = String(job?.status || '').toLowerCase();
-    return ['queued', 'pending', 'processing', 'running'].includes(status) || isRuntimeInFlight(job);
+    if (['queued', 'pending', 'processing', 'running'].includes(status)) {
+      return true;
+    }
+    if (['success', 'completed', 'failed', 'cancelled', 'canceled', 'timeout'].includes(status)) {
+      return false;
+    }
+    return isRuntimeInFlight(job);
   };
 
   useEffect(() => {
@@ -148,19 +154,21 @@ export default function HistoryPage() {
     return haystack.includes('queue timeout') || haystack.includes('waiting in queue for more than 2 hours');
   };
 
-  const looksLikeTransientFailed = (job: HistoryJob) => {
-    const normalizedStatus = String(job?.status || '').toLowerCase();
-    return normalizedStatus === 'failed' && isRuntimeInFlight(job);
-  };
-
   const getDisplayStatus = (job: HistoryJob) => {
-    if (isRuntimeInFlight(job) || looksLikeTransientFailed(job)) {
-      return 'processing';
-    }
-    if (job?.status === 'failed' && isQueueTimeoutJob(job)) {
+    const normalizedStatus = String(job?.status || '').toLowerCase();
+    if (normalizedStatus === 'failed' && isQueueTimeoutJob(job)) {
       return 'timeout';
     }
-    return job?.status || 'queued';
+    if (['queued', 'pending', 'processing', 'running'].includes(normalizedStatus) && isRuntimeInFlight(job)) {
+      return 'processing';
+    }
+    if (normalizedStatus) {
+      return normalizedStatus;
+    }
+    if (isRuntimeInFlight(job)) {
+      return 'processing';
+    }
+    return 'queued';
   };
 
   const getStatusBadge = (status: string) => {

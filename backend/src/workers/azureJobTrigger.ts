@@ -1,5 +1,13 @@
 import axios from 'axios';
 
+const DEFAULT_AZURE_ARM_API_VERSION = '2023-05-01';
+
+const parseExecutionNameFromLocation = (locationHeader: string): string | null => {
+  if (!locationHeader) return null;
+  const match = locationHeader.match(/\/executions\/([^/?]+)(?:\?|$)/i);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+};
+
 export async function getAzureToken(): Promise<string | null> {
   const tenantId = process.env.AZURE_TENANT_ID;
   const clientId = process.env.AZURE_CLIENT_ID;
@@ -26,39 +34,48 @@ export async function getAzureToken(): Promise<string | null> {
 export async function triggerAzureJob(
   jobName: string,
   envVars: Array<{ name: string; value: string }>
-): Promise<{ success: boolean; accessToken: string | null }> {
+): Promise<{ success: boolean; accessToken: string | null; executionName: string | null }> {
   try {
     const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
-    const resourceGroup = process.env.RESOURCE_GROUP;
+    const resourceGroup = process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP;
+    const containerName = process.env.AZURE_JOB_CONTAINER_NAME || jobName;
+    const apiVersion = process.env.AZURE_ARM_API_VERSION || DEFAULT_AZURE_ARM_API_VERSION;
     const accessToken = await getAzureToken();
 
     if (!accessToken || !subscriptionId || !resourceGroup) {
       console.warn('Azure credentials missing, simulating job trigger.');
-      return { success: true, accessToken: null }; // fallback for dev
+      return { success: true, accessToken: null, executionName: null }; // fallback for dev
     }
 
     // Trigger Job
-    const triggerUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/jobs/${jobName}/start?api-version=2023-05-01`;
+    const triggerUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/jobs/${jobName}/start?api-version=${apiVersion}`;
 
     const payload = {
       template: {
         containers: [
           {
-            name: "pipeline-worker",
+            name: containerName,
             env: envVars
           }
         ]
       }
     };
 
-    await axios.post(triggerUrl, payload, {
+    const triggerRes = await axios.post(triggerUrl, payload, {
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       }
     });
 
-    return { success: true, accessToken };
+    const bodyName = typeof triggerRes.data?.name === 'string' ? triggerRes.data.name : null;
+    const bodyId = typeof triggerRes.data?.id === 'string' ? triggerRes.data.id : '';
+    const executionName =
+      bodyName ||
+      parseExecutionNameFromLocation(String(triggerRes.headers?.location || '')) ||
+      parseExecutionNameFromLocation(bodyId);
+
+    return { success: true, accessToken, executionName };
   } catch (error: any) {
     console.error('Failed to trigger Azure job:', error?.response?.data || error.message);
     throw new Error('Azure Job API Error');

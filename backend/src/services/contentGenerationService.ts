@@ -51,8 +51,10 @@ export interface ContentGenerationResult {
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-const WORDS_PER_SECOND = 3.6;
-const VALIDATION_WPS = 2.5;
+// ROOT CAUSE FIX: Gemini native audio speaks at ~1.9 WPS (not 3.6).
+// Keep a small prompt buffer at 2.0 WPS, with lenient lower-bound validation at 1.6 WPS.
+const WORDS_PER_SECOND = 2.0;
+const VALIDATION_WPS = 1.6;
 const parseEnvMs = (raw: unknown, fallback: number): number => {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) return fallback;
@@ -68,17 +70,17 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getWordBudget = (targetDurationSeconds: number): { minWords: number; maxWords: number } => {
   const target = Math.max(15, Math.min(60, targetDurationSeconds));
-  // Backend validation should be lenient; pipeline will do final duration control from real audio.
-  const minWords = Math.max(45, Math.floor((target - 5) * VALIDATION_WPS));
-  const maxWords = Math.floor((target + 10) * WORDS_PER_SECOND);
+  // At ~1.9 WPS, keep a practical acceptance window around target while pipeline performs final control.
+  const minWords = Math.max(20, Math.floor((target - 8) * VALIDATION_WPS));
+  const maxWords = Math.floor(target * WORDS_PER_SECOND);
   return { minWords, maxWords };
 };
 
 const getPromptWordBudget = (targetDurationSeconds: number): { minWords: number; maxWords: number } => {
   const target = Math.max(15, Math.min(60, targetDurationSeconds));
-  // Generation prompt should push longer narration for stable 60s voice output.
-  const minWords = Math.floor((target - 5) * 3.2);
-  const maxWords = Math.floor((target + 8) * 3.8);
+  // Calibrated for Gemini native audio pacing with slight buffer on max words.
+  const minWords = Math.floor(Math.max(1, target - 5) * 1.6);
+  const maxWords = Math.floor((target + 5) * WORDS_PER_SECOND);
   return { minWords, maxWords };
 };
 
@@ -122,7 +124,7 @@ const splitIntoLines = (script: string): string[] => {
   return raw.map(s => s.trim()).filter(Boolean);
 };
 
-/** Estimate how long a line takes to speak at 3.6 wps */
+/** Estimate how long a line takes to speak using configured WPS */
 const estimateDuration = (line: string): number => {
   const words = line.split(/\s+/).filter(Boolean).length;
   if (!words) return 1;

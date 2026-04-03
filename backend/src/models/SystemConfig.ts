@@ -2,7 +2,14 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ISystemConfig extends Document {
   betaMode: boolean;
-  pipelineRunner?: 'local' | 'azure';
+  pipelineRunner?: 'local' | 'azure' | 'remote';
+  pipelineRetriesByPlan?: {
+    free: number;
+    basic: number;
+    pro: number;
+    premium: number;
+  };
+  pipelineRunnerFallbackOrder?: Array<'local' | 'azure' | 'remote'>;
   planLimits?: {
     free: number;
     basic: number;
@@ -28,8 +35,22 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     },
     pipelineRunner: {
       type: String,
-      enum: ['local', 'azure'],
+      enum: ['local', 'azure', 'remote'],
       default: 'local',
+    },
+    pipelineRetriesByPlan: {
+      free: { type: Number, default: 2, min: 0, max: 10 },
+      basic: { type: Number, default: 3, min: 0, max: 10 },
+      pro: { type: Number, default: 3, min: 0, max: 10 },
+      premium: { type: Number, default: 5, min: 0, max: 10 },
+    },
+    pipelineRunnerFallbackOrder: {
+      type: [String],
+      default: ['azure', 'remote', 'local'],
+      validate: {
+        validator: (values: string[]) =>
+          Array.isArray(values) && values.every((value) => ['local', 'azure', 'remote'].includes(value)),
+      },
     },
     planLimits: {
       free: { type: Number, default: 2 },

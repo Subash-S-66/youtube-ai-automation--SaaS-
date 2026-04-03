@@ -11,6 +11,10 @@ import SystemConfig from '../models/SystemConfig';
 import { z } from 'zod';
 import { emailQueue } from '../queues/emailQueue';
 import { pipelineQueue } from '../queues/pipelineQueue';
+import {
+  sanitizePipelineRetriesByPlan,
+  sanitizePipelineRunnerFallbackOrder,
+} from '../services/pipelineRetryPolicyService';
 
 // Stripe disabled. Using Razorpay for payments.
 
@@ -127,7 +131,12 @@ const bannerSchema = z.object({
 export const getSystemConfig = asyncHandler(async (req: Request, res: Response) => {
   let config = await SystemConfig.findOne().sort({ updatedAt: -1 });
   if (!config) {
-    config = await SystemConfig.create({ betaMode: false, pipelineRunner: 'local' });
+    config = await SystemConfig.create({
+      betaMode: false,
+      pipelineRunner: 'local',
+      pipelineRetriesByPlan: sanitizePipelineRetriesByPlan(undefined),
+      pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder(undefined),
+    });
   } else {
     // Ensure only one config doc exists.
     await SystemConfig.deleteMany({ _id: { $ne: config._id } });
@@ -142,7 +151,20 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
 const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
-    pipelineRunner: z.enum(['local', 'azure']).optional(),
+    pipelineRunner: z.enum(['local', 'azure', 'remote']).optional(),
+    pipelineRetriesByPlan: z
+      .object({
+        free: z.number().min(0).max(10),
+        basic: z.number().min(0).max(10),
+        pro: z.number().min(0).max(10),
+        premium: z.number().min(0).max(10),
+      })
+      .optional(),
+    pipelineRunnerFallbackOrder: z
+      .array(z.enum(['local', 'azure', 'remote']))
+      .min(1)
+      .max(3)
+      .optional(),
     planValueMap: z
       .object({
         free: z.number(),
@@ -196,10 +218,16 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     throw new AppError(errorMessages, 400);
   }
 
-  const { betaMode, planValueMap } = validation.data.body;
+  const { betaMode, planValueMap, pipelineRetriesByPlan, pipelineRunnerFallbackOrder } = validation.data.body;
   const updatePayload: any = { betaMode };
   if (validation.data.body.pipelineRunner) {
     updatePayload.pipelineRunner = validation.data.body.pipelineRunner;
+  }
+  if (pipelineRetriesByPlan) {
+    updatePayload.pipelineRetriesByPlan = sanitizePipelineRetriesByPlan(pipelineRetriesByPlan);
+  }
+  if (pipelineRunnerFallbackOrder) {
+    updatePayload.pipelineRunnerFallbackOrder = sanitizePipelineRunnerFallbackOrder(pipelineRunnerFallbackOrder);
   }
   if (planValueMap) {
     updatePayload.planValueMap = planValueMap;

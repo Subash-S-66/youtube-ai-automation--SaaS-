@@ -62,11 +62,14 @@ export default function AdminDashboard() {
   const bannerStartRef = useRef<HTMLInputElement | null>(null);
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
   const [betaMode, setBetaMode] = useState(false);
-  const [pipelineRunner, setPipelineRunner] = useState<'local' | 'azure'>('local');
+  const [pipelineRunner, setPipelineRunner] = useState<'local' | 'azure' | 'remote'>('local');
+  const [pipelineRetriesByPlan, setPipelineRetriesByPlan] = useState({ free: 2, basic: 3, pro: 3, premium: 5 });
+  const [pipelineRunnerFallbackOrder, setPipelineRunnerFallbackOrder] = useState<Array<'local' | 'azure' | 'remote'>>(['azure', 'remote', 'local']);
   const [updatingConfig, setUpdatingConfig] = useState(false);
   const [planValueMap, setPlanValueMap] = useState({ free: 0, basic: 1, pro: 2, premium: 4 });
   const [savingProration, setSavingProration] = useState(false);
   const [savingPipelineRunner, setSavingPipelineRunner] = useState(false);
+  const [savingRetryPolicy, setSavingRetryPolicy] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlans, setSavingPlans] = useState(false);
 
@@ -78,6 +81,33 @@ export default function AdminDashboard() {
       return;
     }
     input.focus();
+  };
+
+  const getSystemConfigPayload = () => ({
+    betaMode,
+    planValueMap,
+    pipelineRunner,
+    pipelineRetriesByPlan,
+    pipelineRunnerFallbackOrder,
+  });
+
+  const handleFallbackOrderChange = (index: number, value: 'local' | 'azure' | 'remote') => {
+    setPipelineRunnerFallbackOrder((prev) => {
+      const next = [...prev] as Array<'local' | 'azure' | 'remote'>;
+      const duplicateIndex = next.findIndex((runner, runnerIndex) => runner === value && runnerIndex !== index);
+      if (duplicateIndex !== -1) {
+        const oldValue = next[index] || 'local';
+        next[duplicateIndex] = oldValue;
+      }
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const handleRetryCountChange = (plan: 'free' | 'basic' | 'pro' | 'premium', value: string) => {
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed) ? Math.max(0, Math.min(10, Math.floor(parsed))) : 0;
+    setPipelineRetriesByPlan((prev) => ({ ...prev, [plan]: safeValue }));
   };
 
   const [modalConfig, setModalConfig] = useState<{
@@ -194,7 +224,10 @@ export default function AdminDashboard() {
   const executeUpdateConfig = async (newBetaMode: boolean) => {
     setUpdatingConfig(true);
     try {
-      await adminService.updateSystemConfig({ betaMode: newBetaMode, planValueMap, pipelineRunner });
+      await adminService.updateSystemConfig({
+        ...getSystemConfigPayload(),
+        betaMode: newBetaMode,
+      });
       setBetaMode(newBetaMode);
       setModalConfig({
          isOpen: true,
@@ -222,7 +255,7 @@ export default function AdminDashboard() {
   const handleSaveProration = async () => {
     setSavingProration(true);
     try {
-      await adminService.updateSystemConfig({ betaMode, planValueMap, pipelineRunner });
+      await adminService.updateSystemConfig(getSystemConfigPayload());
       setModalConfig({
         isOpen: true,
         title: 'Proration Updated',
@@ -248,11 +281,14 @@ export default function AdminDashboard() {
   const handleSavePipelineRunner = async () => {
     setSavingPipelineRunner(true);
     try {
-      await adminService.updateSystemConfig({ betaMode, planValueMap, pipelineRunner });
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      const runnerLabel = pipelineRunner === 'local'
+        ? 'Local Worker'
+        : (pipelineRunner === 'azure' ? 'Azure Container Apps' : 'Remote Pipeline Service');
       setModalConfig({
         isOpen: true,
         title: 'Pipeline Runner Updated',
-        description: `Pipeline runner switched to ${pipelineRunner === 'local' ? 'Local Worker' : 'Azure Container Apps'}.`,
+        description: `Pipeline runner switched to ${runnerLabel}.`,
         type: 'success',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -268,6 +304,32 @@ export default function AdminDashboard() {
       });
     } finally {
       setSavingPipelineRunner(false);
+    }
+  };
+
+  const handleSaveRetryPolicy = async () => {
+    setSavingRetryPolicy(true);
+    try {
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      setModalConfig({
+        isOpen: true,
+        title: 'Retry Policy Updated',
+        description: 'Pipeline retry counts and failover order saved successfully.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update retry policy.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingRetryPolicy(false);
     }
   };
 
@@ -457,7 +519,23 @@ const handleDeleteUser = () => {
           if (configRes.status === 'fulfilled' && configRes.value?.success && configRes.value.data) {
             setBetaMode(configRes.value.data.betaMode);
             if (configRes.value.data.pipelineRunner) {
-              setPipelineRunner(configRes.value.data.pipelineRunner);
+              setPipelineRunner(configRes.value.data.pipelineRunner as 'local' | 'azure' | 'remote');
+            }
+            if (configRes.value.data.pipelineRetriesByPlan) {
+              setPipelineRetriesByPlan({
+                free: Number(configRes.value.data.pipelineRetriesByPlan.free ?? 2),
+                basic: Number(configRes.value.data.pipelineRetriesByPlan.basic ?? 3),
+                pro: Number(configRes.value.data.pipelineRetriesByPlan.pro ?? 3),
+                premium: Number(configRes.value.data.pipelineRetriesByPlan.premium ?? 5),
+              });
+            }
+            if (Array.isArray(configRes.value.data.pipelineRunnerFallbackOrder) && configRes.value.data.pipelineRunnerFallbackOrder.length > 0) {
+              const normalizedOrder = configRes.value.data.pipelineRunnerFallbackOrder
+                .map((runner: unknown) => String(runner || '').trim().toLowerCase())
+                .filter((runner: string) => runner === 'local' || runner === 'azure' || runner === 'remote') as Array<'local' | 'azure' | 'remote'>;
+              if (normalizedOrder.length > 0) {
+                setPipelineRunnerFallbackOrder(normalizedOrder.slice(0, 3));
+              }
             }
             if (configRes.value.data.planValueMap) {
               setPlanValueMap({
@@ -687,7 +765,7 @@ const handleDeleteUser = () => {
                 </div>
                 <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
                   <p className="text-sm font-semibold text-white mb-2">Pipeline Runner</p>
-                  <p className="text-xs text-slate-400 mb-3">Choose where pipeline jobs execute. GitHub Workspace runs in GitHub Actions. Azure runs in Container Apps Jobs.</p>
+                  <p className="text-xs text-slate-400 mb-3">Choose primary execution environment for pipeline runs.</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">Runner</label>
@@ -695,11 +773,12 @@ const handleDeleteUser = () => {
                         id="pipeline-runner-select"
                         aria-label="Pipeline Runner"
                         value={pipelineRunner}
-                        onChange={(e) => setPipelineRunner(e.target.value as 'local' | 'azure')}
+                        onChange={(e) => setPipelineRunner(e.target.value as 'local' | 'azure' | 'remote')}
                         className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
                       >
                         <option value="local">Local Worker</option>
                         <option value="azure">Azure Container Apps</option>
+                        <option value="remote">Remote Pipeline Service</option>
                       </select>
                     </div>
                     <div className="flex items-end">
@@ -713,6 +792,57 @@ const handleDeleteUser = () => {
                       </button>
                     </div>
                   </div>
+                </div>
+
+                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                  <p className="text-sm font-semibold text-white mb-2">Retry & Failover Policy</p>
+                  <p className="text-xs text-slate-400 mb-3">Configure retry counts per plan and runner failover order. Retry count excludes the first attempt.</p>
+
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    {(['free', 'basic', 'pro', 'premium'] as const).map((plan) => (
+                      <div key={`retry-${plan}`}>
+                        <label className="text-xs text-slate-400 block mb-1 capitalize">{plan} Retries</label>
+                        <input
+                          id={`retry-count-${plan}`}
+                          aria-label={`${plan} retry count`}
+                          type="number"
+                          min="0"
+                          max="10"
+                          value={(pipelineRetriesByPlan as any)[plan]}
+                          onChange={(e) => handleRetryCountChange(plan, e.target.value)}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {[0, 1, 2].map((index) => (
+                      <div key={`fallback-runner-${index}`}>
+                        <label className="text-xs text-slate-400 block mb-1">Fallback #{index + 1}</label>
+                        <select
+                          id={`pipeline-fallback-${index}`}
+                          aria-label={`Pipeline fallback runner ${index + 1}`}
+                          value={pipelineRunnerFallbackOrder[index] || 'local'}
+                          onChange={(e) => handleFallbackOrderChange(index, e.target.value as 'local' | 'azure' | 'remote')}
+                          className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                        >
+                          <option value="local">Local Worker</option>
+                          <option value="azure">Azure Container Apps</option>
+                          <option value="remote">Remote Pipeline Service</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveRetryPolicy}
+                    disabled={savingRetryPolicy}
+                    className="mt-3 w-full py-2 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingRetryPolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Retry Policy'}
+                  </button>
                 </div>
               </div>
             </div>

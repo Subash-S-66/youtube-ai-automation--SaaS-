@@ -31,7 +31,7 @@
     "template": {
       "containers": [
         {
-          "image": "<YOUR_ACR_NAME>.azurecr.io/pipeline-worker:latest",
+          "image": "<YOUR_ACR_NAME>.azurecr.io/clipforge-pipeline-worker:<YYYYMMDD-HHMMSS>",
           "name": "pipeline-worker",
           "resources": {
             "cpu": 2.0,

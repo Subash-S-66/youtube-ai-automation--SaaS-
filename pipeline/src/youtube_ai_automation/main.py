@@ -1192,12 +1192,15 @@ def _extract_target_duration(video_config: dict, payload: dict | None = None) ->
 
 
 def _script_word_budget_bounds(target_duration: int) -> tuple[int, int, int]:
-    bounded_target = max(15, min(60, int(target_duration)))  # FIXED: Keep duration budget constrained to supported Shorts target range.
-    target_words = int(round(bounded_target * 2.8))  # FIXED: Use conservative Gemini native audio speaking rate for target word count.
-    hard_cap_words = int(math.floor(bounded_target * 3.0))  # FIXED: Enforce absolute upper word cap for TTS input.
-    min_words = int(math.ceil(max(1, bounded_target - 10) * 2.5))  # FIXED: Enforce lower floor matching [T-10s] minimum duration window.
+    # ROOT CAUSE FIX: Gemini native audio generates speech at ~1.9 WPS (conversational narration).
+    # The old value (2.8/3.0 WPS) caused 30s target -> 90 word cap -> 47s audio.
+    _GEMINI_WPS = 1.9  # Measured: native audio narration pace
+    bounded_target = max(15, min(60, int(target_duration)))
+    target_words = int(round(bounded_target * _GEMINI_WPS))
+    hard_cap_words = int(math.floor(bounded_target * (_GEMINI_WPS + 0.1)))  # Tiny buffer above exact target
+    min_words = int(math.ceil(max(1, bounded_target - 10) * (_GEMINI_WPS - 0.3)))  # (T-10s) at slower floor
     if min_words > hard_cap_words:
-        min_words = hard_cap_words  # FIXED: Guard against inverted bounds under edge durations.
+        min_words = hard_cap_words
     return min_words, target_words, hard_cap_words
 
 
@@ -1299,9 +1302,9 @@ def _build_section_scripts(
 
 
 def estimate_audio_duration(script: str) -> float:
-    """Estimate TTS audio length from word count at 2.8 WPS (conservative Gemini native audio rate)."""  # FIXED: Align duration estimation with conservative narration pacing.
+    """Estimate TTS audio length from word count at 1.9 WPS (calibrated for Gemini native audio narration)."""
     words = max(1, len(str(script or "").split()))
-    return round(words / 2.8, 2)  # FIXED: Use 2.8 WPS baseline for duration control calculations.
+    return round(words / 1.9, 2)
 
 
 def get_audio_duration_seconds(audio_path: Path) -> float:
@@ -1606,7 +1609,7 @@ def run_prepared_pipeline(
     output_dir = AUDIO_PATH.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    MAX_ATTEMPTS = 0
+    MAX_ATTEMPTS = 3  # BUG FIX: was 0, causing range(1,1)=[] and skipping refinement.
     for attempt in range(1, MAX_ATTEMPTS + 1):
         section_scripts, section_budget = _build_section_scripts(
             base_script=script_text,
@@ -1741,7 +1744,7 @@ def run_prepared_pipeline(
     actual_audio_seconds = 0.0
     audio_retry_count = 0
     audio_failed = False
-    min_acceptable_duration = max(1.0, float(target_duration) - 10.0)  # FIXED: Enforce lower duration bound at T-10 seconds.
+    min_acceptable_duration = max(1.0, float(target_duration) - 8.0)  # Lower bound: target - 8 seconds for tighter control.
     max_expand_retries = max(0, min(2, int(os.getenv("TTS_MAX_EXPAND_RETRIES", "1") or 1)))
     current_script = str(best_package["script"]).strip()
 

@@ -1,4 +1,9 @@
 {
+  "private": true,
+  "scripts": {
+    "preflight": "node scripts/preflight.mjs",
+    "preflight:ci": "node scripts/preflight.mjs --ci"
+  },
   "dependencies": {
     "cookie-parser": "^1.4.7",
     "csrf-csrf": "^4.0.3",

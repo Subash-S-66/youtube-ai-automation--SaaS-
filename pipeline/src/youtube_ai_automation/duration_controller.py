@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-WORDS_PER_SECOND = 3.6
+WORDS_PER_SECOND = 1.9  # ROOT CAUSE FIX: Gemini native audio speaks at ~1.9 WPS.
 MAX_DURATION_SECONDS = 60
 MIN_DURATION_SECONDS = 15
 ALLOWED_DRIFT_SECONDS = 10
@@ -23,12 +23,11 @@ class SectionBudget:
 
 def _word_bounds(target_duration: int) -> tuple[int, int]:
     """
-    Compute min/max word counts based on 3.6 WPS average TTS speed.
-    The +/-5 s window maps to +/-18 words.
+    Compute min/max word counts from the configured narration speed.
     """
     target = max(15, min(60, int(target_duration)))
-    min_words = max(30, int((target - 5) * 3.6))
-    max_words = int(min(60, target + 5) * 3.6)
+    min_words = max(30, int((target - 5) * WORDS_PER_SECOND))
+    max_words = int(min(60, target + 5) * WORDS_PER_SECOND)
     return min_words, max_words
 
 

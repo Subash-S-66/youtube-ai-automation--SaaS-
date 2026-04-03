@@ -33,8 +33,10 @@ if (process.env.SENTRY_DSN) {
   });
 }
 import { PipelineJobPayload } from '../queues/pipelineQueue';
-import { consumeReservedCredits, releaseReservedCredits } from '../services/uploadLimitService';
+import { consumeReservedCredits, getConsumedUploadsLast24hForChannel, releaseReservedCredits } from '../services/uploadLimitService';
 import { notifyUser } from '../services/notificationService';
+import { decrementChannelVideosOnHold, resolveJobChannelId } from '../services/channelHoldService';
+import { buildRunnerSequence, pickRunnerForAttempt, sanitizePipelineRunnerFallbackOrder } from '../services/pipelineRetryPolicyService';
 
 // Load env vars
 
@@ -48,6 +50,14 @@ if (!hasYoutubeOAuthConfig) {
     '[PipelineWorker] Missing YouTube OAuth env vars. Upload jobs will fail at TOKEN stage. Configure YOUTUBE_* or GOOGLE_* vars.'
   );
 }
+
+const getRequestedUploadCount = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return Math.max(1, Math.floor(parsed));
+};
 
 // Connect to MongoDB BEFORE starting worker
 connectDB();
@@ -119,20 +129,42 @@ const appendLogSafe = async (jobId: string, newText: string, status?: string): P
   }
 };
 
-const resolvePipelineRunner = async (): Promise<'local' | 'azure' | 'remote'> => {
+const resolvePipelineRunner = async (
+  attemptsMade: number
+): Promise<{ runner: 'local' | 'azure' | 'remote'; primary: 'local' | 'azure' | 'remote'; sequence: Array<'local' | 'azure' | 'remote'> }> => {
+  let config: any = null;
   const envRunner = (process.env.PIPELINE_RUNNER || '').toLowerCase();
-  if (envRunner === 'local' || envRunner === 'azure' || envRunner === 'remote') {
-    return envRunner;
-  }
+  const envPrimary = (envRunner === 'local' || envRunner === 'azure' || envRunner === 'remote')
+    ? envRunner
+    : null;
+
   try {
-    const config = await SystemConfig.findOne().sort({ updatedAt: -1 });
-    if (config?.pipelineRunner === 'azure' || config?.pipelineRunner === 'local') {
-      return config.pipelineRunner;
-    }
+    config = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRunner pipelineRunnerFallbackOrder');
   } catch (error) {
     console.warn('Failed to load SystemConfig for pipeline runner. Falling back to env.', error);
   }
-  return process.env.PIPELINE_SERVICE_URL ? 'remote' : 'local';
+
+  const configPrimary =
+    config?.pipelineRunner === 'local' ||
+    config?.pipelineRunner === 'azure' ||
+    config?.pipelineRunner === 'remote'
+      ? config.pipelineRunner
+      : null;
+
+  const derivedPrimary: 'local' | 'azure' | 'remote' =
+    (envPrimary as any) ||
+    (configPrimary as any) ||
+    (process.env.PIPELINE_SERVICE_URL ? 'remote' : 'local');
+
+  const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
+  const sequence = buildRunnerSequence(derivedPrimary, fallbackOrder);
+  const selectedRunner = pickRunnerForAttempt(derivedPrimary, sequence, attemptsMade);
+
+  return {
+    runner: selectedRunner,
+    primary: derivedPrimary,
+    sequence,
+  };
 };
 
 const updateProgressSafe = async (
@@ -368,7 +400,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
   'pipelineQueue',
   async (job: BullJob<PipelineJobPayload>) => {
     const { userId, jobId, settings: rawSettings } = job.data;
-    if (job.attemptsMade > 1) {
+    if (job.attemptsMade > 0) {
       console.warn(`[PipelineWorker] Retry detected for job: ${job.id} (attemptsMade=${job.attemptsMade})`);
     }
     const inputAudit = normalizePipelineSettings(rawSettings || {});
@@ -422,18 +454,9 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
       // 1. Check channel-scoped 24h rolling upload limit (10 uploads per channel)
       if (settings.channelId) {
         const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        const recentSuccessfulJobs = await JobModel.find({
-          userId,
-          channelId: settings.channelId,
-          status: 'success',
-          completedAt: { $gte: oneDayAgo },
-        }).sort({ completedAt: -1, createdAt: -1 });
+        const uploadsLast24h = await getConsumedUploadsLast24hForChannel(userId, settings.channelId);
 
-        const uploadsLast24h = recentSuccessfulJobs.reduce((sum, successfulJob) => {
-          return sum + Math.max(1, Number(successfulJob.videoCount || 1));
-        }, 0);
-
-        const requestedUploads = Math.max(1, Number(settings.videoCount || 1));
+        const requestedUploads = getRequestedUploadCount(settings.videoCount);
         const limitExceeded = (uploadsLast24h + requestedUploads) > 10;
         const dbJob = await JobModel.findById(jobId);
         const acceptedWarning = Boolean((dbJob as any)?.acceptedYouTubeLimitWarning);
@@ -441,24 +464,36 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
         if (limitExceeded && !acceptedWarning) {
           isSkipped = true;
           await appendLogSafe(jobId, `\nJob rejected due to YouTube 24-hour upload limit.\n`, 'failed');
-          await JobModel.findByIdAndUpdate(jobId, {
-            status: 'failed',
-            errorMessage: 'Skipped due to YouTube 24-hour upload limit',
-            errorStage: 'UPLOAD',
-            completedAt: new Date(),
-              result: {
-                success: false,
-                stage: 'UPLOAD',
-                message: 'Skipped due to YouTube 24-hour upload limit',
-                skippedAt: new Date().toISOString(),
+          const limitRejectedJob = await JobModel.findOneAndUpdate(
+            { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+            {
+              $set: {
+                status: 'failed',
+                holdConsumed: false,
+                holdReleased: true,
+                processedVideos: 0,
+                errorMessage: 'Skipped due to YouTube 24-hour upload limit',
+                errorStage: 'UPLOAD',
+                completedAt: new Date(),
+                result: {
+                  success: false,
+                  stage: 'UPLOAD',
+                  message: 'Skipped due to YouTube 24-hour upload limit',
+                  skippedAt: new Date().toISOString(),
+                },
+                progress: {
+                  progress: 100,
+                  stage: 'failed',
+                  message: 'YouTube daily upload limit reached',
+                  timestamp: new Date().toISOString(),
+                },
               },
-            progress: {
-             progress: 100,
-             stage: 'failed',
-             message: 'YouTube daily upload limit reached',
-             timestamp: new Date().toISOString(),
             },
-          });
+            { returnDocument: 'after' }
+          );
+          if (limitRejectedJob) {
+            await releaseReservedCredits(userId, requestedUploads).catch(console.error);
+          }
 
           // Notify user only once per limit window
           const u = await User.findById(userId);
@@ -475,7 +510,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
               }
             }
           }
-          return; // Do not consume upload, release hold in finally block
+          return;
         }
 
         if (limitExceeded && acceptedWarning) {
@@ -869,13 +904,25 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       }
 
       // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
-      const pipelineRunner = await resolvePipelineRunner();
-      const dispatchLockKey = `pipeline:dispatch:${jobId}`;
+      const runnerSelection = await resolvePipelineRunner(job.attemptsMade || 0);
+      const pipelineRunner = runnerSelection.runner;
+      await appendLogSafe(
+        jobId,
+        `${JSON.stringify({
+          event: 'runner_selection',
+          attemptsMade: job.attemptsMade || 0,
+          selectedRunner: pipelineRunner,
+          primaryRunner: runnerSelection.primary,
+          runnerSequence: runnerSelection.sequence,
+        })}\n`
+      );
+
+      const dispatchLockKey = `pipeline:dispatch:${jobId}:${job.attemptsMade || 0}`;
       const dispatchLock = await (connection as any).set(dispatchLockKey, String(Date.now()), 'NX', 'EX', 24 * 60 * 60);
       if (dispatchLock !== 'OK') {
         await appendLogSafe(
           jobId,
-          `${JSON.stringify({ event: 'dispatch_skip', reason: 'idempotency_lock_exists', jobId })}\n`,
+          `${JSON.stringify({ event: 'dispatch_skip', reason: 'idempotency_lock_exists', jobId, attemptsMade: job.attemptsMade || 0 })}\n`,
           'processing'
         );
         return;
@@ -985,11 +1032,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           outputYoutubeVideoId ||
           (outputVideoUrl && /^https?:\/\//i.test(outputVideoUrl))
         );
-        const acceptedWarning = Boolean((executionJob as any)?.acceptedYouTubeLimitWarning);
-        const consumeCountOnFailedUpload = acceptedWarning
-          ? requestedUploads
-          : successfulUploads;
-        const releaseCountOnFailedUpload = Math.max(0, requestedUploads - consumeCountOnFailedUpload);
+        const consumeCountOnFailedUpload = requestedUploads;
+        const releaseCountOnFailedUpload = 0;
         const consumeCountOnSuccess = successfulUploads > 0 ? successfulUploads : requestedUploads;
         const releaseCountOnSuccess = Math.max(0, requestedUploads - consumeCountOnSuccess);
 
@@ -1006,7 +1050,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                 errorMessage: 'Upload failed or was skipped.',
                 errorStage: 'UPLOAD',
                 result: outputJson || { success: false },
-                processedVideos: successfulUploads,
+                processedVideos: consumeCountOnFailedUpload,
               },
             },
             { returnDocument: 'after' }
@@ -1079,10 +1123,13 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       console.log(`Triggering Azure Container App Job: ${AZURE_JOB_NAME}`);
 
-      const { success: triggerSuccess, accessToken } = await triggerAzureJob(AZURE_JOB_NAME, envVars);
+      const { success: triggerSuccess, executionName } = await triggerAzureJob(AZURE_JOB_NAME, envVars);
 
       if (triggerSuccess) {
-         await appendLogSafe(jobId, `\nSuccessfully dispatched Azure Container App Job: ${AZURE_JOB_NAME}\n`);
+         await appendLogSafe(
+           jobId,
+           `\nSuccessfully dispatched Azure Container App Job: ${AZURE_JOB_NAME}${executionName ? ` (execution=${executionName})` : ''}\n`
+         );
 
          const user = await User.findById(userId);
 
@@ -1116,8 +1163,11 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
          if (armAccessToken) {
            const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
-           const AZURE_RESOURCE_GROUP = process.env.RESOURCE_GROUP;
-           const executionsUrl = `https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions?api-version=2023-05-01`;
+           const AZURE_RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP;
+           const armApiVersion = process.env.AZURE_ARM_API_VERSION || '2023-05-01';
+           const executionsUrl = executionName
+             ? `https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions/${encodeURIComponent(executionName)}?api-version=${armApiVersion}`
+             : `https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions?api-version=${armApiVersion}`;
 
            while (Date.now() - pollStart < jobTimeoutMs) {
              await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
@@ -1132,22 +1182,25 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                  continue;
                }
 
-               const execData = await execRes.json() as {
-                 value?: Array<{ properties?: { status?: string; startTime?: string } }>
-               };
-
-               const executions = execData.value || [];
-               if (executions.length === 0) continue;
-
-               // Sort by startTime descending, take latest
-               const sorted = executions.sort((a, b) => {
-                 const timeA = a.properties?.startTime || '';
-                 const timeB = b.properties?.startTime || '';
-                 return timeB.localeCompare(timeA);
-               });
-
-               const latestStatus = sorted[0]?.properties?.status || '';
-               await appendLogSafe(jobId, `\n[Azure] Execution status: ${latestStatus}`);
+                let latestStatus = '';
+                if (executionName) {
+                  const executionData = await execRes.json() as { properties?: { status?: string } };
+                  latestStatus = executionData?.properties?.status || '';
+                } else {
+                  const execData = await execRes.json() as {
+                    value?: Array<{ properties?: { status?: string; startTime?: string } }>
+                  };
+                  const executions = execData.value || [];
+                  if (executions.length === 0) continue;
+                  // Sort by startTime descending, take latest
+                  const sorted = executions.sort((a, b) => {
+                    const timeA = a.properties?.startTime || '';
+                    const timeB = b.properties?.startTime || '';
+                    return timeB.localeCompare(timeA);
+                  });
+                  latestStatus = sorted[0]?.properties?.status || '';
+                }
+                await appendLogSafe(jobId, `\n[Azure] Execution status: ${latestStatus}`);
 
                if (latestStatus === 'Succeeded') {
                  finalStatusMarker = 'SUCCESS';
@@ -1247,46 +1300,25 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
               await notifyUser(user, 'Video Upload Successful', '✅ Your video has been uploaded successfully.').catch(console.error);
             }
          } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
-            const dbJobCheck = await JobModel.findById(jobId);
-            const acceptedWarning = dbJobCheck?.acceptedYouTubeLimitWarning || false;
-
-            if (acceptedWarning) {
-              // Treated as consumed because user explicitly accepted the risk
-              const updatedJob = await JobModel.findOneAndUpdate(
-                  { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
-                  {
-                      $set: {
-                          status: 'failed',
-                          completedAt: new Date(),
-                          holdConsumed: true,
-                          error: 'YouTube Quota Exceeded (Warning Accepted)',
-                          errorMessage: 'YouTube Quota Exceeded (Warning Accepted)',
-                          errorStage: 'UPLOAD',
-                      }
-                  },
-                  { returnDocument: 'after' }
-              );
-              if (updatedJob) {
-                 await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
-              }
-            } else {
-              const updatedJob = await JobModel.findOneAndUpdate(
-                  { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
-                  {
-                      $set: {
-                          status: 'failed',
-                          completedAt: new Date(),
-                          holdReleased: true,
-                          error: 'YouTube Quota Exceeded',
-                          errorMessage: 'YouTube Quota Exceeded',
-                          errorStage: 'UPLOAD',
-                      }
-                  },
-                  { returnDocument: 'after' }
-              );
-              if (updatedJob) {
-                 await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
-              }
+            const rejectedCount = getRequestedUploadCount(settings.videoCount);
+            const updatedJob = await JobModel.findOneAndUpdate(
+              { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+              {
+                $set: {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  holdConsumed: true,
+                  holdReleased: false,
+                  processedVideos: rejectedCount,
+                  error: 'YouTube Quota Exceeded',
+                  errorMessage: 'YouTube Quota Exceeded',
+                  errorStage: 'UPLOAD',
+                }
+              },
+              { returnDocument: 'after' }
+            );
+            if (updatedJob) {
+               await consumeReservedCredits(userId, rejectedCount).catch(console.error);
             }
 
             if (user) {
@@ -1335,22 +1367,79 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         typeof error?.stdoutTail === 'string' && error.stdoutTail ? `[stdout-tail]\n${error.stdoutTail}` : '',
       ].filter(Boolean);
       const errorMsg = `\nWorker Error: ${error.message}${errorDetailParts.length ? `\n${errorDetailParts.join('\n')}` : ''}`;
-      await appendLogSafe(jobId, errorMsg, 'failed');
+      const normalizedErrorStage = (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER';
+      const requestedUploads = getRequestedUploadCount(settings.videoCount);
+      const consumeOnFailure = normalizedErrorStage === 'UPLOAD';
+      const failureProcessedVideos = consumeOnFailure ? requestedUploads : 0;
+      const maxAttempts = Math.max(1, Number((job.opts as any)?.attempts || 1));
+      const currentAttempt = Math.max(1, Number(job.attemptsMade || 0) + 1);
+      const hasRetriesLeft = currentAttempt < maxAttempts;
+      const retryableFailure = normalizedErrorStage !== 'TOKEN' && normalizedErrorStage !== 'UPLOAD';
+
+      await appendLogSafe(jobId, errorMsg);
+
+      if (retryableFailure && hasRetriesLeft) {
+        const nextRunnerSelection = await resolvePipelineRunner((job.attemptsMade || 0) + 1);
+        const retried = await JobModel.findOneAndUpdate(
+          { _id: jobId, status: { $in: ['pending', 'processing'] } },
+          {
+            $set: {
+              status: 'pending',
+              queuedAt: new Date(),
+              progress: {
+                progress: 10,
+                stage: 'retrying',
+                message: `Retry ${currentAttempt}/${maxAttempts - 1} scheduled (next runner: ${nextRunnerSelection.runner})`,
+                timestamp: new Date().toISOString(),
+              },
+            },
+            $unset: {
+              startedAt: '',
+              executionLockedAt: '',
+              completedAt: '',
+              error: '',
+              errorMessage: '',
+              errorStage: '',
+            },
+          },
+          { returnDocument: 'after' }
+        );
+
+        if (retried) {
+          await appendLogSafe(
+            jobId,
+            `[Retry] Attempt ${currentAttempt} failed at stage ${normalizedErrorStage}. Retrying (next runner: ${nextRunnerSelection.runner}).\n`,
+            'pending'
+          );
+          await updateProgressSafe(job, 10, 'retrying', `Retry ${currentAttempt}/${maxAttempts - 1} queued`);
+          throw error;
+        }
+
+        const existingState = await JobModel.findById(jobId).select('status').lean();
+        const currentState = String(existingState?.status || '').toLowerCase();
+        if (['success', 'completed', 'failed'].includes(currentState)) {
+          return;
+        }
+      }
+
+      await appendLogSafe(jobId, `[FinalFailure] Stage=${normalizedErrorStage} Attempt=${currentAttempt}/${maxAttempts}\n`, 'failed');
 
       // Gracefully handle failure and credit release atomically
       const updatedJob = await JobModel.findOneAndUpdate(
-          { _id: jobId, status: { $in: ['pending', 'processing'] } },
+          { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
           {
               $set: {
                   status: 'failed',
                   completedAt: new Date(),
-                  holdReleased: true,
+              holdConsumed: consumeOnFailure,
+              holdReleased: !consumeOnFailure,
+              processedVideos: failureProcessedVideos,
                   error: error.message,
                   errorMessage: error.message,
-                  errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
+              errorStage: normalizedErrorStage,
               result: {
               success: false,
-              stage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
+            stage: normalizedErrorStage,
               message: error.message,
               stderrTail: typeof error?.stderrTail === 'string' ? error.stderrTail : '',
               stdoutTail: typeof error?.stdoutTail === 'string' ? error.stdoutTail : '',
@@ -1360,46 +1449,49 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           },
           { returnDocument: 'after' }
       );
-      if (updatedJob && !updatedJob.holdConsumed) {
-         await releaseReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+      if (updatedJob) {
+        if (consumeOnFailure) {
+          await consumeReservedCredits(userId, requestedUploads).catch(console.error);
+        } else {
+          await releaseReservedCredits(userId, requestedUploads).catch(console.error);
+        }
       }
       if (!updatedJob) {
-        await JobModel.updateOne(
-          { _id: jobId },
-          {
-            $set: {
-              status: 'failed',
-              completedAt: new Date(),
-              holdReleased: true,
-              error: error.message,
-              errorMessage: error.message,
-              errorStage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
-              result: {
-                success: false,
-                stage: (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER',
-                message: error.message,
-                stderrTail: typeof error?.stderrTail === 'string' ? error.stderrTail : '',
-                stdoutTail: typeof error?.stdoutTail === 'string' ? error.stdoutTail : '',
-                failedAt: new Date().toISOString(),
+        const existingJob = await JobModel.findById(jobId).select('status').lean();
+        const currentStatus = String(existingJob?.status || '').toLowerCase();
+        if (!['success', 'completed', 'failed'].includes(currentStatus)) {
+          await JobModel.updateOne(
+            { _id: jobId },
+            {
+              $set: {
+                status: 'failed',
+                completedAt: new Date(),
+                holdConsumed: consumeOnFailure,
+                holdReleased: !consumeOnFailure,
+                processedVideos: failureProcessedVideos,
+                error: error.message,
+                errorMessage: error.message,
+                errorStage: normalizedErrorStage,
+                result: {
+                  success: false,
+                  stage: normalizedErrorStage,
+                  message: error.message,
+                  stderrTail: typeof error?.stderrTail === 'string' ? error.stderrTail : '',
+                  stdoutTail: typeof error?.stdoutTail === 'string' ? error.stdoutTail : '',
+                  failedAt: new Date().toISOString(),
+                },
               },
-            },
-          }
-        ).catch((dbErr) => {
-          console.error(`[PipelineWorker] Failed to force-update failed state for job ${jobId}:`, dbErr);
-        });
+            }
+          ).catch((dbErr) => {
+            console.error(`[PipelineWorker] Failed to force-update failed state for job ${jobId}:`, dbErr);
+          });
+        }
       }
 
       await updateProgressSafe(job, 99, 'failed', 'Job failed');
 
-      if (error?.stage === 'TOKEN') {
+      if (normalizedErrorStage === 'TOKEN' || normalizedErrorStage === 'UPLOAD') {
         throw new UnrecoverableError(error.message || 'YouTube token failure');
-      }
-      if (
-        error?.stage === 'RENDER' &&
-        typeof error?.message === 'string' &&
-        error.message.includes('Local pipeline process failed with exit code')
-      ) {
-        throw new UnrecoverableError(error.message);
       }
       throw error;
     } finally {
@@ -1408,11 +1500,13 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // The `releaseReservedCredits` covers global. Channel holds are just local guards.
       const dbJob = await JobModel.findById(jobId);
       if (dbJob && dbJob.status !== 'processing' && dbJob.status !== 'pending') {
-        const decrementCount = settings.videoCount || 1;
-        await User.updateOne(
-          { _id: userId, 'youtubeChannels.channelId': settings.channelId, 'youtubeChannels.videosOnHold': { $gte: decrementCount } },
-          { $inc: { 'youtubeChannels.$.videosOnHold': -decrementCount } }
-        ).catch((err) => console.error(`Failed to decrement channel holds for user ${userId}:`, err));
+        const decrementCount = getRequestedUploadCount(settings.videoCount);
+        const channelIdForHold = resolveJobChannelId(dbJob as Record<string, any>) || String(settings.channelId || '').trim();
+        if (channelIdForHold) {
+          await decrementChannelVideosOnHold(userId, channelIdForHold, decrementCount).catch((err) => {
+            console.error(`Failed to decrement channel holds for user ${userId}:`, err);
+          });
+        }
       }
     }
   },

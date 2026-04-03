@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import withPWAInit from "@ducanh2912/next-pwa";
+import path from "path";
 
 const withPWA = withPWAInit({
   dest: "public",
@@ -33,6 +34,7 @@ const withPWA = withPWAInit({
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  outputFileTracingRoot: path.join(__dirname, ".."),
   transpilePackages: ['lucide-react'], // Helps with tree-shaking
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion'],

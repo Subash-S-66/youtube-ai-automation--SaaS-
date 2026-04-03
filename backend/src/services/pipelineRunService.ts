@@ -4,11 +4,14 @@ import Prompt from '../models/Prompt';
 import StoryProgress from '../models/StoryProgress';
 import Job from '../models/Job';
 import User from '../models/User';
+import SystemConfig from '../models/SystemConfig';
 import { pipelineQueue } from '../queues/pipelineQueue';
-import { getUploadLimits, releaseReservedCredits, reserveCredits } from './uploadLimitService';
+import { getConsumedUploadsLast24hForChannel, getUploadLimits, releaseReservedCredits, reserveCredits } from './uploadLimitService';
 import { buildStandardPrompt } from './promptBuilderService';
 import { generateSubTopics } from './subTopicService';
 import { ensureValidYouTubeToken } from './youtubeTokenService';
+import { decrementChannelVideosOnHold } from './channelHoldService';
+import { getPipelineAttemptsForPlan } from './pipelineRetryPolicyService';
 
 export interface PipelineInputSettings {
   targetDuration?: number;
@@ -263,6 +266,8 @@ export const enqueuePipelineJob = async ({
     throw new AppError('channelId is required to enqueue a pipeline job', 400); // FIXED: Clear validation error for missing selected channel.
   }
   finalSettings.channelId = selectedChannelId; // FIXED: Persist normalized selected channel id through downstream flow.
+  const requestedVideoCount = Math.max(1, Number(finalSettings.videoCount || 1));
+  finalSettings.videoCount = requestedVideoCount;
 
   // Global Emergency Stop for cost control / safety
   if (process.env.EMERGENCY_STOP === 'true') {
@@ -302,9 +307,9 @@ export const enqueuePipelineJob = async ({
     throw new AppError('Custom Media is only available on Pro and Premium plans.', 403);
   }
 
-  if (limitCheck.remainingUploads < finalSettings.videoCount) {
+  if (limitCheck.remainingUploads < requestedVideoCount) {
     throw new AppError(
-      `Not enough uploads remaining. You requested ${finalSettings.videoCount} videos but only have ${limitCheck.remainingUploads} uploads available today.`,
+      `Not enough uploads remaining. You requested ${requestedVideoCount} videos but only have ${limitCheck.remainingUploads} uploads available today.`,
       400
     );
   }
@@ -368,9 +373,9 @@ export const enqueuePipelineJob = async ({
     }
   }
 
-  if (channel.videosOnHold + finalSettings.videoCount > 10) {
+  if (channel.videosOnHold + requestedVideoCount > 10) {
     throw new AppError(
-      `Cannot queue job. This channel currently has ${channel.videosOnHold} videos running/pending. Requesting ${finalSettings.videoCount} more exceeds the strict limit of 10 per channel.`,
+      `Cannot queue job. This channel currently has ${channel.videosOnHold} videos running/pending. Requesting ${requestedVideoCount} more exceeds the strict limit of 10 per channel.`,
       400
     );
   }
@@ -411,16 +416,9 @@ export const enqueuePipelineJob = async ({
   // Do not block enqueue on token refresh network calls.
   // Worker validates/refreshes channel token right before execution.
 
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const recentJobs = await Job.find({
-    userId,
-    channelId: selectedChannelId, // FIXED: Scope rolling upload checks to selected channel only.
-    status: 'success',
-    completedAt: { $gte: oneDayAgo },
-  });
-  const uploadsLast24h = recentJobs.reduce((sum, job) => sum + (job.videoCount || 1), 0);
+  const uploadsLast24h = await getConsumedUploadsLast24hForChannel(userId, selectedChannelId);
 
-  if (uploadsLast24h + finalSettings.videoCount > 10 && !acceptedYouTubeLimitWarning) {
+  if (uploadsLast24h + requestedVideoCount > 10 && !acceptedYouTubeLimitWarning) {
     return {
       warningOnly: true,
       warning: 'YouTube daily upload limit reached. If you try to upload now it may not be uploaded and it will still consume your upload. Continue?',
@@ -433,7 +431,7 @@ export const enqueuePipelineJob = async ({
     }
   }
 
-  const reserved = await reserveCredits(userId, finalSettings.videoCount);
+    const reserved = await reserveCredits(userId, requestedVideoCount);
   if (!reserved) {
      throw new AppError('Daily upload limit reached or insufficient credits', 403);
   }
@@ -443,7 +441,7 @@ export const enqueuePipelineJob = async ({
     { _id: userId, 'youtubeChannels.channelId': selectedChannelId }, // FIXED: Increment hold on the exact selected channel.
     {
       $inc: {
-        'youtubeChannels.$.videosOnHold': finalSettings.videoCount,
+        'youtubeChannels.$.videosOnHold': requestedVideoCount,
       },
     },
     { returnDocument: 'after' }
@@ -459,7 +457,7 @@ export const enqueuePipelineJob = async ({
     standardizedPrompt: String(standardizedPrompt || '').trim(),
     requestedAt: new Date().toISOString(),
     uploadTargetChannelId: selectedChannelId,
-    requestedVideoCount: Math.max(1, Number(finalSettings.videoCount || 1)),
+    requestedVideoCount,
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
     settings: persistedPipelineConfig,
   };
@@ -502,7 +500,7 @@ export const enqueuePipelineJob = async ({
     },
     youtubeAccountId: selectedChannelId, // FIXED: Keep legacy field aligned with selected channel for backward compatibility.
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
-    videoCount: finalSettings.videoCount,
+    videoCount: requestedVideoCount,
     channelId: selectedChannelId, // FIXED: Persist selected channel id at top-level job field.
     customVideoIds: finalSettings.customVideoIds || [],
     customImageIds: finalSettings.customImageIds || [],
@@ -527,6 +525,8 @@ export const enqueuePipelineJob = async ({
   const count = finalSettings.videoCount || 1;
   const jobTimeoutMinutes = 10 + (count - 1) * 5;
   const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
+  const retryConfig = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRetriesByPlan').lean();
+  const jobAttempts = getPipelineAttemptsForPlan(finalLimitCheck.plan, retryConfig as any);
   const queueJobId = `${userId}-${promptId}-${Date.now()}`;
 
   try {
@@ -541,7 +541,7 @@ export const enqueuePipelineJob = async ({
       {
         priority: jobPriority,
         jobId: queueJobId,
-        attempts: 3,
+        attempts: jobAttempts,
         timeout: jobTimeoutMs,
         backoff: {
           type: 'exponential',
@@ -551,13 +551,10 @@ export const enqueuePipelineJob = async ({
       }
     );
   } catch (queueError) {
-    const rollbackCount = Math.max(1, Number(finalSettings.videoCount || 1));
+    const rollbackCount = requestedVideoCount;
 
     await releaseReservedCredits(userId, rollbackCount).catch(console.error);
-    await User.updateOne(
-      { _id: userId, 'youtubeChannels.channelId': selectedChannelId, 'youtubeChannels.videosOnHold': { $gte: rollbackCount } },
-      { $inc: { 'youtubeChannels.$.videosOnHold': -rollbackCount } }
-    ).catch(console.error);
+    await decrementChannelVideosOnHold(userId, selectedChannelId, rollbackCount).catch(console.error);
 
     await Job.findByIdAndUpdate(job._id, {
       status: 'failed',
@@ -602,7 +599,7 @@ export const enqueuePipelineJob = async ({
     },
   };
 
-  if (uploadsLast24h + finalSettings.videoCount > 10) {
+  if (uploadsLast24h + requestedVideoCount > 10) {
     result.warning = 'YouTube daily upload limit reached. If you try to upload now it may not be uploaded and it will still consume your upload. Continue?';
   }
 
