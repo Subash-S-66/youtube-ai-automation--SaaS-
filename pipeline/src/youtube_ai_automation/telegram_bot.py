@@ -1,5 +1,5 @@
 """
-Telegram control bot for the YouTube automation pipeline.
+Telegram control bot for the Clip Forge pipeline.
 """
 
 from __future__ import annotations

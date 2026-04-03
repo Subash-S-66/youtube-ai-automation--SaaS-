@@ -1,6 +1,6 @@
 {
-  "name": "YouTube Automation",
-  "short_name": "YT Automation",
+  "name": "Clip Forge",
+  "short_name": "Clip Forge",
   "description": "Premium SaaS Video Generation Dashboard",
   "start_url": "/",
   "display": "standalone",

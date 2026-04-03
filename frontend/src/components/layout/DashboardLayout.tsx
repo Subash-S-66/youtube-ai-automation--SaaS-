@@ -114,7 +114,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
                 priority
               />
             </div>
-            <span className="font-bold tracking-wide text-white">YouTube Automation</span>
+            <span className="font-bold tracking-wide text-white">Clip Forge</span>
             <button
               aria-label="Close sidebar menu"
               className="ml-auto md:hidden text-slate-400 hover:text-white"

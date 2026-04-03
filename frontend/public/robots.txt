@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
 
-Sitemap: /sitemap.xml
+Sitemap: https://clipforgeapp.tech/sitemap.xml
+Host: https://clipforgeapp.tech

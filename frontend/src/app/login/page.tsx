@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import { m } from 'framer-motion';
@@ -8,11 +8,6 @@ import { ArrowRight, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { OtpInput } from '../../components/OtpInput';
 import { buildApiUrl } from '../../lib/apiBase';
-
-
-
-
-import { Suspense } from 'react';
 
 interface ApiErrorShape {
   response?: {
@@ -67,6 +62,7 @@ function LoginContent() {
     const messages: Record<string, string> = {
       Google_Login_Failed: 'Google login failed. Please try again.',
       Email_Not_Found: 'Google account email not available. Try another account.',
+      Invalid_OAuth_State: 'Google login session expired. Please try again.',
     };
     return messages[errorCode] || 'Login failed. Please try again.';
   }, [searchParams]);
@@ -251,7 +247,7 @@ function LoginContent() {
           />
         </div>
         <h2 className="text-center text-4xl font-extrabold text-white tracking-tight">
-          YouTube Automation
+          Clip Forge
         </h2>
       </div>
 
@@ -441,15 +437,6 @@ function LoginContent() {
           </form>
 
           <div className="mt-8 space-y-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-700"></div>
-              </div>
-              <div className="relative flex justify-center text-xs">
-                <span className="bg-[#111827] px-2 text-slate-400">or continue with</span>
-              </div>
-            </div>
-
             <m.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
@@ -468,7 +455,7 @@ function LoginContent() {
           </div>
 
           <div className="mt-8 text-center text-sm text-slate-400">
-             New to YouTube Automation?{' '}
+             New to Clip Forge?{' '}
              <a href="/register" className="font-semibold text-[#00D4FF] hover:text-[#7C5CFF] transition-colors">
                Create an account
              </a>

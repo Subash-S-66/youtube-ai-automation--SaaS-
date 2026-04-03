@@ -68,7 +68,9 @@ const resolveBackendBaseUrl = (req?: Request) => {
   return normalizeBaseUrl(`${protocol}://${host}`);
 };
 
-const oauthCookieSameSite: 'none' | 'lax' = process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+// OAuth redirects are top-level GET navigations, so SameSite=Lax remains compatible
+// while avoiding stricter third-party cookie handling in some browsers.
+const oauthCookieSameSite: 'lax' = 'lax';
 const oauthCookieSecure = process.env.NODE_ENV === 'production';
 const authCookieSecure = process.env.NODE_ENV === 'production';
 const authCookieSameSite: 'lax' = 'lax';
@@ -101,6 +103,84 @@ const isTimingSafeEqual = (left: string, right: string): boolean => {
     return false;
   }
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+};
+
+type OAuthStatePayload = {
+  nonce: string;
+  exp: number;
+  state?: string;
+};
+
+const getOAuthStateSecret = () => {
+  const candidate = (
+    process.env.OAUTH_STATE_SECRET ||
+    process.env.JWT_SECRET ||
+    process.env.GOOGLE_CLIENT_SECRET ||
+    process.env.YOUTUBE_CLIENT_SECRET ||
+    ''
+  ).trim();
+  if (!candidate) {
+    throw new Error('Missing OAuth state secret');
+  }
+  return candidate;
+};
+
+const signOAuthState = (encodedPayload: string) =>
+  crypto.createHmac('sha256', getOAuthStateSecret()).update(encodedPayload).digest('base64url');
+
+const createOAuthState = (state: string): string => {
+  const payload: OAuthStatePayload = {
+    nonce: crypto.randomBytes(24).toString('hex'),
+    exp: Date.now() + 10 * 60 * 1000,
+    ...(state ? { state } : {}),
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const signature = signOAuthState(encodedPayload);
+  return `${encodedPayload}.${signature}`;
+};
+
+const parseOAuthStatePayload = (value: string): OAuthStatePayload | null => {
+  const [encodedPayload, signature, ...rest] = value.split('.');
+  if (!encodedPayload || !signature || rest.length > 0) {
+    return null;
+  }
+
+  const expectedSignature = signOAuthState(encodedPayload);
+  if (!isTimingSafeEqual(signature, expectedSignature)) {
+    return null;
+  }
+
+  try {
+    const decoded = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as OAuthStatePayload;
+    if (!decoded || typeof decoded !== 'object') {
+      return null;
+    }
+    if (typeof decoded.nonce !== 'string' || decoded.nonce.length < 24) {
+      return null;
+    }
+    if (typeof decoded.exp !== 'number' || !Number.isFinite(decoded.exp) || decoded.exp <= Date.now()) {
+      return null;
+    }
+    if (decoded.state && typeof decoded.state !== 'string') {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+};
+
+const parseLegacyReferralState = (value: string): string => {
+  const stateChunks = value.split('.', 2);
+  if (stateChunks.length !== 2) {
+    return '';
+  }
+
+  try {
+    return Buffer.from(stateChunks[1] || '', 'base64url').toString('utf8');
+  } catch {
+    return '';
+  }
 };
 
 // Generate JWT
@@ -668,24 +748,28 @@ export const resetPassword = asyncHandler(
 // @route   GET /api/auth/google
 // @access  Public
 export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
-  const oauth2Client = getGoogleOAuth2Client(req);
-  const stateParam = typeof req.query.state === 'string' ? req.query.state.trim() : '';
-  const nonce = crypto.randomBytes(24).toString('hex');
-  const encodedState = stateParam ? Buffer.from(stateParam, 'utf8').toString('base64url') : '';
-  const oauthState = encodedState ? `${nonce}.${encodedState}` : nonce;
+  const FRONTEND_URL = getFrontendBaseUrl();
+  try {
+    const oauth2Client = getGoogleOAuth2Client(req);
+    const stateParam = typeof req.query.state === 'string' ? req.query.state.trim() : '';
+    const oauthState = createOAuthState(stateParam);
 
-  setOauthStateCookie(res, oauthState);
+    setOauthStateCookie(res, oauthState);
 
-  const authUrl = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: [
-      'https://www.googleapis.com/auth/userinfo.profile',
-      'https://www.googleapis.com/auth/userinfo.email',
-    ],
-    state: oauthState,
-    prompt: 'select_account',
-  });
-  res.redirect(authUrl);
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: [
+        'https://www.googleapis.com/auth/userinfo.profile',
+        'https://www.googleapis.com/auth/userinfo.email',
+      ],
+      state: oauthState,
+      prompt: 'select_account',
+    });
+    res.redirect(authUrl);
+  } catch {
+    clearOauthStateCookie(res);
+    res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
+  }
 });
 
 // @desc    Google OAuth Callback
@@ -696,6 +780,13 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
   const callbackState = typeof req.query.state === 'string' ? req.query.state : '';
   const cookieState = typeof req.cookies?.oauth_state === 'string' ? req.cookies.oauth_state : '';
   const FRONTEND_URL = getFrontendBaseUrl();
+  const oauthProviderError = typeof req.query.error === 'string' ? req.query.error : '';
+
+  if (oauthProviderError) {
+    clearOauthStateCookie(res);
+    res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
+    return;
+  }
 
   if (!code) {
     clearOauthStateCookie(res);
@@ -703,90 +794,84 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
     return;
   }
 
-  if (!callbackState || !cookieState || !isTimingSafeEqual(callbackState, cookieState)) {
+  const hasMatchingCookieState = Boolean(
+    callbackState &&
+    cookieState &&
+    isTimingSafeEqual(callbackState, cookieState)
+  );
+  const oauthStatePayload = callbackState ? parseOAuthStatePayload(callbackState) : null;
+
+  if (!callbackState || (!hasMatchingCookieState && !oauthStatePayload)) {
     clearOauthStateCookie(res);
     res.redirect(`${FRONTEND_URL}/login?error=Invalid_OAuth_State`);
     return;
   }
 
   clearOauthStateCookie(res);
+  try {
+    const oauth2Client = getGoogleOAuth2Client(req);
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
 
-  const oauth2Client = getGoogleOAuth2Client(req);
-  const { tokens } = await oauth2Client.getToken(code);
-  oauth2Client.setCredentials(tokens);
+    const oauth2 = google.oauth2({
+      auth: oauth2Client,
+      version: 'v2',
+    });
 
-  const oauth2 = google.oauth2({
-    auth: oauth2Client,
-    version: 'v2',
-  });
+    const { data } = await oauth2.userinfo.get();
 
-  const { data } = await oauth2.userinfo.get();
+    if (!data.email) {
+      res.redirect(`${FRONTEND_URL}/login?error=Email_Not_Found`);
+      return;
+    }
 
-  if (!data.email) {
-    res.redirect(`${FRONTEND_URL}/login?error=Email_Not_Found`);
-    return;
-  }
+    let user = await User.findOne({ email: data.email });
 
-  let user = await User.findOne({ email: data.email });
-
-  if (user) {
-    // If local user tries to log in via google, they either need to have provider='google' or we convert them
-    // or just allow login but maybe mark them as verified.
-    if (user.provider === 'local') {
-      // Just log them in but you could update provider to 'google' or keep local. We'll update to Google
-      // or at least mark email as verified. Let's just log them in as requested.
-      if (!user.isEmailVerified) {
-         user.isEmailVerified = true;
-         await user.save();
-      }
-    } else {
-      if (data.picture && user.profileImage !== data.picture) {
+    if (user) {
+      // Allow local users to continue with Google and verify email status.
+      if (user.provider === 'local') {
+        if (!user.isEmailVerified) {
+          user.isEmailVerified = true;
+          await user.save();
+        }
+      } else if (data.picture && user.profileImage !== data.picture) {
         user.profileImage = data.picture;
         await user.save();
       }
-    }
-  } else {
-    // Create Google User
-    let stateStr = '';
-    const stateChunks = callbackState.split('.', 2);
-    if (stateChunks.length === 2) {
-      try {
-        stateStr = Buffer.from(stateChunks[1] || '', 'base64url').toString('utf8');
-      } catch {
-        stateStr = '';
+    } else {
+      // Create Google User
+      const stateStr = oauthStatePayload?.state || parseLegacyReferralState(callbackState);
+      let referredBy: string | undefined = undefined;
+      if (stateStr && stateStr.startsWith('ref:')) {
+        const refCode = stateStr.split(':')[1];
+        if (refCode) {
+          const referrer = await User.findOne({ referralCode: refCode });
+          if (referrer) referredBy = referrer._id.toString();
+        }
       }
-    }
-    let referredBy: string | undefined = undefined;
-    if (stateStr && stateStr.startsWith('ref:')) {
-      const refCode = stateStr.split(':')[1];
-      if (refCode) {
-        const referrer = await User.findOne({ referralCode: refCode });
-        if (referrer) referredBy = referrer._id.toString();
-      }
-    }
-    const myReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+      const myReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase();
 
-    const createPayload: any = {
-      email: data.email,
-      provider: 'google',
-      isEmailVerified: true, // Auto-verified by Google
-      referralCode: myReferralCode,
-    };
-    if (referredBy) createPayload.referredBy = referredBy;
-    if (data.id) {
-      createPayload.googleId = data.id;
+      const createPayload: any = {
+        email: data.email,
+        provider: 'google',
+        isEmailVerified: true, // Auto-verified by Google
+        referralCode: myReferralCode,
+      };
+      if (referredBy) createPayload.referredBy = referredBy;
+      if (data.id) {
+        createPayload.googleId = data.id;
+      }
+      if (data.picture) {
+        createPayload.profileImage = data.picture;
+      }
+      user = await User.create(createPayload);
     }
-    if (data.picture) {
-      createPayload.profileImage = data.picture;
-    }
-    user = await User.create(createPayload);
+
+    const token = generateToken(user.id);
+    setTokenCookie(res, token, true);
+
+    res.redirect(`${FRONTEND_URL}/dashboard`);
+  } catch {
+    res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
   }
-
-  const token = generateToken((user._id as unknown) as string);
-  setTokenCookie(res, token, true);
-
-  // Set standard token as well in query param or we can just let frontend rely on cookie + /me endpoint.
-  // Actually, instructions state "Do NOT pass token in URL."
-
-  res.redirect(`${FRONTEND_URL}/dashboard`);
 });

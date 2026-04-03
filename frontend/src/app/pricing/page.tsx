@@ -162,7 +162,7 @@ export default function PricingPage() {
             transition={{ delay: 0.1 }}
             className="text-lg text-slate-400"
           >
-            Choose the perfect plan to scale your YouTube automation and generate more shorts every day.
+            Choose the perfect plan to scale your Clip Forge workflow and generate more shorts every day.
           </m.p>
         </div>
 

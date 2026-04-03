@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import Script from "next/script";
 import { getApiOrigin } from "../lib/apiBase";
 import FramerMotionProvider from "../components/layout/FramerMotionProvider";
+import { getSiteUrl } from "../lib/site";
 
 const GlobalBanner = dynamic(() => import("../components/layout/GlobalBanner"));
 const DisableNumberScroll = dynamic(() => import("../components/DisableNumberScroll"));
@@ -28,8 +29,53 @@ export const viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "YouTube Automation",
-  description: "Premium SaaS Video Generation Dashboard",
+  metadataBase: new URL(getSiteUrl()),
+  title: "ClipForge - AI Video Automation Platform",
+  description:
+    "ClipForge helps you turn ideas into viral content using AI. Automate video creation, editing, and publishing.",
+  keywords: [
+    "ClipForge",
+    "AI video generator",
+    "automation",
+    "content creation",
+    "YouTube Shorts automation",
+    "AI video automation platform",
+  ],
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: "ClipForge",
+    title: "ClipForge",
+    description: "Turn ideas into viral content with AI",
+    images: [
+      {
+        url: "/logo.png",
+        width: 1200,
+        height: 630,
+        alt: "ClipForge",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ClipForge",
+    description: "Turn ideas into viral content with AI",
+    images: ["/logo.png"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-video-preview": -1,
+      "max-snippet": -1,
+    },
+  },
   manifest: "/manifest.json",
   icons: {
     icon: [
@@ -43,7 +89,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "YouTube Automation",
+    title: "ClipForge",
   },
   // Added to satisfy PWA requirements explicitly
   formatDetection: {
@@ -57,6 +103,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const apiOrigin = getApiOrigin();
+  const siteUrl = getSiteUrl();
+  const structuredData = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "ClipForge",
+    url: siteUrl,
+    description:
+      "ClipForge helps you turn ideas into viral content using AI. Automate video creation, editing, and publishing.",
+    potentialAction: {
+      "@type": "SearchAction",
+      target: `${siteUrl}/?q={search_term_string}`,
+      "query-input": "required name=search_term_string",
+    },
+  });
   const performanceApiPolyfill = `
     (function () {
       if (typeof globalThis === 'undefined') return;
@@ -103,6 +163,10 @@ export default function RootLayout({
         <Script id="performance-api-polyfill" strategy="beforeInteractive">
           {performanceApiPolyfill}
         </Script>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: structuredData }}
+        />
         <link rel="preconnect" href={apiOrigin} />
         <link rel="dns-prefetch" href={apiOrigin} />
       </head>

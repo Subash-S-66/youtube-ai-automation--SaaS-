@@ -1,5 +1,5 @@
 """
-Central config for the YouTube automation project.
+Central config for the Clip Forge project.
 Load values from environment variables so secrets stay out of source code.
 """
 

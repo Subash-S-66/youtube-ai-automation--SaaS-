@@ -390,7 +390,7 @@ export default function LandingPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0B0F1A] text-[#F8FAFC]">
+    <div className="min-h-screen overflow-x-clip bg-[#0B0F1A] text-[#F8FAFC]">
       <style jsx global>{`
         @keyframes landingBlobDriftA {
           0% {
@@ -624,7 +624,7 @@ export default function LandingPage() {
       </header>
 
       <main className="overflow-x-hidden">
-        <section className="relative flex min-h-screen items-center justify-center px-4 pb-16 pt-28 md:px-8">
+        <section className="relative flex min-h-screen items-center justify-center overflow-x-clip px-4 pb-16 pt-28 md:px-8">
           <div className="pointer-events-none absolute inset-0 overflow-hidden">
             <div className="landing-blob-a absolute -left-20 -top-24 h-[40vw] w-[40vw] rounded-full bg-[#7C5CFF] opacity-[0.08] blur-3xl" />
             <div className="landing-blob-b absolute -bottom-20 -right-20 h-[40vw] w-[40vw] rounded-full bg-[#00D4FF] opacity-[0.08] blur-3xl" />
@@ -781,7 +781,7 @@ export default function LandingPage() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4, delay: 0.68 }}
-                className="landing-float-b absolute -left-6 top-[22%] hidden w-44 rounded-xl border border-[#2E466E] bg-[#101A2D]/92 p-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.35)] md:block"
+                className="landing-float-b absolute -left-6 top-[22%] hidden w-44 rounded-xl border border-[#2E466E] bg-[#101A2D]/92 p-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.35)] xl:block"
               >
                 <div className="mb-2 flex items-center gap-2 text-[#90E2FF]">
                   <Command className="h-4 w-4" />
@@ -795,7 +795,7 @@ export default function LandingPage() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.4, delay: 0.78 }}
-                className="landing-float-a absolute -right-5 bottom-[16%] hidden w-44 rounded-xl border border-[#2E466E] bg-[#101A2D]/92 p-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.35)] md:block"
+                className="landing-float-a absolute -right-5 bottom-[16%] hidden w-44 rounded-xl border border-[#2E466E] bg-[#101A2D]/92 p-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.35)] xl:block"
               >
                 <div className="mb-2 flex items-center gap-2 text-[#E0B8FF]">
                   <Layers className="h-4 w-4" />

@@ -195,7 +195,7 @@ export default function VerifyEmail() {
           />
         </div>
         <h2 className="text-center text-4xl font-extrabold text-white tracking-tight">
-          YouTube Automation
+          Clip Forge
         </h2>
       </div>
 
