@@ -11,8 +11,68 @@ import { getUploadLimits } from '../services/uploadLimitService';
 import { google } from 'googleapis';
 import validator from 'validator';
 
+const decodeUrlValue = (value: string): string => {
+  let current = value;
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const decoded = decodeURIComponent(current);
+      if (decoded === current) break;
+      current = decoded;
+    } catch {
+      break;
+    }
+  }
+  return current;
+};
+
+const normalizeBaseUrl = (value: string): string => {
+  const decoded = decodeUrlValue(value || '');
+  const withoutQuotes = decoded.replace(/^['"]+|['"]+$/g, '');
+  // A valid URL never contains spaces; strip them to guard against malformed env injection.
+  const compact = withoutQuotes.replace(/\s+/g, '').trim();
+  return compact.replace(/\/+$/, '');
+};
+
+const getFrontendBaseUrl = () => {
+  const frontendCandidates = [
+    process.env.FRONTEND_URL,
+    process.env.FRONTEND_URLS?.split(',')[0],
+  ];
+  const resolved = frontendCandidates
+    .map((value) => normalizeBaseUrl(value || ''))
+    .find((value) => value.length > 0);
+
+  return resolved || 'http://localhost:3000';
+};
+
+const getConfiguredBackendBaseUrl = () => {
+  const resolved = normalizeBaseUrl(process.env.BACKEND_URL || '');
+  return resolved || 'http://localhost:5000';
+};
+
+const resolveBackendBaseUrl = (req?: Request) => {
+  const configuredFallback = getConfiguredBackendBaseUrl();
+  if (!req) {
+    return configuredFallback;
+  }
+
+  const forwardedProto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
+  const forwardedHost = req.get('x-forwarded-host')?.split(',')[0]?.trim();
+  const host = forwardedHost || req.get('host');
+
+  if (!host) {
+    return configuredFallback;
+  }
+
+  const protocol = forwardedProto || (req.secure ? 'https' : req.protocol || 'http');
+  return normalizeBaseUrl(`${protocol}://${host}`);
+};
+
 const oauthCookieSameSite: 'none' | 'lax' = process.env.NODE_ENV === 'production' ? 'none' : 'lax';
 const oauthCookieSecure = process.env.NODE_ENV === 'production';
+const authCookieSecure = process.env.NODE_ENV === 'production';
+const authCookieSameSite: 'lax' = 'lax';
+const authCookieMaxAge = 7 * 24 * 60 * 60 * 1000;
 
 const setOauthStateCookie = (res: Response, stateValue: string) => {
   res.cookie('oauth_state', stateValue, {
@@ -59,19 +119,20 @@ const generateToken = (id: string): string => {
 const setTokenCookie = (res: Response, token: string, isOAuth: boolean = false) => {
   res.cookie('jwt', token, {
     httpOnly: true,
-    secure: true,
-    sameSite: 'none',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    secure: authCookieSecure,
+    sameSite: authCookieSameSite,
+    maxAge: authCookieMaxAge,
     domain: process.env.COOKIE_DOMAIN || undefined,
   });
 };
 
-const getGoogleOAuth2Client = () => {
-  const backendUrl = process.env.BACKEND_URL || 'http://localhost:5000';
+const getGoogleOAuth2Client = (req?: Request) => {
+  const backendUrl = normalizeBaseUrl(resolveBackendBaseUrl(req));
+  const callbackUrl = `${backendUrl}/api/auth/google/callback`;
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID || process.env.YOUTUBE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET || process.env.YOUTUBE_CLIENT_SECRET,
-    `${backendUrl}/api/auth/google/callback`
+    callbackUrl
   );
 };
 
@@ -283,8 +344,9 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
   res.cookie('jwt', '', {
     httpOnly: true,
     expires: new Date(0),
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'none',
+    secure: authCookieSecure,
+    sameSite: authCookieSameSite,
+    domain: process.env.COOKIE_DOMAIN || undefined,
   });
 
   clearOauthStateCookie(res);
@@ -606,7 +668,7 @@ export const resetPassword = asyncHandler(
 // @route   GET /api/auth/google
 // @access  Public
 export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
-  const oauth2Client = getGoogleOAuth2Client();
+  const oauth2Client = getGoogleOAuth2Client(req);
   const stateParam = typeof req.query.state === 'string' ? req.query.state.trim() : '';
   const nonce = crypto.randomBytes(24).toString('hex');
   const encodedState = stateParam ? Buffer.from(stateParam, 'utf8').toString('base64url') : '';
@@ -633,7 +695,7 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
   const code = req.query.code as string;
   const callbackState = typeof req.query.state === 'string' ? req.query.state : '';
   const cookieState = typeof req.cookies?.oauth_state === 'string' ? req.cookies.oauth_state : '';
-  const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const FRONTEND_URL = getFrontendBaseUrl();
 
   if (!code) {
     clearOauthStateCookie(res);
@@ -649,7 +711,7 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
 
   clearOauthStateCookie(res);
 
-  const oauth2Client = getGoogleOAuth2Client();
+  const oauth2Client = getGoogleOAuth2Client(req);
   const { tokens } = await oauth2Client.getToken(code);
   oauth2Client.setCredentials(tokens);
 

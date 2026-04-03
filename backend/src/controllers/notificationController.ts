@@ -40,11 +40,19 @@ export const getNotifications = asyncHandler(async (req: Request, res: Response)
     throw new AppError('Unauthorized', 401);
   }
 
+  const now = Date.now();
+  const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+  const userCreatedAt = user.createdAt ? new Date(user.createdAt) : null;
+  const effectiveStart = userCreatedAt && userCreatedAt.getTime() > oneDayAgo.getTime()
+    ? userCreatedAt
+    : oneDayAgo;
+
+  // Enforce retention immediately even before MongoDB TTL cleanup runs.
+  await Notification.deleteMany({ createdAt: { $lt: oneDayAgo } });
+
   const query: any = { targetPlans: user.plan };
-  if (user.createdAt) {
-    // Only show notifications created after the user joined
-    query.createdAt = { $gte: new Date(user.createdAt) };
-  }
+  // Only show notifications from the last 24 hours and after the user joined.
+  query.createdAt = { $gte: effectiveStart };
 
   // Fetch notifications that target the user's plan, sorted by latest
   const notifications = await Notification.find(query).sort({ createdAt: -1 });

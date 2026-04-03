@@ -1535,26 +1535,77 @@ function Dashboard() {
 
 
                 <div className="p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235] hover:border-[#7C5CFF]/50 transition-colors">
-                  <label className="flex items-center cursor-pointer group">
-                    <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
-                      {ctaEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
-                    </div>
-                    <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
-                    <input
-                      id="cta-enabled"
-                      aria-label="Enable Call to Action"
-                      type="checkbox"
-                      className="hidden"
-                      checked={ctaEnabled}
-                      onChange={() => {
-                        if (!canUseCta) {
-                          showUpgradeModal('Ending CTA');
-                          return;
-                        }
-                        setCtaEnabled(!ctaEnabled);
-                      }}
-                    />
-                  </label>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="flex items-center cursor-pointer group">
+                      <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
+                        {ctaEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                      </div>
+                      <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
+                      <input
+                        id="cta-enabled"
+                        aria-label="Enable Call to Action"
+                        type="checkbox"
+                        className="hidden"
+                        checked={ctaEnabled}
+                        onChange={() => {
+                          if (!canUseCta) {
+                            showUpgradeModal('Ending CTA');
+                            return;
+                          }
+                          setCtaEnabled(!ctaEnabled);
+                        }}
+                      />
+                    </label>
+
+                    <label className={cn("flex items-center group", !canUseStoryMode && "opacity-70")}>
+                      <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", effectiveStoryMode ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
+                        {effectiveStoryMode && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                      </div>
+                      <span className="text-sm text-slate-300 group-hover:text-white">Story Mode</span>
+                      <input
+                        id="story-mode-inline-toggle"
+                        aria-label="Enable Story Mode"
+                        type="checkbox"
+                        className="hidden"
+                        checked={effectiveStoryMode}
+                        onChange={handleStoryModeToggle}
+                      />
+                    </label>
+                  </div>
+
+                  <AnimatePresence>
+                    {effectiveStoryMode && (
+                      <m.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mt-4 pt-4 border-t border-[#1A2235] overflow-hidden"
+                      >
+                        <label className="flex items-center justify-between rounded-lg border border-[#1A2235] bg-[#0B0F1A] px-3 py-2.5 cursor-pointer group">
+                          <div className="flex items-center">
+                            <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235] group-hover:border-[#7C5CFF]", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
+                              {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
+                            </div>
+                            <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-500" : "text-slate-300 group-hover:text-white")}>
+                              Add Recap of Previous Parts
+                            </span>
+                          </div>
+                          <span className={cn("text-[11px]", currentPart === 1 ? "text-slate-500" : "text-slate-600")}>
+                            {currentPart === 1 ? 'Available from Part 2' : 'Optional'}
+                          </span>
+                          <input
+                            id="recap-enabled-inline-toggle"
+                            aria-label="Enable Story Recap"
+                            type="checkbox"
+                            className="hidden"
+                            checked={recapEnabled}
+                            onChange={() => setRecapEnabled(!recapEnabled)}
+                            disabled={currentPart === 1}
+                          />
+                        </label>
+                      </m.div>
+                    )}
+                  </AnimatePresence>
 
                   <div className="mt-4 pt-4 border-t border-[#1A2235]">
                     <div className="flex items-center justify-between">
@@ -1727,27 +1778,11 @@ function Dashboard() {
                       </div>
 
                       <div className="space-y-3">
-                        <label className={cn("flex items-center justify-between rounded-lg border px-3 py-2.5 transition-colors", isFreeUser ? "cursor-not-allowed border-[#1A2235] bg-[#0B0F1A]/50 opacity-70" : "cursor-pointer border-[#1A2235] bg-[#0B0F1A] hover:border-[#7C5CFF]/50")}>
-                          <div className="flex items-center">
-                            <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", effectiveStoryMode ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
-                              {effectiveStoryMode && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
-                            </div>
-                            <span className="text-sm text-slate-200">Enable Story Mode</span>
-                          </div>
-                          <input
-                            id="story-mode-toggle"
-                            aria-label="Toggle Story Mode"
-                            type="checkbox"
-                            className="hidden"
-                            checked={effectiveStoryMode}
-                            onChange={handleStoryModeToggle}
-                            disabled={isFreeUser}
-                          />
-                        </label>
-
-                        {isFreeUser && (
+                        {!effectiveStoryMode && (
                           <p className="text-xs text-slate-500">
-                            {canUseStoryMode ? 'Story Mode is available on your plan.' : 'Story Mode is not included in your plan.'}
+                            {canUseStoryMode
+                              ? 'Enable Story Mode in the Call to Actions section to continue episodic videos.'
+                              : 'Story Mode is not included in your plan.'}
                           </p>
                         )}
 
@@ -1755,34 +1790,11 @@ function Dashboard() {
                           {effectiveStoryMode && (
                             <m.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-3 overflow-hidden rounded-lg border border-[#7C5CFF]/20 bg-[#0B0F1A]/60 p-3">
                               <div className="flex items-center justify-between">
-                                <span className="text-sm text-slate-400">Current Progress: <strong className="text-[#00D4FF] font-mono text-base">Part {currentPart}</strong></span>
+                                <span className="text-sm text-slate-400">Current Progress: <strong className="font-mono text-base" style={{ color: '#00D4FF' }}>Part {currentPart}</strong></span>
                                 <button type="button" onClick={resetStoryProgress} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
                                   Reset Story
                                 </button>
                               </div>
-
-                              <label className="flex items-center justify-between rounded-lg border border-[#1A2235] bg-[#0B0F1A] px-3 py-2.5 cursor-pointer group">
-                                <div className="flex items-center">
-                                  <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", recapEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235] group-hover:border-[#7C5CFF]", currentPart === 1 && "opacity-50 cursor-not-allowed")}>
-                                    {recapEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
-                                  </div>
-                                  <span className={cn("text-sm transition-colors", currentPart === 1 ? "text-slate-500" : "text-slate-300 group-hover:text-white")}>
-                                    Add Recap of Previous Parts
-                                  </span>
-                                </div>
-                                <span className={cn("text-[11px]", currentPart === 1 ? "text-slate-500" : "text-slate-600")}>
-                                  {currentPart === 1 ? 'Available from Part 2' : 'Optional'}
-                                </span>
-                                <input
-                                  id="recap-enabled-toggle"
-                                  aria-label="Enable Story Recap"
-                                  type="checkbox"
-                                  className="hidden"
-                                  checked={recapEnabled}
-                                  onChange={() => setRecapEnabled(!recapEnabled)}
-                                  disabled={currentPart === 1}
-                                />
-                              </label>
                             </m.div>
                           )}
                         </AnimatePresence>

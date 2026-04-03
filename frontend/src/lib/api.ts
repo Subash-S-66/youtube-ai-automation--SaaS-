@@ -5,6 +5,7 @@ const api = axios.create({
   baseURL: getApiBase(),
   withCredentials: true,
 });
+api.defaults.withCredentials = true;
 
 let csrfFetchPromise: Promise<void> | null = null;
 
@@ -98,8 +99,12 @@ api.interceptors.response.use(
       if (typeof window !== 'undefined') {
         const path = window.location.pathname;
         const isAdminArea = path.startsWith('/admin');
-        // Prevent redirect loop if already on login page
-        if (!path.includes('/login')) {
+        const isAuthPage =
+          path.startsWith('/login') ||
+          path.startsWith('/register') ||
+          path.startsWith('/admin-login');
+        // Prevent redirect loop if already on auth pages
+        if (!isAuthPage) {
           window.location.href = isAdminArea ? '/admin-login' : '/login';
         }
       }

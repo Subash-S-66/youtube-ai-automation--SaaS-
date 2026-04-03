@@ -1,160 +1,384 @@
-# ClipForge (YouTube AI Automation)
+<p align="center">
+	<img src="https://capsule-render.vercel.app/api?type=waving&height=220&color=0:00D4FF,50:7C5CFF,100:FF4FD8&text=ClipForge&fontAlignY=38&desc=AI%20YouTube%20Automation%20SaaS&descAlignY=58&fontColor=ffffff" alt="ClipForge Banner" />
+</p>
 
-ClipForge is a comprehensive SaaS platform bridging the gap between automated Python video generation pipelines and modern web architecture. It features a complete Node.js/Express backend powered by MongoDB and Redis, and a sleek, fast Next.js dashboard.
+<p align="center">
+	<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=20&duration=2600&pause=800&color=00D4FF&center=true&vCenter=true&multiline=true&repeat=true&width=960&height=80&lines=Generate+Viral+Shorts+with+AI;Plan+%E2%86%92+Render+%E2%86%92+Publish+%E2%86%92+Track" alt="Typing animation" />
+</p>
 
-The system natively handles YouTube OAuth workflows, asynchronous video generation leveraging Google's Gemini, Razorpay-based subscription management, and reliable background process scaling via BullMQ.
+<p align="center">
+	<a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-Ready-00D4FF?style=for-the-badge" alt="Quick Start" /></a>
+	<a href="#architecture"><img src="https://img.shields.io/badge/Architecture-3_Layers-7C5CFF?style=for-the-badge" alt="Architecture" /></a>
+	<a href="#production-deployment"><img src="https://img.shields.io/badge/Deploy-Vercel_%2B_DO-FF4FD8?style=for-the-badge" alt="Deploy" /></a>
+</p>
 
----
+## Overview
 
-## 1. Project Overview
+ClipForge is a production-ready AI video automation SaaS that combines:
 
-The repository consists of three integrated layers:
+1. A modern Next.js dashboard for operators.
+2. An Express + TypeScript backend API for auth, plans, billing, and orchestration.
+3. A Python pipeline runtime for content generation, subtitle rendering, and YouTube upload.
 
-- **Python Scripts (Root):** Core algorithmic modules designed to generate YouTube shorts automatically (`youtube_ai_automation`).
-- **Backend (`/backend`):** A robust Node.js + Express API handling authentication, payments, database operations, and background worker queues.
-- **Frontend (`/frontend`):** A Next.js (App Router) user interface designed with Tailwind CSS, Framer Motion, and Axios.
+Core capabilities:
 
----
+1. Google OAuth login and YouTube channel connect.
+2. Prompt and topic based short-video generation.
+3. Story mode with multi-part progression.
+4. Queue-powered async execution with resilient webhook updates.
+5. Razorpay subscription lifecycle and plan feature gating.
+6. Scheduling and auto-upload intervals.
 
-## 2. Environment Variables
+## Table Of Contents
 
-To run the application, you must define environment variables. Example `.env.example` files have been placed in their respective directories.
+1. [Architecture](#architecture)
+2. [Repository Structure](#repository-structure)
+3. [Tech Stack](#tech-stack)
+4. [Quick Start](#quick-start)
+5. [Environment Variables](#environment-variables)
+6. [Runbook (Dev Commands)](#runbook-dev-commands)
+7. [Production Deployment](#production-deployment)
+8. [Google OAuth Setup](#google-oauth-setup)
+9. [Troubleshooting](#troubleshooting)
+10. [Testing And Quality](#testing-and-quality)
+11. [Security Notes](#security-notes)
 
-### Backend (`/backend/.env`)
+## Architecture
 
-- **Core & DB:** `MONGO_URI`, `JWT_SECRET`, `FRONTEND_URL`
-- **Integrations:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GEMINI_API_KEY`
-- **Payments:** `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
-- **Queue:** `REDIS_URL`
-- **Notifications:** `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASS`, `TELEGRAM_BOT_TOKEN`
-- **Pipeline Runtime:** `PIPELINE_RUNNER=local`, `PIPELINE_PYTHON_CMD=python`, `WEBHOOK_SECRET`, `BACKEND_URL`, `WEBHOOK_URL`, `RUN_EMBEDDED_WORKER`
+```mermaid
+flowchart LR
+	FE[Frontend Next.js] -->|REST /api| BE[Backend Express API]
+	BE --> MDB[(MongoDB)]
+	BE --> REDIS[(Redis + BullMQ)]
+	BE --> WORKER[Pipeline Worker]
 
-### Frontend (`/frontend/.env.local`)
+	WORKER -->|local| PY[Python Pipeline]
+	WORKER -->|remote| SRV[Pipeline Service]
+	WORKER -->|azure| ACA[Azure Container App Job]
 
-- **API Configuration:** `NEXT_PUBLIC_API_URL` (Defaults to `http://localhost:5000/api` locally, but must point to the production API url when deployed).
+	PY --> YT[YouTube API]
+	SRV --> YT
+	ACA --> YT
 
----
+	PY -->|webhook status| BE
+	SRV -->|webhook status| BE
+	ACA -->|webhook status| BE
 
-## 3. Local Setup Instructions
+	FE -->|checkout| PAY[Razorpay]
+	PAY -->|webhook| BE
+```
 
-Ensure you have Node.js (v18+), Python (v3.10+), Redis, and MongoDB running on your machine.
+## Repository Structure
 
-### Start the Backend API
+```text
+.
+|- frontend/        # Next.js dashboard (App Router)
+|- backend/         # Express API + BullMQ workers
+|- pipeline/        # Python media generation runtime
+|- tests/           # Python tests
+|- deploy/          # Cloud deployment assets
+|- scripts/         # Local and codespace helper scripts
+|- tools/ffmpeg/    # ffmpeg bundle/assets
+|- requirements.txt # Root Python install entry
+```
+
+## Tech Stack
+
+Frontend:
+
+1. Next.js 16
+2. React 19
+3. Tailwind CSS 4
+4. Framer Motion
+
+Backend:
+
+1. Node.js + TypeScript
+2. Express 5
+3. MongoDB (Mongoose)
+4. Redis + BullMQ
+5. Google APIs + Razorpay
+
+Pipeline:
+
+1. Python 3.10+
+2. google-api-python-client
+3. yt-dlp
+4. requests + tenacity
+
+## Quick Start
+
+Prerequisites:
+
+1. Node.js 20+
+2. Python 3.10+
+3. MongoDB
+4. Redis
+
+### 1) Install project dependencies
+
+```bash
+npm install
+cd backend && npm install
+cd ../frontend && npm install
+cd ..
+```
+
+### 2) Install Python dependencies from repo root
+
+```bash
+python -m venv .venv
+```
+
+Windows:
+
+```bash
+.venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+macOS/Linux:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 3) Configure environment files
+
+1. Create backend env at backend/.env
+2. Create frontend env at frontend/.env.local
+3. Fill variables from the environment section below
+
+### 4) Start services
+
+Terminal A (backend API):
+
 ```bash
 cd backend
-npm install
 npm run dev
 ```
 
-### Start the Background Worker
-*You must run the worker in a separate terminal process from the Backend API to execute generated video pipelines.*
+Terminal B (backend worker):
+
 ```bash
 cd backend
 npm run worker
 ```
 
-`RUN_EMBEDDED_WORKER` is disabled by default in the API process. Set `RUN_EMBEDDED_WORKER=true` only if you explicitly want the API process to consume queue jobs.
+Terminal C (frontend):
 
-### Run Pipeline Worker In GitHub Codespaces With Local Backend
-If backend is running on your local machine, expose it with a tunnel and set these in `backend/.env` (or Codespaces secrets):
-
-```bash
-PIPELINE_RUNNER=local
-BACKEND_URL=https://<your-public-backend-url>
-WEBHOOK_URL=https://<your-public-backend-url>/api/webhook/job-status
-WEBHOOK_SECRET=<same-secret-in-backend-and-pipeline>
-```
-
-`BACKEND_URL` is used for secure media downloads, and `WEBHOOK_URL` is used by the Python runner to report status.
-
-Codespaces env injection now runs automatically on container start via:
-
-```bash
-bash scripts/bootstrap_codespaces_env.sh
-```
-
-This generates `.codespaces/runtime_env.sh` from available Codespaces secrets and auto-sources it in new shells.
-
-Start backend + worker together in Codespaces:
-
-```bash
-bash scripts/start_codespace_stack.sh
-```
-
-Stop both:
-
-```bash
-bash scripts/stop_codespace_stack.sh
-```
-
-Pipeline-only service mode (Codespaces can run only pipeline runtime):
-
-```bash
-bash scripts/run_pipeline_service_codespace.sh
-```
-
-Set backend env:
-- `PIPELINE_RUNNER=remote`
-- `PIPELINE_SERVICE_URL=https://<your-codespace-forwarded-url>`
-- `PIPELINE_SERVICE_SECRET=<shared-secret>`
-
-### Start the Frontend
 ```bash
 cd frontend
-npm install
 npm run dev
 ```
 
-### Run Pipeline Tests
+## Environment Variables
+
+### Backend required
+
+Core:
+
+1. PORT
+2. MONGO_URI
+3. JWT_SECRET
+4. FRONTEND_URL
+5. FRONTEND_URLS
+6. BACKEND_URL
+7. REDIS_URL
+
+Google/YouTube:
+
+1. GOOGLE_CLIENT_ID
+2. GOOGLE_CLIENT_SECRET
+3. YOUTUBE_CLIENT_ID
+4. YOUTUBE_CLIENT_SECRET
+
+AI and pipeline:
+
+1. GEMINI_API_KEY
+2. WEBHOOK_SECRET
+3. WEBHOOK_URL
+4. PIPELINE_RUNNER (local, remote, or azure)
+5. PIPELINE_PYTHON_CMD
+
+Billing and notifications:
+
+1. RAZORPAY_KEY_ID
+2. RAZORPAY_KEY_SECRET
+3. RAZORPAY_WEBHOOK_SECRET
+4. EMAIL_HOST
+5. EMAIL_PORT
+6. EMAIL_USER
+7. EMAIL_PASS
+
+### Frontend required
+
+1. NEXT_PUBLIC_API_URL
+
+Example:
+
 ```bash
-python -m venv .venv
+NEXT_PUBLIC_API_URL=https://api.clipforgeapp.tech/api
+```
+
+## Runbook (Dev Commands)
+
+From repository root:
+
+```bash
+npm run preflight
+npm run preflight:ci
+```
+
+Backend:
+
+```bash
+cd backend
+npm run dev
+npm run build
+npm run start
+npm run worker
+npm run start:worker
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm run dev
+npm run build
+npm run start
+npm run lint
+```
+
+Python tests:
+
+Windows:
+
+```bash
 .venv\Scripts\activate
-python -m pip install -r pipeline/requirements-dev.txt
+pip install -r requirements-dev.txt
 set PYTHONPATH=pipeline/src
 python -m pytest -q tests
 ```
 
-### Run Full Deployment Preflight
+macOS/Linux:
+
 ```bash
-npm run preflight
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+PYTHONPATH=pipeline/src python -m pytest -q tests
 ```
 
----
+## Production Deployment
 
-## 4. Production Deployment & Hosting Strategy
+Recommended split:
 
-ClipForge's architecture decouples intensive background logic from standard web serving, requiring a robust hosting strategy.
+1. Frontend on Vercel.
+2. Backend API on DigitalOcean App Platform.
+3. Worker as separate backend worker service.
+4. Managed MongoDB and Redis.
 
-### Recommended Providers
-- **Frontend (Next.js):** [Vercel](https://vercel.com)
-- **Backend API (Node.js):** [Railway](https://railway.app), [Render](https://render.com), or [Azure](https://azure.microsoft.com/)
-- **Background Worker:** A *separate* background service on the same platform as the Backend API (using the exact same repository and environment variables).
-- **Redis Queue:** [Upstash](https://upstash.com)
-- **Pipeline Engine:** Azure Container Apps (Provisioned via Docker/ACR)
+### Required production rules
 
-### CI/CD Pipelines & GitHub Secrets
+1. HTTPS only.
+2. Exact CORS allowlist domains in FRONTEND_URLS.
+3. No trailing/leading spaces in env values.
+4. API and worker must share the same backend env values.
 
-The pipeline runtime no longer depends on a GitHub workflow dispatch. Backend worker now triggers Python locally (`PIPELINE_RUNNER=local`) or Azure (`PIPELINE_RUNNER=azure`).
+### Vercel frontend env
 
-Before pushing to `main`, ensure the following repository **GitHub Secrets** are configured for your chosen deployment path:
+```bash
+NEXT_PUBLIC_API_URL=https://api.clipforgeapp.tech/api
+```
 
-*   `MONGO_URI`
-*   `JWT_SECRET`
-*   `RAZORPAY_KEY_ID`
-*   `RAZORPAY_KEY_SECRET`
-*   `RAZORPAY_WEBHOOK_SECRET`
-*   `REDIS_URL`
-*   `GOOGLE_CLIENT_SECRET`
-*   `GEMINI_API_KEY`
-*   `NEXT_PUBLIC_API_URL`
-*   *Azure Specific:* `AZURE_CREDENTIALS`, `AZURE_RESOURCE_GROUP`, `AZURE_ACR_NAME`, `AZURE_JOB_NAME`, `AZURE_ENVIRONMENT_RESOURCE_ID`
+### DigitalOcean backend env (critical)
 
-### Security Requirements (CRITICAL)
-- **HTTPS Enforcement:** Production environments MUST be served over HTTPS. OAuth integrations and Next.js require it.
-- **Secrets Management:** Do not commit `.env` files to the repository. Configure your production secrets natively via Vercel/Railway environment settings.
-- **Token Protection:** Ensure `JWT_SECRET` is strong. Never expose API keys (e.g. Gemini, Stripe) to the Next.js `NEXT_PUBLIC_` namespace.
+```bash
+BACKEND_URL=https://api.clipforgeapp.tech
+FRONTEND_URL=https://clipforgeapp.tech
+FRONTEND_URLS=https://clipforgeapp.tech,https://www.clipforgeapp.tech,https://youtube-ai-automation-saa-s.vercel.app
+```
 
-### Production Build & Start Scripts
-1. **Frontend:** `npm run build` and `npm start`
-2. **Backend API:** `npm run build` and `npm start`
-3. **Background Worker:** `npm run build` and `npm run start:worker`
+## Google OAuth Setup
+
+For the active Google OAuth Web client:
+
+Authorized JavaScript origins:
+
+1. https://clipforgeapp.tech
+2. https://www.clipforgeapp.tech (if used)
+3. http://localhost:3000
+
+Authorized redirect URIs:
+
+1. https://api.clipforgeapp.tech/api/auth/google/callback
+2. http://localhost:5000/api/auth/google/callback
+
+Important:
+
+1. Do not use wildcards in Google OAuth origins.
+2. OAuth flow should always start from backend endpoint /api/auth/google.
+
+## Troubleshooting
+
+### CORS blocked on /api/auth/login
+
+Symptom:
+
+1. Browser says no Access-Control-Allow-Origin.
+
+Fix:
+
+1. Add exact frontend origin to FRONTEND_URLS.
+2. Redeploy backend.
+3. Verify preflight from that exact origin.
+
+### Google error 400 invalid_request redirect_uri
+
+Symptom:
+
+1. Google popup shows invalid_request.
+
+Common root cause:
+
+1. BACKEND_URL has accidental leading/trailing whitespace.
+
+Fix:
+
+1. Re-enter BACKEND_URL exactly.
+2. Redeploy backend.
+3. Confirm redirect_uri matches Google Console exactly.
+
+### Story mode or recap not available
+
+Fix:
+
+1. Verify plan feature story_mode in admin plan settings.
+2. Enable Story Mode before using Recap.
+
+## Testing And Quality
+
+Quality gates available in repository:
+
+1. TypeScript builds for backend and frontend.
+2. Frontend linting.
+3. Python tests under tests/.
+4. Root preflight script to run end-to-end checks.
+
+Recommended before production push:
+
+1. npm run preflight
+2. python -m pytest -q tests
+
+## Security Notes
+
+1. Never commit real secrets to git.
+2. Rotate any secret that appears in logs, screenshots, or chat.
+3. Keep JWT_SECRET, OAuth secrets, DB credentials, and webhook secrets in platform secret managers.
+4. Use strong COOKIE_DOMAIN and secure cookie settings for production.
+
+## License
+
+Private repository. Internal use only unless explicitly relicensed by the owner.

@@ -36,6 +36,19 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: path.join(__dirname, ".."),
   transpilePackages: ['lucide-react'], // Helps with tree-shaking
+  async rewrites() {
+    if (process.env.NODE_ENV !== 'development') {
+      return [];
+    }
+    const raw = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+    const destinationBase = raw.replace(/\/+$/, '');
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${destinationBase}/api/:path*`,
+      },
+    ];
+  },
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
