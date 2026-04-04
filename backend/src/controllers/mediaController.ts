@@ -413,8 +413,6 @@ export const getSecureMediaFile = asyncHandler(async (req: Request, res: Respons
       token = req.headers.authorization.split(' ')[1] || '';
     } else if (req.cookies && req.cookies.jwt) {
       token = req.cookies.jwt;
-    } else if (req.cookies && req.cookies.oauth_state) {
-      token = req.cookies.oauth_state;
     }
 
     if (!token) {

@@ -11,6 +11,24 @@ const csrfCookieSameSite: 'none' | 'lax' =
 const csrfCookieSecure = process.env.NODE_ENV === 'production';
 const csrfSessionCookieName = '__session_id';
 
+const getCsrfSecret = (): string => {
+  const configuredSecret = (process.env.CSRF_SECRET || '').trim();
+  if (configuredSecret) {
+    return configuredSecret;
+  }
+
+  const jwtSecret = (process.env.JWT_SECRET || '').trim();
+  if (jwtSecret) {
+    return jwtSecret;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('CSRF_SECRET is required in production');
+  }
+
+  return 'dev-only-csrf-secret-change-me';
+};
+
 const ensureCsrfSessionIdentifier = (req: Request, res: Response): string => {
   const existingSessionId = typeof req.cookies?.[csrfSessionCookieName] === 'string'
     ? req.cookies[csrfSessionCookieName].trim()
@@ -32,20 +50,19 @@ const ensureCsrfSessionIdentifier = (req: Request, res: Response): string => {
     secure: csrfCookieSecure,
     path: '/',
     maxAge: 30 * 24 * 60 * 60 * 1000,
-    domain: process.env.COOKIE_DOMAIN || undefined,
   });
 
   return sessionId;
 };
 
 const doubleCsrfOptions = {
-  getSecret: () => process.env.CSRF_SECRET || 'a-very-secure-fallback-secret-for-csrf',
+  getSecret: getCsrfSecret,
   cookieName: 'x-csrf-token',
   cookieOptions: {
+    httpOnly: true,
     sameSite: csrfCookieSameSite,
     path: '/',
     secure: csrfCookieSecure,
-    domain: process.env.COOKIE_DOMAIN || undefined,
   },
   size: 64,
   ignoredMethods: ['GET', 'HEAD', 'OPTIONS'] as CsrfRequestMethod[],

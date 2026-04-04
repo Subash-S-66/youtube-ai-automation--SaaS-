@@ -10,6 +10,7 @@ import { sendEmail, sendEmailStrict } from '../services/emailService';
 import { getUploadLimits } from '../services/uploadLimitService';
 import { google } from 'googleapis';
 import validator from 'validator';
+import { resolveCookieDomain } from '../utils/cookieDomain';
 
 const decodeUrlValue = (value: string): string => {
   let current = value;
@@ -30,7 +31,22 @@ const normalizeBaseUrl = (value: string): string => {
   const withoutQuotes = decoded.replace(/^['"]+|['"]+$/g, '');
   // A valid URL never contains spaces; strip them to guard against malformed env injection.
   const compact = withoutQuotes.replace(/\s+/g, '').trim();
-  return compact.replace(/\/+$/, '');
+  if (!compact) {
+    return '';
+  }
+
+  let candidate = compact;
+  if (!/^https?:\/\//i.test(candidate)) {
+    const localLike = /^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(candidate);
+    candidate = `${localLike ? 'http' : 'https'}://${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return compact.replace(/\/+$/, '');
+  }
 };
 
 const getFrontendBaseUrl = () => {
@@ -72,27 +88,29 @@ const resolveBackendBaseUrl = (req?: Request) => {
 // while avoiding stricter third-party cookie handling in some browsers.
 const oauthCookieSameSite: 'lax' = 'lax';
 const oauthCookieSecure = process.env.NODE_ENV === 'production';
-const authCookieSecure = process.env.NODE_ENV === 'production';
-const authCookieSameSite: 'lax' = 'lax';
+// OAuth callback redirects to frontend pages that call the API via XHR; use None in production.
+const authCookieSameSite: 'none' | 'lax' = process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+const authCookieSecure = process.env.NODE_ENV === 'production' || authCookieSameSite === 'none';
 const authCookieMaxAge = 7 * 24 * 60 * 60 * 1000;
+type RequestWithHeaders = Pick<Request, 'get'>;
 
-const setOauthStateCookie = (res: Response, stateValue: string) => {
+const setOauthStateCookie = (req: RequestWithHeaders, res: Response, stateValue: string) => {
   res.cookie('oauth_state', stateValue, {
     httpOnly: true,
     secure: oauthCookieSecure,
     sameSite: oauthCookieSameSite,
     maxAge: 10 * 60 * 1000,
-    domain: process.env.COOKIE_DOMAIN || undefined,
+    domain: resolveCookieDomain(req, process.env.COOKIE_DOMAIN),
   });
 };
 
-const clearOauthStateCookie = (res: Response) => {
+const clearOauthStateCookie = (req: RequestWithHeaders, res: Response) => {
   res.cookie('oauth_state', '', {
     httpOnly: true,
     expires: new Date(0),
     secure: oauthCookieSecure,
     sameSite: oauthCookieSameSite,
-    domain: process.env.COOKIE_DOMAIN || undefined,
+    domain: resolveCookieDomain(req, process.env.COOKIE_DOMAIN),
   });
 };
 
@@ -196,22 +214,32 @@ const generateToken = (id: string): string => {
 };
 
 // Helper to set HTTP-only cookie for JWT
-const setTokenCookie = (res: Response, token: string, isOAuth: boolean = false) => {
+const setTokenCookie = (req: RequestWithHeaders, res: Response, token: string, isOAuth: boolean = false) => {
   res.cookie('jwt', token, {
     httpOnly: true,
     secure: authCookieSecure,
     sameSite: authCookieSameSite,
     maxAge: authCookieMaxAge,
-    domain: process.env.COOKIE_DOMAIN || undefined,
+    domain: resolveCookieDomain(req, process.env.COOKIE_DOMAIN),
   });
 };
 
 const getGoogleOAuth2Client = (req?: Request) => {
+  const redirectCandidate = normalizeBaseUrl(
+    process.env.GOOGLE_REDIRECT_URI || process.env.AUTH_GOOGLE_REDIRECT_URI || ''
+  );
   const backendUrl = normalizeBaseUrl(resolveBackendBaseUrl(req));
-  const callbackUrl = `${backendUrl}/api/auth/google/callback`;
+  const callbackUrl = redirectCandidate || `${backendUrl}/api/auth/google/callback`;
+  const clientId = process.env.GOOGLE_CLIENT_ID || process.env.YOUTUBE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.YOUTUBE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret || !callbackUrl) {
+    throw new Error('Missing Google OAuth configuration');
+  }
+
   return new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID || process.env.YOUTUBE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET || process.env.YOUTUBE_CLIENT_SECRET,
+    clientId,
+    clientSecret,
     callbackUrl
   );
 };
@@ -398,7 +426,7 @@ export const login = asyncHandler(
     }
 
     const token = generateToken(user.id);
-    setTokenCookie(res, token);
+    setTokenCookie(req, res, token);
 
     res.json({
       success: true,
@@ -426,10 +454,10 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
     expires: new Date(0),
     secure: authCookieSecure,
     sameSite: authCookieSameSite,
-    domain: process.env.COOKIE_DOMAIN || undefined,
+    domain: resolveCookieDomain(req, process.env.COOKIE_DOMAIN),
   });
 
-  clearOauthStateCookie(res);
+  clearOauthStateCookie(req, res);
 
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 });
@@ -452,7 +480,7 @@ export const adminLogin = asyncHandler(
     }
 
     const token = generateToken(user.id);
-    setTokenCookie(res, token);
+    setTokenCookie(req, res, token);
 
     res.json({
       success: true,
@@ -499,7 +527,7 @@ export const verifyEmail = asyncHandler(async (req: Request, res: Response) => {
   await user.save();
 
   const jwtToken = generateToken(user.id);
-  setTokenCookie(res, jwtToken);
+  setTokenCookie(req, res, jwtToken);
 
   const redirectUrl = typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/dashboard';
 
@@ -655,7 +683,7 @@ export const verifyOtp = asyncHandler(
     await user.save();
 
     const jwtToken = generateToken(user.id);
-    setTokenCookie(res, jwtToken);
+    setTokenCookie(req, res, jwtToken);
 
     res.json({
       success: true,
@@ -753,22 +781,29 @@ export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
     const oauth2Client = getGoogleOAuth2Client(req);
     const stateParam = typeof req.query.state === 'string' ? req.query.state.trim() : '';
     const oauthState = createOAuthState(stateParam);
+    const forceAccountSelection =
+      String(req.query.select_account || '').toLowerCase() === '1' ||
+      String(req.query.select_account || '').toLowerCase() === 'true';
 
-    setOauthStateCookie(res, oauthState);
+    setOauthStateCookie(req, res, oauthState);
 
     const authUrl = oauth2Client.generateAuthUrl({
-      access_type: 'offline',
+      access_type: 'online',
+      include_granted_scopes: true,
       scope: [
         'https://www.googleapis.com/auth/userinfo.profile',
         'https://www.googleapis.com/auth/userinfo.email',
       ],
       state: oauthState,
-      prompt: 'select_account',
+      ...(forceAccountSelection ? { prompt: 'select_account' } : {}),
     });
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
     res.redirect(authUrl);
   } catch {
-    clearOauthStateCookie(res);
-    res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
+    clearOauthStateCookie(req, res);
+    res.redirect(`${FRONTEND_URL}/login?error=Google_OAuth_Config_Error`);
   }
 });
 
@@ -783,13 +818,17 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
   const oauthProviderError = typeof req.query.error === 'string' ? req.query.error : '';
 
   if (oauthProviderError) {
-    clearOauthStateCookie(res);
+    clearOauthStateCookie(req, res);
+    if (oauthProviderError === 'access_denied') {
+      res.redirect(`${FRONTEND_URL}/login?error=Google_Access_Denied`);
+      return;
+    }
     res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
     return;
   }
 
   if (!code) {
-    clearOauthStateCookie(res);
+    clearOauthStateCookie(req, res);
     res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
     return;
   }
@@ -802,12 +841,12 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
   const oauthStatePayload = callbackState ? parseOAuthStatePayload(callbackState) : null;
 
   if (!callbackState || (!hasMatchingCookieState && !oauthStatePayload)) {
-    clearOauthStateCookie(res);
+    clearOauthStateCookie(req, res);
     res.redirect(`${FRONTEND_URL}/login?error=Invalid_OAuth_State`);
     return;
   }
 
-  clearOauthStateCookie(res);
+  clearOauthStateCookie(req, res);
   try {
     const oauth2Client = getGoogleOAuth2Client(req);
     const { tokens } = await oauth2Client.getToken(code);
@@ -868,10 +907,12 @@ export const googleCallback = asyncHandler(async (req: Request, res: Response) =
     }
 
     const token = generateToken(user.id);
-    setTokenCookie(res, token, true);
+    setTokenCookie(req, res, token, true);
 
     res.redirect(`${FRONTEND_URL}/dashboard`);
-  } catch {
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'unknown';
+    console.error(`[Auth] Google OAuth callback failed: ${reason}`);
     res.redirect(`${FRONTEND_URL}/login?error=Google_Login_Failed`);
   }
 });

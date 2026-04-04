@@ -1,5 +1,18 @@
 User-agent: *
 Allow: /
+Disallow: /api/
+Disallow: /admin/
+Disallow: /dashboard/
+Disallow: /settings/
+Disallow: /history/
+Disallow: /media/
+Disallow: /payments/
+Disallow: /subscription/
+Disallow: /login
+Disallow: /register
+Disallow: /reset-password
+Disallow: /verify-email
+Disallow: /forgot-password
 
 Sitemap: https://clipforgeapp.tech/sitemap.xml
-Host: https://clipforgeapp.tech
+Host: clipforgeapp.tech

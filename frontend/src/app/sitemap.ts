@@ -5,7 +5,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const siteUrl = getSiteUrl();
   const now = new Date();
 
-  const urls = ["/", "/pricing", "/register", "/login"];
+  const urls = [
+    "/",
+    "/what-is-clipforge",
+    "/clipforge-ai-video-tool",
+    "/clipforge-review",
+    "/how-to-use-clipforge",
+    "/pricing",
+    "/register",
+    "/login",
+  ];
 
   return urls.map((path) => ({
     url: `${siteUrl}${path}`,

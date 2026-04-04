@@ -25,10 +25,6 @@ export const protect = asyncHandler(async (req: Request, res: Response, next: Ne
   else if (req.cookies && req.cookies.jwt) {
     token = req.cookies.jwt;
   }
-  // Use a dedicated short-lived cookie for OAuth
-  else if (req.cookies && req.cookies.oauth_state) {
-    token = req.cookies.oauth_state;
-  }
 
   if (token) {
     try {

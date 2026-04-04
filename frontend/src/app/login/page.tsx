@@ -39,6 +39,7 @@ function LoginContent() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSessionChecking, setIsSessionChecking] = useState(true);
 
   // Verification states
   const [unverified, setUnverified] = useState(false);
@@ -61,11 +62,38 @@ function LoginContent() {
     if (!errorCode) return '';
     const messages: Record<string, string> = {
       Google_Login_Failed: 'Google login failed. Please try again.',
+      Google_OAuth_Config_Error: 'Google sign-in is not configured correctly. Please try again in a minute.',
+      Google_Access_Denied: 'Google sign-in was cancelled. Please choose an account to continue.',
       Email_Not_Found: 'Google account email not available. Try another account.',
       Invalid_OAuth_State: 'Google login session expired. Please try again.',
     };
     return messages[errorCode] || 'Login failed. Please try again.';
   }, [searchParams]);
+
+  useEffect(() => {
+    let active = true;
+
+    const checkExistingSession = async () => {
+      try {
+        const data = await authService.getMe();
+        if (active && data?.success) {
+          router.replace('/dashboard');
+          return;
+        }
+      } catch {
+        // No active session; keep user on login page.
+      } finally {
+        if (active) {
+          setIsSessionChecking(false);
+        }
+      }
+    };
+
+    checkExistingSession();
+    return () => {
+      active = false;
+    };
+  }, [router]);
 
   const hydrateResendState = (targetEmail: string) => {
     const cooldownKey = getCooldownKey(targetEmail);
@@ -177,7 +205,12 @@ function LoginContent() {
 
   const handleGoogleLogin = () => {
     if (typeof window === 'undefined') return;
-    window.location.href = buildApiUrl('/api/auth/google');
+    const requestNonce = Date.now().toString(36);
+    const params = new URLSearchParams({
+      r: requestNonce,
+      select_account: '1',
+    });
+    window.location.href = `${buildApiUrl('/api/auth/google')}?${params.toString()}`;
   };
 
   const handleRequestOtp = async () => {
@@ -226,6 +259,14 @@ function LoginContent() {
   };
 
   const displayError = error || oauthError;
+
+  if (isSessionChecking) {
+    return (
+      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full border-2 border-[#7C5CFF] border-t-transparent animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0B0F1A] flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans selection:bg-[#7C5CFF]/30 relative overflow-hidden">

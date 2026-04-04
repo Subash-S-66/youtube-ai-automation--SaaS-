@@ -29,6 +29,7 @@ function RegisterContent() {
   const [otpSuccess, setOtpSuccess] = useState('');
   const [isOtpLoading, setIsOtpLoading] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState('');
+  const [isSessionChecking, setIsSessionChecking] = useState(true);
   const router = useRouter();
 
   const searchParams = useSearchParams();
@@ -37,6 +38,31 @@ function RegisterContent() {
   const getEmailKey = (value: string) => value.trim().toLowerCase();
   const getCooldownKey = (value: string) => `resendCooldown:${getEmailKey(value)}`;
   const getAttemptsKey = (value: string) => `resendAttempts:${getEmailKey(value)}`;
+
+  useEffect(() => {
+    let active = true;
+
+    const checkExistingSession = async () => {
+      try {
+        const data = await authService.getMe();
+        if (active && data?.success) {
+          router.replace('/dashboard');
+          return;
+        }
+      } catch {
+        // No active session; keep user on register page.
+      } finally {
+        if (active) {
+          setIsSessionChecking(false);
+        }
+      }
+    };
+
+    checkExistingSession();
+    return () => {
+      active = false;
+    };
+  }, [router]);
 
   useEffect(() => {
     const targetEmail = verificationEmail || email;
@@ -168,8 +194,15 @@ function RegisterContent() {
 
   const handleGoogleLogin = () => {
     if (typeof window === 'undefined') return;
-    const state = refCode ? `?state=ref:${encodeURIComponent(refCode)}` : '';
-    window.location.href = `${buildApiUrl('/api/auth/google')}${state}`;
+    const requestNonce = Date.now().toString(36);
+    const params = new URLSearchParams({
+      r: requestNonce,
+      select_account: '1',
+    });
+    if (refCode) {
+      params.set('state', `ref:${refCode}`);
+    }
+    window.location.href = `${buildApiUrl('/api/auth/google')}?${params.toString()}`;
   };
 
   const handleResendEmail = async () => {
@@ -220,6 +253,14 @@ function RegisterContent() {
       setIsOtpLoading(false);
     }
   };
+
+  if (isSessionChecking) {
+    return (
+      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full border-2 border-[#7C5CFF] border-t-transparent animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0B0F1A] flex flex-col justify-center py-12 sm:px-6 lg:px-8 font-sans selection:bg-[#7C5CFF]/30 relative overflow-hidden">

@@ -30,11 +30,14 @@ export const viewport = {
 
 export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
-  title: "ClipForge - AI Video Automation Platform",
+  title: "ClipForge - AI Video Automation Platform | Create Viral Shorts",
   description:
-    "ClipForge helps you turn ideas into viral content using AI. Automate video creation, editing, and publishing.",
+    "ClipForge is an AI video automation platform that turns long videos into viral shorts for TikTok, Instagram & YouTube.",
   keywords: [
     "ClipForge",
+    "ClipForge App",
+    "ClipForge AI",
+    "ClipForge video tool",
     "AI video generator",
     "automation",
     "content creation",
@@ -48,22 +51,23 @@ export const metadata: Metadata = {
     type: "website",
     url: "/",
     siteName: "ClipForge",
-    title: "ClipForge",
-    description: "Turn ideas into viral content with AI",
+    title: "ClipForge - AI That Turns Videos into Viral Shorts (Free, Fast, No Editing Needed)",
+    description:
+      "ClipForge is an AI video automation platform that turns long videos into viral shorts for TikTok, Instagram & YouTube.",
     images: [
       {
-        url: "/logo.png",
-        width: 1200,
-        height: 630,
+        url: "/brand-logo.png",
+        width: 1024,
+        height: 1024,
         alt: "ClipForge",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "ClipForge",
-    description: "Turn ideas into viral content with AI",
-    images: ["/logo.png"],
+    title: "ClipForge - AI That Turns Videos into Viral Shorts (Free, Fast, No Editing Needed)",
+    description: "ClipForge app is free to start, fast to use, and needs no manual editing.",
+    images: ["/brand-logo.png"],
   },
   robots: {
     index: true,
@@ -79,12 +83,13 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   icons: {
     icon: [
+      { url: "/favicon.ico", sizes: "any", type: "image/x-icon" },
       { url: "/icons/favicon-64x64.png", sizes: "64x64", type: "image/png" },
       { url: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
       { url: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
     ],
     apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
-    shortcut: ["/icons/favicon-64x64.png"],
+    shortcut: ["/favicon.ico"],
   },
   appleWebApp: {
     capable: true,
@@ -108,9 +113,10 @@ export default function RootLayout({
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: "ClipForge",
+    alternateName: ["ClipForge App"],
     url: siteUrl,
     description:
-      "ClipForge helps you turn ideas into viral content using AI. Automate video creation, editing, and publishing.",
+      "ClipForge is an AI video automation platform that turns long videos into viral shorts for TikTok, Instagram & YouTube.",
     potentialAction: {
       "@type": "SearchAction",
       target: `${siteUrl}/?q={search_term_string}`,
