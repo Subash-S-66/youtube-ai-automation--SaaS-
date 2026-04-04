@@ -16,6 +16,7 @@ const updateSettingsSchema = z.object({
     templateFont: z.string().optional(),
     templateColor: z.string().optional(),
     lastInputMode: z.enum(['topic', 'prompt']).optional(),
+    lastSelectedChannelId: z.string().optional(),
     lastPrompt: z.string().optional(),
     lastSelectedTopic: z.string().optional(),
     lastCustomTopic: z.string().optional(),
@@ -67,7 +68,7 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
     throw new AppError(errorMessages, 400);
   }
 
-  const { emailNotificationsEnabled, telegramNotificationsEnabled, pushNotificationsEnabled, templateFont, templateColor, lastInputMode, lastPrompt, lastSelectedTopic, lastCustomTopic, lastChannelInputs } = validation.data.body;
+  const { emailNotificationsEnabled, telegramNotificationsEnabled, pushNotificationsEnabled, templateFont, templateColor, lastInputMode, lastSelectedChannelId, lastPrompt, lastSelectedTopic, lastCustomTopic, lastChannelInputs } = validation.data.body;
 
   const updateFields: any = {};
   if (emailNotificationsEnabled !== undefined) updateFields.emailNotificationsEnabled = emailNotificationsEnabled;
@@ -76,6 +77,7 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
   if (templateFont !== undefined) updateFields.templateFont = templateFont;
   if (templateColor !== undefined) updateFields.templateColor = templateColor;
   if (lastInputMode !== undefined) updateFields.lastInputMode = lastInputMode;
+  if (lastSelectedChannelId !== undefined) updateFields.lastSelectedChannelId = lastSelectedChannelId;
   if (lastPrompt !== undefined) updateFields.lastPrompt = lastPrompt;
   if (lastSelectedTopic !== undefined) updateFields.lastSelectedTopic = lastSelectedTopic;
   if (lastCustomTopic !== undefined) updateFields.lastCustomTopic = lastCustomTopic;

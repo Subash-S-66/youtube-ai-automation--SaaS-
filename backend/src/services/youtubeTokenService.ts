@@ -124,7 +124,7 @@ export const getValidYouTubeToken = async (userId: string, channelId: string): P
       const message = error instanceof Error ? error.message : String(error || '');
       if (message.includes('Missing YouTube OAuth environment variables')) {
         throw new Error(
-          'YouTube OAuth is not configured on this worker. Set YOUTUBE_CLIENT_ID/YOUTUBE_CLIENT_SECRET/YOUTUBE_REDIRECT_URI (or GOOGLE_* equivalents).'
+          'YouTube OAuth is not configured on this worker. Set YOUTUBE_CLIENT_ID/YOUTUBE_CLIENT_SECRET and either YOUTUBE_REDIRECT_URI or BACKEND_URL.'
         );
       }
 

@@ -196,6 +196,7 @@ JobSchema.index({ userId: 1, _id: -1 }); // Index for cursor pagination
 
 JobSchema.index({ userId: 1, createdAt: -1 });
 JobSchema.index({ userId: 1, status: 1, createdAt: -1 }); // FIXED: Optimize user status history queries sorted by newest jobs.
+JobSchema.index({ userId: 1, channelId: 1, holdConsumed: 1, status: 1, completedAt: -1 });
 JobSchema.index({ status: 1, holdConsumed: 1, holdReleased: 1 });
 
 const Job = mongoose.model<IJob>('Job', JobSchema);

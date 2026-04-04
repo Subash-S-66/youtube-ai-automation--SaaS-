@@ -44,6 +44,7 @@ export interface IUser extends Document {
   templateFont?: string;
   templateColor?: string;
   lastInputMode?: 'topic' | 'prompt';
+  lastSelectedChannelId?: string;
   lastPrompt?: string;
   lastSelectedTopic?: string;
   lastCustomTopic?: string;
@@ -223,6 +224,10 @@ const UserSchema = new Schema<IUser>(
     lastInputMode: {
       type: String,
       enum: ['topic', 'prompt'],
+    },
+    lastSelectedChannelId: {
+      type: String,
+      trim: true,
     },
     lastPrompt: {
       type: String,

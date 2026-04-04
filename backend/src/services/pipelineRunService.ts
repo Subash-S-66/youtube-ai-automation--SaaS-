@@ -9,7 +9,6 @@ import { pipelineQueue } from '../queues/pipelineQueue';
 import { getConsumedUploadsLast24hForChannel, getUploadLimits, releaseReservedCredits, reserveCredits } from './uploadLimitService';
 import { buildStandardPrompt } from './promptBuilderService';
 import { generateSubTopics } from './subTopicService';
-import { ensureValidYouTubeToken } from './youtubeTokenService';
 import { decrementChannelVideosOnHold } from './channelHoldService';
 import { getPipelineAttemptsForPlan } from './pipelineRetryPolicyService';
 
@@ -74,6 +73,7 @@ const parseTimeoutMs = (raw: unknown, fallback: number): number => {
 };
 
 const SUBTOPIC_GEN_TIMEOUT_MS = parseTimeoutMs(process.env.SUBTOPIC_GEN_TIMEOUT_MS, 7000);
+const QUEUE_DISPATCH_TIMEOUT_MS = parseTimeoutMs(process.env.QUEUE_DISPATCH_TIMEOUT_MS, 5000);
 
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
   let timer: NodeJS.Timeout | undefined;
@@ -389,12 +389,11 @@ export const enqueuePipelineJob = async ({
 
   const uploadDisabled = (finalSettings as any).upload === false;
   if (!uploadDisabled) {
-    try {
-      await ensureValidYouTubeToken(selectedChannelId, userId);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error || '');
+    const hasAccessToken = typeof channel.tokens?.access_token === 'string' && channel.tokens.access_token.trim().length > 0;
+    const hasRefreshToken = typeof channel.tokens?.refresh_token === 'string' && channel.tokens.refresh_token.trim().length > 0;
+    if (!hasAccessToken && !hasRefreshToken) {
       throw new AppError(
-        `youtube_token_expired: YouTube token for channel "${channel.channelName}" is invalid. Please reconnect this channel. ${reason}`,
+        `youtube_token_expired: YouTube token for channel "${channel.channelName}" is invalid. Please reconnect this channel.`,
         400
       );
     }
@@ -452,7 +451,7 @@ export const enqueuePipelineJob = async ({
   if (uploadsLast24h + requestedVideoCount > 10 && !acceptedYouTubeLimitWarning) {
     return {
       warningOnly: true,
-      warning: 'YouTube daily upload limit reached. If you try to upload now it may not be uploaded and it will still consume your upload. Continue?',
+      warning: 'YouTube daily upload limit reached for this channel (10 videos / 24 hours). If you continue now, upload credits may still be consumed even when YouTube rejects the upload. Continue?',
     };
   }
 
@@ -561,25 +560,29 @@ export const enqueuePipelineJob = async ({
   const queueJobId = `${userId}-${promptId}-${Date.now()}`;
 
   try {
-    await pipelineQueue.add(
-      'runPipeline',
-      {
-        userId,
-        promptId,
-        jobId: job._id.toString(),
-        settings: persistedPipelineConfig, // FIXED: Forward settings with explicit selected channel id for worker parity.
-      },
-      {
-        priority: jobPriority,
-        jobId: queueJobId,
-        attempts: jobAttempts,
-        timeout: jobTimeoutMs,
-        backoff: {
-          type: 'exponential',
-          delay: 5000,
+    await withTimeout(
+      pipelineQueue.add(
+        'runPipeline',
+        {
+          userId,
+          promptId,
+          jobId: job._id.toString(),
+          settings: persistedPipelineConfig, // FIXED: Forward settings with explicit selected channel id for worker parity.
         },
-        removeOnFail: true,
-      }
+        {
+          priority: jobPriority,
+          jobId: queueJobId,
+          attempts: jobAttempts,
+          timeout: jobTimeoutMs,
+          backoff: {
+            type: 'exponential',
+            delay: 5000,
+          },
+          removeOnFail: true,
+        }
+      ),
+      QUEUE_DISPATCH_TIMEOUT_MS,
+      'Queue dispatch'
     );
   } catch (queueError) {
     const rollbackCount = requestedVideoCount;
@@ -631,7 +634,7 @@ export const enqueuePipelineJob = async ({
   };
 
   if (uploadsLast24h + requestedVideoCount > 10) {
-    result.warning = 'YouTube daily upload limit reached. If you try to upload now it may not be uploaded and it will still consume your upload. Continue?';
+    result.warning = 'YouTube daily upload limit reached for this channel (10 videos / 24 hours). If you continue now, upload credits may still be consumed even when YouTube rejects the upload. Continue?';
   }
 
   return result;

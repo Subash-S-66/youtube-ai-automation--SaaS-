@@ -57,6 +57,33 @@ const isYouTubeLimitFailure = (message: string): boolean => {
   );
 };
 
+const clampSuccessfulUploads = (requestedCount: number, raw: unknown): number | undefined => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+  return Math.max(0, Math.min(requestedCount, Math.floor(parsed)));
+};
+
+const resolveSettlementCounts = (params: {
+  requestedCount: number;
+  successfulUploads?: number;
+  uploadFailure: boolean;
+  acceptedYouTubeLimitWarning: boolean;
+}): { consumeCount: number; releaseCount: number } => {
+  const requestedCount = Math.max(1, Math.floor(Number(params.requestedCount || 1)));
+  const successfulUploads = Math.max(0, Math.min(requestedCount, Math.floor(Number(params.successfulUploads || 0))));
+
+  const consumeCount = params.uploadFailure
+    ? (params.acceptedYouTubeLimitWarning ? requestedCount : successfulUploads)
+    : successfulUploads;
+
+  return {
+    consumeCount,
+    releaseCount: Math.max(0, requestedCount - consumeCount),
+  };
+};
+
 // @desc    Receive job status updates from Python pipeline
 // @route   POST /api/webhook/job-status
 // @access  Private (verified via x-webhook-secret)
@@ -83,8 +110,23 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
   // Idempotency check for webhook processing using Redis
   const { connection } = await import('../config/redis.js');
   if (connection) {
-    // Generate a unique idempotency key based on job ID and the status payload (so we don't block legitimate status updates like pending -> processing -> success)
-    const idempotencyKey = `webhook:idempotency:${jobId}:${status}`;
+    const idempotencyHash = crypto
+      .createHash('sha1')
+      .update(
+        JSON.stringify({
+          status: String(status || '').toLowerCase(),
+          videoUrl: String(videoUrl || '').trim(),
+          youtubeVideoId: String(youtubeVideoId || '').trim(),
+          errorMessage: String(errorMessage || '').trim(),
+          errorStage: String(errorStage || '').trim(),
+          processedVideos: Number(processedVideos),
+          logsTail: typeof logs === 'string' ? logs.slice(-120) : '',
+        })
+      )
+      .digest('hex')
+      .slice(0, 32);
+    // Include payload fingerprint so later updates with same status are not dropped.
+    const idempotencyKey = `webhook:idempotency:${jobId}:${idempotencyHash}`;
     const setNxResult = await connection.set(idempotencyKey, 'processing', 'EX', 60 * 60, 'NX'); // 1 hour TTL
     if (!setNxResult) {
       console.log(`[Webhook] Duplicate status update received for job ${jobId} (status: ${status}). Ignoring.`);
@@ -108,6 +150,8 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     res.status(403).json({ error: 'Job does not belong to this user' }); // FIXED: Enforce strict job-to-user ownership check.
     return;
   }
+
+  const acceptedYouTubeLimitWarning = Boolean((job as any)?.acceptedYouTubeLimitWarning);
 
   // Append new logs if provided
   if (logs) {
@@ -139,6 +183,7 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
     ? processedVideos
     : (typeof job.processedVideos === 'number' && job.processedVideos >= 0 ? job.processedVideos : 0);
   const processedCount = Math.min(requestedCount, Math.max(0, Math.floor(processedCountRaw)));
+  const successfulUploadsHint = clampSuccessfulUploads(requestedCount, processedCountRaw);
 
   const normalizedStatus = status.toLowerCase();
   if (normalizedStatus === 'success' || normalizedStatus === 'completed') {
@@ -156,43 +201,36 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        resolvedYoutubeVideoId ||
        (resolvedVideoUrl && /^https?:\/\//i.test(resolvedVideoUrl))
      );
-     const consumeCount = processedCount > 0 ? processedCount : requestedCount;
-     const releaseCount = Math.max(0, requestedCount - consumeCount);
+     const successSettlement = resolveSettlementCounts({
+       requestedCount,
+       successfulUploads: typeof successfulUploadsHint === 'number' ? successfulUploadsHint : requestedCount,
+       uploadFailure: false,
+       acceptedYouTubeLimitWarning,
+     });
 
      if (!uploadConfirmed) {
-       const failedConsumeCount = requestedCount;
-       const failedReleaseCount = 0;
-       const updatedJob = await JobModel.findOneAndUpdate(
+       await JobModel.updateOne(
          { _id: jobId, status: { $in: ['processing', 'pending'] }, holdConsumed: false, holdReleased: false },
          {
            $set: {
-             status: 'failed',
-             completedAt: new Date(),
-              holdConsumed: failedConsumeCount > 0,
-              holdReleased: failedReleaseCount > 0,
-             error: 'Upload failed or was skipped.',
-             errorMessage: 'Upload failed or was skipped.',
-             errorStage: 'UPLOAD' as any,
-              processedVideos: failedConsumeCount,
+             status: 'processing',
+             progress: {
+               progress: 95,
+               stage: 'upload_confirmation_pending',
+               message: 'Waiting for final upload confirmation',
+               timestamp: new Date().toISOString(),
+             },
              result: {
-               success: false,
+               ...(job.result || {}),
+               success: true,
                videoUrl: resolvedVideoUrl || '',
                youtubeVideoId: resolvedYoutubeVideoId || '',
-             }
-           }
-         },
-         { new: true }
-       );
-       if (updatedJob) {
-          if (failedConsumeCount > 0) {
-            await consumeReservedCredits(job.userId.toString(), failedConsumeCount).catch(console.error);
-          }
-          if (failedReleaseCount > 0) {
-            await releaseReservedCredits(job.userId.toString(), failedReleaseCount).catch(console.error);
+             },
+           },
          }
-       }
+       );
        await job.save();
-       res.status(200).json({ success: true });
+       res.status(200).json({ success: true, deferred: true });
        return;
      }
 
@@ -202,11 +240,11 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
          $set: {
            status: 'success',
            completedAt: new Date(),
-            holdConsumed: consumeCount > 0,
-            holdReleased: releaseCount > 0,
+            holdConsumed: successSettlement.consumeCount > 0,
+            holdReleased: successSettlement.releaseCount > 0,
            errorMessage: '',
            errorStage: undefined as any,
-            processedVideos: consumeCount,
+            processedVideos: successSettlement.consumeCount,
            result: {
              success: true,
              videoUrl: job.videoUrl || '',
@@ -217,11 +255,11 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       if (consumeCount > 0) {
-         await consumeReservedCredits(job.userId.toString(), consumeCount).catch(console.error);
+       if (successSettlement.consumeCount > 0) {
+         await consumeReservedCredits(job.userId.toString(), successSettlement.consumeCount).catch(console.error);
        }
-       if (releaseCount > 0) {
-         await releaseReservedCredits(job.userId.toString(), releaseCount).catch(console.error);
+       if (successSettlement.releaseCount > 0) {
+         await releaseReservedCredits(job.userId.toString(), successSettlement.releaseCount).catch(console.error);
        }
        await appendRecentTopic(updatedJob.userId.toString(), String((updatedJob as any).chosenSubTopic || '')).catch(console.error); // FIXED: Update user recent topics after webhook-confirmed success.
      } else {
@@ -231,8 +269,12 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
      const resolvedError = (typeof errorMessage === 'string' && errorMessage.trim()) ? errorMessage.trim() : (logs || 'Failed via webhook');
      const parsedErrorStage = (typeof errorStage === 'string' && ['TOKEN', 'CONTENT_GENERATION', 'RENDER', 'UPLOAD'].includes(errorStage)) ? errorStage as any : undefined;
      const isUploadFailure = parsedErrorStage === 'UPLOAD' || isYouTubeLimitFailure(resolvedError);
-     const consumeCount = isUploadFailure ? requestedCount : processedCount;
-     const releaseCount = Math.max(0, requestedCount - consumeCount);
+     const failureSettlement = resolveSettlementCounts({
+       requestedCount,
+       ...(typeof successfulUploadsHint === 'number' ? { successfulUploads: successfulUploadsHint } : {}),
+       uploadFailure: isUploadFailure,
+       acceptedYouTubeLimitWarning,
+     });
 
      const updatedJob = await JobModel.findOneAndUpdate(
        { _id: jobId, status: { $in: ['processing', 'pending'] }, holdConsumed: false, holdReleased: false },
@@ -240,9 +282,9 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
          $set: {
            status: 'failed',
            completedAt: new Date(),
-           holdConsumed: consumeCount > 0,
-           holdReleased: releaseCount > 0,
-           processedVideos: consumeCount,
+           holdConsumed: failureSettlement.consumeCount > 0,
+           holdReleased: failureSettlement.releaseCount > 0,
+           processedVideos: failureSettlement.consumeCount,
            error: resolvedError,
            errorMessage: resolvedError,
            errorStage: parsedErrorStage,
@@ -256,19 +298,23 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       if (consumeCount > 0) {
-         await consumeReservedCredits(job.userId.toString(), consumeCount).catch(console.error);
+       if (failureSettlement.consumeCount > 0) {
+         await consumeReservedCredits(job.userId.toString(), failureSettlement.consumeCount).catch(console.error);
        }
-       if (releaseCount > 0) {
-         await releaseReservedCredits(job.userId.toString(), releaseCount).catch(console.error);
+       if (failureSettlement.releaseCount > 0) {
+         await releaseReservedCredits(job.userId.toString(), failureSettlement.releaseCount).catch(console.error);
        }
      } else {
        console.log(`[Webhook] Job ${jobId} already processed (failed). Skipping duplicate update.`);
      }
   } else if (normalizedStatus === 'youtube_rejected') {
      const resolvedError = (typeof errorMessage === 'string' && errorMessage.trim()) ? errorMessage.trim() : 'YouTube limits rejected the upload';
-      const consumeCount = requestedCount;
-     const releaseCount = Math.max(0, requestedCount - consumeCount);
+      const rejectedSettlement = resolveSettlementCounts({
+        requestedCount,
+        ...(typeof successfulUploadsHint === 'number' ? { successfulUploads: successfulUploadsHint } : {}),
+        uploadFailure: true,
+        acceptedYouTubeLimitWarning,
+      });
 
      const updatedJob = await JobModel.findOneAndUpdate(
        { _id: jobId, status: { $in: ['processing', 'pending'] }, holdConsumed: false, holdReleased: false },
@@ -276,9 +322,9 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
          $set: {
            status: 'failed',
            completedAt: new Date(),
-           holdConsumed: consumeCount > 0,
-           holdReleased: releaseCount > 0,
-           processedVideos: consumeCount,
+           holdConsumed: rejectedSettlement.consumeCount > 0,
+           holdReleased: rejectedSettlement.releaseCount > 0,
+           processedVideos: rejectedSettlement.consumeCount,
            error: resolvedError,
            errorMessage: resolvedError,
            errorStage: 'UPLOAD' as any,
@@ -292,11 +338,11 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       if (consumeCount > 0) {
-         await consumeReservedCredits(job.userId.toString(), consumeCount).catch(console.error);
+       if (rejectedSettlement.consumeCount > 0) {
+         await consumeReservedCredits(job.userId.toString(), rejectedSettlement.consumeCount).catch(console.error);
        }
-       if (releaseCount > 0) {
-         await releaseReservedCredits(job.userId.toString(), releaseCount).catch(console.error);
+       if (rejectedSettlement.releaseCount > 0) {
+         await releaseReservedCredits(job.userId.toString(), rejectedSettlement.releaseCount).catch(console.error);
        }
      } else {
        console.log(`[Webhook] Job ${jobId} already processed (youtube_rejected). Skipping duplicate update.`);
@@ -400,6 +446,8 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
     return;
   }
 
+  const acceptedYouTubeLimitWarning = Boolean((job as any)?.acceptedYouTubeLimitWarning);
+
   const uploadRequested = typeof resultPayload?.uploadRequested === 'boolean'
     ? resultPayload.uploadRequested
     : (job.pipelineConfig?.upload !== false);
@@ -448,22 +496,19 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
     isYouTubeLimitFailure(rawFailureMessage)
   );
 
-  const consumeCount = (() => {
-    if (nextStatus === 'success') {
-      if (typeof successfulUploadsHint === 'number') {
-        return successfulUploadsHint;
-      }
-      return requestedCount;
-    }
-    if (uploadFailure) {
-      return requestedCount;
-    }
-    if (typeof successfulUploadsHint === 'number') {
-      return successfulUploadsHint;
-    }
-    return 0;
-  })();
-  const releaseCount = Math.max(0, requestedCount - consumeCount);
+  const settlement = nextStatus === 'success'
+    ? resolveSettlementCounts({
+        requestedCount,
+        successfulUploads: typeof successfulUploadsHint === 'number' ? successfulUploadsHint : requestedCount,
+        uploadFailure: false,
+        acceptedYouTubeLimitWarning,
+      })
+    : resolveSettlementCounts({
+        requestedCount,
+        ...(typeof successfulUploadsHint === 'number' ? { successfulUploads: successfulUploadsHint } : {}),
+        uploadFailure,
+        acceptedYouTubeLimitWarning,
+      });
 
   const failureMessage = nextStatus === 'failed'
     ? (rawFailureMessage ||
@@ -515,9 +560,9 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
         ...updatePayload,
         status: nextStatus,
         completedAt: new Date(),
-        holdConsumed: consumeCount > 0,
-        holdReleased: releaseCount > 0,
-        processedVideos: consumeCount,
+        holdConsumed: settlement.consumeCount > 0,
+        holdReleased: settlement.releaseCount > 0,
+        processedVideos: settlement.consumeCount,
         error: nextStatus === 'failed' ? failureMessage : undefined,
         errorMessage: nextStatus === 'failed' ? failureMessage : '',
         errorStage: nextStatus === 'failed' ? failureStage : undefined,
@@ -528,11 +573,11 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
 
   if (finalized) {
     const { consumeReservedCredits, releaseReservedCredits } = await import('../services/uploadLimitService.js');
-    if (consumeCount > 0) {
-      await consumeReservedCredits(job.userId.toString(), consumeCount).catch(console.error);
+    if (settlement.consumeCount > 0) {
+      await consumeReservedCredits(job.userId.toString(), settlement.consumeCount).catch(console.error);
     }
-    if (releaseCount > 0) {
-      await releaseReservedCredits(job.userId.toString(), releaseCount).catch(console.error);
+    if (settlement.releaseCount > 0) {
+      await releaseReservedCredits(job.userId.toString(), settlement.releaseCount).catch(console.error);
     }
     if (nextStatus === 'success') {
       await appendRecentTopic(finalized.userId.toString(), String((finalized as any).chosenSubTopic || '')).catch(console.error);

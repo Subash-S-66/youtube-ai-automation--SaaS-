@@ -100,6 +100,7 @@ interface DashboardUser {
     plan?: string;
     templateFont?: string;
     templateColor?: string;
+    lastSelectedChannelId?: string;
     lastChannelInputs?: Record<string, ChannelInputCacheEntry>;
     lastInputMode?: InputMode;
     lastPrompt?: string;
@@ -437,7 +438,7 @@ function Dashboard() {
     setChannelInputCache(nextCache);
     setSelectedChannelId(nextChannelId);
     applyChannelCache(nextCache[nextChannelId]);
-    userService.updateSettings({ lastChannelInputs: nextCache }).catch(() => {});
+    userService.updateSettings({ lastChannelInputs: nextCache, lastSelectedChannelId: nextChannelId }).catch(() => {});
   }, [selectedChannelId, channelInputCache, getCurrentChannelCacheEntry, applyChannelCache]);
 
   useEffect(() => {
@@ -496,10 +497,13 @@ function Dashboard() {
             setCustomTopic(userData.data.user.lastCustomTopic);
           }
 
-          const initialValidChannel = Array.isArray(userData.data?.youtubeChannels)
-            ? userData.data.youtubeChannels.find((channel) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
-            : null;
-          const initialChannelId = initialValidChannel?.channelId || '';
+          const validChannels = Array.isArray(userData.data?.youtubeChannels)
+            ? userData.data.youtubeChannels.filter((channel) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
+            : [];
+          const preferredChannelId = String(userData.data?.user?.lastSelectedChannelId || '').trim();
+          const initialChannelId = (preferredChannelId && validChannels.some((channel) => channel?.channelId === preferredChannelId))
+            ? preferredChannelId
+            : (validChannels[0]?.channelId || '');
           if (initialChannelId) {
             setSelectedChannelId(initialChannelId);
             const cached = userData.data?.user?.lastChannelInputs?.[initialChannelId];
@@ -965,6 +969,7 @@ function Dashboard() {
             : channelInputCache;
           await userService.updateSettings({
             lastInputMode: inputMode,
+            lastSelectedChannelId: selectedChannelId,
             lastPrompt: prompt,
             lastSelectedTopic: selectedTopic,
             lastCustomTopic: customTopic,
@@ -1025,9 +1030,10 @@ function Dashboard() {
       const apiError = err as ApiErrorShape;
       const warningMessage = apiError.response?.data?.warning;
       if (warningMessage) {
+        const isYouTubeLimitWarning = /youtube\s+daily\s+upload\s+limit/i.test(warningMessage);
         setModalConfig({
           isOpen: true,
-          title: 'Limit Warning',
+          title: isYouTubeLimitWarning ? 'YouTube Daily Upload Limit Reached' : 'Limit Warning',
           description: warningMessage,
           type: 'warning',
           confirmText: 'Proceed Anyway',
@@ -1196,11 +1202,12 @@ function Dashboard() {
       const apiError = err as ApiErrorShape;
       const warningMessage = apiError.response?.data?.warning;
       if (warningMessage) {
+        const isYouTubeLimitWarning = /youtube\s+daily\s+upload\s+limit/i.test(warningMessage);
          setPendingPromptId(pId);
          setPendingPromptContent(newPromptContent || null);
          setModalConfig({
             isOpen: true,
-            title: 'Limit Warning',
+          title: isYouTubeLimitWarning ? 'YouTube Daily Upload Limit Reached' : 'Limit Warning',
             description: warningMessage,
             type: 'warning',
             confirmText: 'Proceed Anyway',

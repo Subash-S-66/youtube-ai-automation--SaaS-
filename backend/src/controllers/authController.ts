@@ -393,6 +393,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
           templateFont: user.templateFont,
           templateColor: user.templateColor,
           lastInputMode: user.lastInputMode,
+          lastSelectedChannelId: (user as any).lastSelectedChannelId,
           lastPrompt: user.lastPrompt,
           lastSelectedTopic: user.lastSelectedTopic,
           lastCustomTopic: user.lastCustomTopic,

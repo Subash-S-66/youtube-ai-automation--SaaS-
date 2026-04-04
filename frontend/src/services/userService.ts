@@ -8,6 +8,7 @@ export const userService = {
     templateFont?: string;
     templateColor?: string;
     lastInputMode?: 'topic' | 'prompt';
+    lastSelectedChannelId?: string;
     lastPrompt?: string;
     lastSelectedTopic?: string;
     lastCustomTopic?: string;

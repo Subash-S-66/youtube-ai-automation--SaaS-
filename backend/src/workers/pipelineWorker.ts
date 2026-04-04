@@ -43,11 +43,11 @@ import { buildRunnerSequence, pickRunnerForAttempt, sanitizePipelineRunnerFallba
 const hasYoutubeOAuthConfig = Boolean(
   (process.env.YOUTUBE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID) &&
   (process.env.YOUTUBE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET) &&
-  (process.env.YOUTUBE_REDIRECT_URI || process.env.GOOGLE_REDIRECT_URI)
+  (process.env.YOUTUBE_REDIRECT_URI || process.env.BACKEND_URL)
 );
 if (!hasYoutubeOAuthConfig) {
   console.warn(
-    '[PipelineWorker] Missing YouTube OAuth env vars. Upload jobs will fail at TOKEN stage. Configure YOUTUBE_* or GOOGLE_* vars.'
+    '[PipelineWorker] Missing YouTube OAuth env vars. Upload jobs will fail at TOKEN stage. Configure YOUTUBE_CLIENT_ID/YOUTUBE_CLIENT_SECRET and either YOUTUBE_REDIRECT_URI or BACKEND_URL.'
   );
 }
 
@@ -424,6 +424,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     }
     const lockedJob = await JobModel.findById(jobId);
     if (!lockedJob) return;
+    const acceptedYouTubeLimitWarning = Boolean((lockedJob as any)?.acceptedYouTubeLimitWarning);
 
     if (lockedJob.pipelineConfig) {
       const persistedAudit = normalizePipelineSettings(lockedJob.pipelineConfig as Record<string, any>);
@@ -1032,8 +1033,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           outputYoutubeVideoId ||
           (outputVideoUrl && /^https?:\/\//i.test(outputVideoUrl))
         );
-        const consumeCountOnFailedUpload = requestedUploads;
-        const releaseCountOnFailedUpload = 0;
+        const consumeCountOnFailedUpload = acceptedYouTubeLimitWarning ? requestedUploads : successfulUploads;
+        const releaseCountOnFailedUpload = Math.max(0, requestedUploads - consumeCountOnFailedUpload);
         const consumeCountOnSuccess = successfulUploads > 0 ? successfulUploads : requestedUploads;
         const releaseCountOnSuccess = Math.max(0, requestedUploads - consumeCountOnSuccess);
 
@@ -1137,7 +1138,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          const pollIntervalMs = 10000;
          const pollStart = Date.now();
          const jobTimeoutMs = 15 * 60 * 1000; // 15 mins
-         let finalStatusMarker = 'FAILED';
+         let finalStatusMarker = 'PENDING_WEBHOOK';
 
          // Get ARM token for polling
          const armTokenUrl = `https://login.microsoftonline.com/${process.env.AZURE_TENANT_ID}/oauth2/v2.0/token`;
@@ -1221,12 +1222,12 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
            if (Date.now() - pollStart >= jobTimeoutMs) {
              await appendLogSafe(jobId, `\n[Azure] Job timed out after ${jobTimeoutMs}ms`);
-             finalStatusMarker = 'FAILED';
+             finalStatusMarker = 'PENDING_WEBHOOK';
            }
          } else {
            // No ARM token available — fall back to webhook-driven status
            await appendLogSafe(jobId, `\n[Azure] No ARM token — relying on webhook for status updates.`);
-           finalStatusMarker = 'FAILED'; // Default pessimistic until webhook updates
+           finalStatusMarker = 'PENDING_WEBHOOK';
          }
 
          // Fetch the latest logs to evaluate specific backend markers
@@ -1250,6 +1251,25 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          // The webhook handles consumption now, but as a fallback, we check here too.
          // Let's rely entirely on the Webhook to mark holdReleased/holdConsumed for SUCCESS/FAILED.
          // However, if the job timed out and webhook never fired, we handle it here.
+
+         if (finalStatusMarker === 'PENDING_WEBHOOK') {
+           await JobModel.updateOne(
+             { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
+             {
+               $set: {
+                 status: 'processing',
+                 progress: {
+                   progress: 95,
+                   stage: 'upload_confirmation_pending',
+                   message: 'Waiting for final upload confirmation',
+                   timestamp: new Date().toISOString(),
+                 },
+               },
+             }
+           );
+           await appendLogSafe(jobId, '[Azure] Awaiting webhook confirmation. Hold settlement deferred.\n', 'processing');
+           return;
+         }
 
          const currentJobState = await JobModel.findById(jobId);
          if (!currentJobState || currentJobState.holdConsumed || currentJobState.holdReleased) {
@@ -1301,15 +1321,17 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
             }
          } else if (finalStatusMarker === 'YOUTUBE_REJECTED') {
             const rejectedCount = getRequestedUploadCount(settings.videoCount);
+            const consumeCount = acceptedYouTubeLimitWarning ? rejectedCount : 0;
+            const releaseCount = Math.max(0, rejectedCount - consumeCount);
             const updatedJob = await JobModel.findOneAndUpdate(
               { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
               {
                 $set: {
                   status: 'failed',
                   completedAt: new Date(),
-                  holdConsumed: true,
-                  holdReleased: false,
-                  processedVideos: rejectedCount,
+                  holdConsumed: consumeCount > 0,
+                  holdReleased: releaseCount > 0,
+                  processedVideos: consumeCount,
                   error: 'YouTube Quota Exceeded',
                   errorMessage: 'YouTube Quota Exceeded',
                   errorStage: 'UPLOAD',
@@ -1318,7 +1340,12 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
               { returnDocument: 'after' }
             );
             if (updatedJob) {
-               await consumeReservedCredits(userId, rejectedCount).catch(console.error);
+               if (consumeCount > 0) {
+                 await consumeReservedCredits(userId, consumeCount).catch(console.error);
+               }
+               if (releaseCount > 0) {
+                 await releaseReservedCredits(userId, releaseCount).catch(console.error);
+               }
             }
 
             if (user) {
@@ -1369,7 +1396,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       const errorMsg = `\nWorker Error: ${error.message}${errorDetailParts.length ? `\n${errorDetailParts.join('\n')}` : ''}`;
       const normalizedErrorStage = (error.stage === 'TOKEN' || error.stage === 'UPLOAD') ? error.stage : 'RENDER';
       const requestedUploads = getRequestedUploadCount(settings.videoCount);
-      const consumeOnFailure = normalizedErrorStage === 'UPLOAD';
+      const consumeOnFailure = normalizedErrorStage === 'UPLOAD' && acceptedYouTubeLimitWarning;
       const failureProcessedVideos = consumeOnFailure ? requestedUploads : 0;
       const maxAttempts = Math.max(1, Number((job.opts as any)?.attempts || 1));
       const currentAttempt = Math.max(1, Number(job.attemptsMade || 0) + 1);

@@ -53,21 +53,52 @@ export const getConsumedUploadsLast24hForChannel = async (
   const lookbackHours = Number.isFinite(Number(hours)) ? Math.max(1, Math.floor(Number(hours))) : 24;
   const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
 
-  const recentSettledJobs = await Job.find({
-    userId,
-    channelId: normalizedChannelId,
-    status: { $in: ['success', 'failed'] },
-    holdConsumed: true,
-    completedAt: { $gte: since },
-  }).select('holdConsumed videoCount processedVideos');
+  const aggregation = await Job.aggregate<{ totalConsumed: number }>([
+    {
+      $match: {
+        userId: userId,
+        channelId: normalizedChannelId,
+        status: { $in: ['success', 'failed'] },
+        holdConsumed: true,
+        completedAt: { $gte: since },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        requestedCount: {
+          $max: [1, { $floor: { $ifNull: ['$videoCount', 1] } }],
+        },
+        processedRaw: { $ifNull: ['$processedVideos', 0] },
+      },
+    },
+    {
+      $project: {
+        resolvedConsumed: {
+          $cond: [
+            { $gt: ['$processedRaw', 0] },
+            {
+              $max: [
+                1,
+                {
+                  $min: ['$requestedCount', { $floor: '$processedRaw' }],
+                },
+              ],
+            },
+            '$requestedCount',
+          ],
+        },
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        totalConsumed: { $sum: '$resolvedConsumed' },
+      },
+    },
+  ]);
 
-  return recentSettledJobs.reduce((sum, job) => {
-    return sum + resolveConsumedCountForJob({
-      holdConsumed: Boolean((job as any).holdConsumed),
-      videoCount: Number((job as any).videoCount || 1),
-      processedVideos: Number((job as any).processedVideos || 0),
-    });
-  }, 0);
+  return Number(aggregation?.[0]?.totalConsumed || 0);
 };
 
 export const checkAndDowngradeExpiredPlan = async (user: any): Promise<any> => {
