@@ -11,8 +11,8 @@ if (!ENCRYPTION_KEY) {
   if (isProduction) {
     throw new Error('ENCRYPTION_KEY must be set in production');
   } else {
-    console.warn('⚠️ No ENCRYPTION_KEY provided. Using a fallback key for development ONLY.');
-    ENCRYPTION_KEY = 'a-fallback-dev-key-must-be-32-by';
+    console.warn('⚠️ No ENCRYPTION_KEY provided. Using a random in-memory key for this dev process only.');
+    ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex').slice(0, 32);
   }
 }
 

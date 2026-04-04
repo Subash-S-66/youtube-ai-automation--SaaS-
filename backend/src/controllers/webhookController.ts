@@ -61,7 +61,14 @@ const isYouTubeLimitFailure = (message: string): boolean => {
 // @route   POST /api/webhook/job-status
 // @access  Private (verified via x-webhook-secret)
 export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Response) => {
-  console.log(`[Webhook] Received webhook payload:`, req.body);
+  const incomingBody = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+  console.log('[Webhook] Received job-status payload meta:', {
+    jobId: typeof incomingBody.jobId === 'string' ? incomingBody.jobId : '',
+    status: typeof incomingBody.status === 'string' ? incomingBody.status : '',
+    hasLogs: typeof incomingBody.logs === 'string' && incomingBody.logs.length > 0,
+    hasVideoUrl: typeof incomingBody.videoUrl === 'string' && incomingBody.videoUrl.length > 0,
+    hasYoutubeVideoId: typeof incomingBody.youtubeVideoId === 'string' && incomingBody.youtubeVideoId.length > 0,
+  });
   if (!verifyWebhookSecret(req, res)) {
     return;
   }
@@ -312,7 +319,20 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
 // @route   POST /api/webhook/pipeline-complete
 // @access  Private (verified via x-webhook-secret)
 export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, res: Response) => {
-  console.log(`[Webhook] Received pipeline-complete payload:`, req.body);
+  const incomingBody = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+  const resultObj = incomingBody.result && typeof incomingBody.result === 'object'
+    ? incomingBody.result as Record<string, unknown>
+    : null;
+  console.log('[Webhook] Received pipeline-complete payload meta:', {
+    jobId: typeof incomingBody.jobId === 'string' ? incomingBody.jobId : '',
+    status: typeof incomingBody.status === 'string' ? incomingBody.status : '',
+    resultStatus: resultObj && typeof resultObj.status === 'string' ? resultObj.status : '',
+    hasResult: Boolean(resultObj),
+    hasVideoUrl: Boolean(
+      (resultObj && typeof resultObj.videoUrl === 'string' && resultObj.videoUrl.length > 0) ||
+      (resultObj && resultObj.result && typeof (resultObj.result as Record<string, unknown>).videoUrl === 'string')
+    ),
+  });
   if (!verifyWebhookSecret(req, res)) {
     return;
   }

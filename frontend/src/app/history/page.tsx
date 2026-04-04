@@ -233,144 +233,221 @@ export default function HistoryPage() {
         {/* Subtle top glow */}
         <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-primary opacity-50"></div>
 
-        <div className="px-6 py-5 border-b border-[#1A2235] flex items-center justify-between">
-          <div className="flex items-center">
-            <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
+        <div className="px-3 sm:px-6 py-4 sm:py-5 border-b border-[#1A2235] flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center min-w-0">
+            <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-3 sm:mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
               <History className="h-5 w-5 text-[#7C5CFF]" />
             </div>
-            <h2 className="text-xl font-bold text-white tracking-tight">Job History</h2>
+            <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight truncate">Job History</h2>
             {refreshing && (
               <RefreshCw className="h-4 w-4 ml-3 animate-spin text-slate-500" />
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="w-full sm:w-auto flex items-center gap-2">
             <button
               onClick={handleManualRefresh}
               disabled={refreshing}
-              className="inline-flex items-center gap-1 text-sm font-medium text-slate-300 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235] hover:bg-[#1A2235] disabled:opacity-60 transition-colors"
+              className="inline-flex items-center justify-center gap-1 text-sm font-medium text-slate-300 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235] hover:bg-[#1A2235] disabled:opacity-60 transition-colors"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
               Refresh
             </button>
-            <span className="text-sm font-medium text-slate-400 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235]">
+            <span className="text-xs sm:text-sm font-medium text-slate-400 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235]">
               Total Records: {jobs.length}
             </span>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-hidden">
           {jobs.length === 0 ? (
-            <div className="p-12 text-center flex flex-col items-center justify-center text-slate-500 text-sm">
+            <div className="p-8 sm:p-12 text-center flex flex-col items-center justify-center text-slate-500 text-sm">
               <Terminal className="h-12 w-12 text-[#1A2235] mb-4" />
               <p>No jobs executed yet.</p>
               <p className="mt-1">Head over to the Dashboard to generate your first video.</p>
             </div>
           ) : (
-            <table className="min-w-full divide-y divide-[#1A2235]">
-              <thead className="bg-[#0B0F1A]/50">
-                <tr>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-1/4">Date</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-1/4">Job ID</th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-1/4">Status</th>
-                  <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider w-1/4">Logs</th>
-                </tr>
-              </thead>
-              <tbody className="bg-[#111827] divide-y divide-[#1A2235]">
-                {jobs.map((job) => (
-                  <React.Fragment key={job._id}>
-                    <m.tr
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className={cn("transition-colors", expandedJobId === job._id ? "bg-[#1A2235]/20" : "hover:bg-[#1A2235]/40")}
-                    >
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
-                        {new Date(job.createdAt).toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-[#00D4FF] font-mono opacity-80">
-                        {job._id}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {getStatusBadge(getDisplayStatus(job))}
-                        {(() => {
-                          const progressValue = resolveProgressValue(job);
-                          if (progressValue === null) return null;
-                          const boundedProgress = clampProgressForStatus(progressValue, getDisplayStatus(job));
-                          const stageLabel = resolveProgressStage(job);
-                          return (
-                            <div className="mt-2">
-                              <div className="h-2 w-40 bg-[#0B0F1A] rounded-full overflow-hidden border border-[#1A2235]">
-                                <div
-                                  className="h-full bg-gradient-to-r from-[#00D4FF] to-[#7C5CFF]"
-                                  style={{ width: `${boundedProgress}%` }}
-                                />
-                              </div>
-                              <div className="mt-1 text-[11px] text-slate-400">
-                                {boundedProgress}%{stageLabel ? ` • ${stageLabel}` : ''}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button
-                          onClick={() => toggleJob(job._id)}
-                          className="text-[#7C5CFF] hover:text-[#FF4FD8] transition-colors flex items-center justify-end w-full"
-                        >
-                          {expandedJobId === job._id ? (
-                            <><ChevronUp className="h-4 w-4 mr-1" /> Hide Logs</>
-                          ) : (
-                            <><ChevronDown className="h-4 w-4 mr-1" /> View Logs</>
-                          )}
-                        </button>
-                      </td>
-                    </m.tr>
+            <>
+              <div className="md:hidden divide-y divide-[#1A2235]">
+                {jobs.map((job) => {
+                  const displayStatus = getDisplayStatus(job);
+                  const progressValue = resolveProgressValue(job);
+                  const boundedProgress = progressValue === null
+                    ? null
+                    : clampProgressForStatus(progressValue, displayStatus);
+                  const stageLabel = resolveProgressStage(job);
+                  const isExpanded = expandedJobId === job._id;
 
-                    {/* Expandable Logs Section */}
-                    <AnimatePresence>
-                      {expandedJobId === job._id && (
-                        <m.tr
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                        >
-                          <td colSpan={4} className="px-6 py-4 bg-[#0B0F1A]/80 border-b border-[#1A2235]">
-                            <div className="bg-[#0B0F1A] rounded-xl p-4 border border-[#1A2235] shadow-inner">
-                              <div className="flex items-center mb-3">
+                  return (
+                    <div key={job._id} className="p-4 bg-[#111827]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm text-slate-300">{new Date(job.createdAt).toLocaleString()}</p>
+                          <p className="mt-2 text-[11px] uppercase tracking-wider text-slate-500">Job ID</p>
+                          <p className="mt-1 text-xs text-[#00D4FF] font-mono break-all">{job._id}</p>
+                        </div>
+                        <div className="shrink-0">
+                          {getStatusBadge(displayStatus)}
+                        </div>
+                      </div>
+
+                      {boundedProgress !== null && (
+                        <div className="mt-3">
+                          <div className="h-2 w-full bg-[#0B0F1A] rounded-full overflow-hidden border border-[#1A2235]">
+                            <div
+                              className="h-full bg-gradient-to-r from-[#00D4FF] to-[#7C5CFF]"
+                              style={{ width: `${boundedProgress}%` }}
+                            />
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            {boundedProgress}%{stageLabel ? ` • ${stageLabel}` : ''}
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={() => toggleJob(job._id)}
+                        className="mt-3 text-[#7C5CFF] hover:text-[#FF4FD8] transition-colors inline-flex items-center text-sm"
+                      >
+                        {isExpanded ? (
+                          <><ChevronUp className="h-4 w-4 mr-1" /> Hide Logs</>
+                        ) : (
+                          <><ChevronDown className="h-4 w-4 mr-1" /> View Logs</>
+                        )}
+                      </button>
+
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <m.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="mt-3 bg-[#0B0F1A] rounded-xl p-3 border border-[#1A2235] shadow-inner">
+                              <div className="flex items-center mb-2">
                                 <Terminal className="h-4 w-4 text-[#7C5CFF] mr-2" />
                                 <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Execution Output</span>
                               </div>
-                              <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-words max-h-96 overflow-y-auto custom-scrollbar p-3 bg-[#05080f] rounded-lg border border-[#1A2235]/50 leading-relaxed tracking-wide">
+                              <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-words max-h-72 overflow-y-auto overflow-x-hidden custom-scrollbar p-3 bg-[#05080f] rounded-lg border border-[#1A2235]/50 leading-relaxed tracking-wide">
                                 {job.logs || 'No logs recorded.'}
                               </pre>
                             </div>
+                          </m.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="hidden md:block overflow-x-hidden">
+                <table className="w-full table-fixed divide-y divide-[#1A2235]">
+                  <thead className="bg-[#0B0F1A]/50">
+                    <tr>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-1/4">Date</th>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-1/4">Job ID</th>
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider w-1/4">Status</th>
+                      <th className="px-6 py-4 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider w-1/4">Logs</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-[#111827] divide-y divide-[#1A2235]">
+                    {jobs.map((job) => (
+                      <React.Fragment key={job._id}>
+                        <m.tr
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className={cn("transition-colors", expandedJobId === job._id ? "bg-[#1A2235]/20" : "hover:bg-[#1A2235]/40")}
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
+                            {new Date(job.createdAt).toLocaleString()}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-[#00D4FF] font-mono opacity-80 max-w-[300px] break-all">
+                            {job._id}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {getStatusBadge(getDisplayStatus(job))}
+                            {(() => {
+                              const progressValue = resolveProgressValue(job);
+                              if (progressValue === null) return null;
+                              const boundedProgress = clampProgressForStatus(progressValue, getDisplayStatus(job));
+                              const stageLabel = resolveProgressStage(job);
+                              return (
+                                <div className="mt-2">
+                                  <div className="h-2 w-40 bg-[#0B0F1A] rounded-full overflow-hidden border border-[#1A2235]">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-[#00D4FF] to-[#7C5CFF]"
+                                      style={{ width: `${boundedProgress}%` }}
+                                    />
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-slate-400">
+                                    {boundedProgress}%{stageLabel ? ` • ${stageLabel}` : ''}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <button
+                              onClick={() => toggleJob(job._id)}
+                              className="text-[#7C5CFF] hover:text-[#FF4FD8] transition-colors inline-flex items-center"
+                            >
+                              {expandedJobId === job._id ? (
+                                <><ChevronUp className="h-4 w-4 mr-1" /> Hide Logs</>
+                              ) : (
+                                <><ChevronDown className="h-4 w-4 mr-1" /> View Logs</>
+                              )}
+                            </button>
                           </td>
                         </m.tr>
-                      )}
-                    </AnimatePresence>
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
+
+                        {/* Expandable Logs Section */}
+                        <AnimatePresence>
+                          {expandedJobId === job._id && (
+                            <m.tr
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                            >
+                              <td colSpan={4} className="px-6 py-4 bg-[#0B0F1A]/80 border-b border-[#1A2235]">
+                                <div className="bg-[#0B0F1A] rounded-xl p-4 border border-[#1A2235] shadow-inner">
+                                  <div className="flex items-center mb-3">
+                                    <Terminal className="h-4 w-4 text-[#7C5CFF] mr-2" />
+                                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Execution Output</span>
+                                  </div>
+                                  <pre className="text-xs text-slate-300 font-mono whitespace-pre-wrap break-words max-h-96 overflow-y-auto overflow-x-hidden custom-scrollbar p-3 bg-[#05080f] rounded-lg border border-[#1A2235]/50 leading-relaxed tracking-wide">
+                                    {job.logs || 'No logs recorded.'}
+                                  </pre>
+                                </div>
+                              </td>
+                            </m.tr>
+                          )}
+                        </AnimatePresence>
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </div>
 
       {totalPages > 1 && (
-        <div className="p-4 flex items-center justify-between bg-[#111827] border border-[#1A2235] rounded-xl mt-6 shadow-xl">
+        <div className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-[#111827] border border-[#1A2235] rounded-xl mt-6 shadow-xl">
           <button
             onClick={() => setPage(p => Math.max(1, p - 1))}
             disabled={page === 1 || loading}
-            className="px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
+            className="w-full sm:w-auto px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
           >
             Previous
           </button>
-          <span className="text-sm text-slate-400">
+          <span className="text-sm text-slate-400 text-center">
             Page {page} of {totalPages}
           </span>
           <button
             onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             disabled={page === totalPages || loading}
-            className="px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
+            className="w-full sm:w-auto px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
           >
             Next
           </button>

@@ -66,6 +66,31 @@ const getConfiguredBackendBaseUrl = () => {
   return resolved || 'http://localhost:5000';
 };
 
+const resolveGoogleAuthCallbackUrl = (req?: Request): string => {
+  const explicitRaw = decodeUrlValue(
+    process.env.GOOGLE_REDIRECT_URI || process.env.AUTH_GOOGLE_REDIRECT_URI || ''
+  )
+    .replace(/^['"]+|['"]+$/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+
+  if (explicitRaw) {
+    try {
+      const parsed = new URL(explicitRaw);
+      const callbackPath =
+        parsed.pathname && parsed.pathname !== '/'
+          ? parsed.pathname.replace(/\/+$/, '')
+          : '/api/auth/google/callback';
+      return `${parsed.protocol}//${parsed.host}${callbackPath}`;
+    } catch {
+      // Fall through to dynamic backend URL construction
+    }
+  }
+
+  const backendUrl = normalizeBaseUrl(resolveBackendBaseUrl(req));
+  return `${backendUrl}/api/auth/google/callback`;
+};
+
 const resolveBackendBaseUrl = (req?: Request) => {
   const configuredFallback = getConfiguredBackendBaseUrl();
   if (!req) {
@@ -225,11 +250,7 @@ const setTokenCookie = (req: RequestWithHeaders, res: Response, token: string, i
 };
 
 const getGoogleOAuth2Client = (req?: Request) => {
-  const redirectCandidate = normalizeBaseUrl(
-    process.env.GOOGLE_REDIRECT_URI || process.env.AUTH_GOOGLE_REDIRECT_URI || ''
-  );
-  const backendUrl = normalizeBaseUrl(resolveBackendBaseUrl(req));
-  const callbackUrl = redirectCandidate || `${backendUrl}/api/auth/google/callback`;
+  const callbackUrl = resolveGoogleAuthCallbackUrl(req);
   const clientId = process.env.GOOGLE_CLIENT_ID || process.env.YOUTUBE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.YOUTUBE_CLIENT_SECRET;
 

@@ -7,7 +7,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import {
   Play, Youtube, ListVideo, Clock, FileVideo,
   ShieldAlert, Sparkles, RefreshCw, PenLine, List,
-  BookOpen, Mic, Volume2
+  Mic, Volume2
 } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { youtubeService } from '../../services/youtubeService';
@@ -1238,7 +1238,7 @@ function Dashboard() {
           </div>
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <div className="xl:col-span-2 space-y-6">
-              <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl">
+              <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 sm:p-6 shadow-xl">
                 <div className="h-6 w-40 bg-[#1A2235] rounded mb-6" />
                 <div className="h-24 bg-[#0B0F1A] border border-[#1A2235] rounded-xl" />
                 <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1249,7 +1249,7 @@ function Dashboard() {
               </div>
             </div>
             <div className="space-y-6">
-              <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl">
+              <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 sm:p-6 shadow-xl">
                 <div className="h-5 w-28 bg-[#1A2235] rounded mb-4" />
                 <div className="h-20 bg-[#0B0F1A] border border-[#1A2235] rounded-xl" />
               </div>
@@ -1287,7 +1287,7 @@ function Dashboard() {
         {/* Left Column: Form */}
         <div className="xl:col-span-2 space-y-6">
 
-          <m.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <m.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 sm:p-6 shadow-xl relative overflow-hidden">
             <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-4">
                 <div className="flex items-center">
                   <div className="h-10 w-10 bg-[#7C5CFF]/10 rounded-xl flex items-center justify-center mr-4 border border-[#7C5CFF]/20 shadow-glow-primary">
@@ -1769,38 +1769,8 @@ function Dashboard() {
                     </div>
                   </div>
 
-                  {/* Story Mode + Subtitle Styling */}
+                  {/* Subtitle Styling */}
                   <div className="col-span-1 sm:col-span-2 space-y-4">
-                    <div className="p-4 bg-gradient-to-r from-[#7C5CFF]/10 to-[#00D4FF]/10 rounded-xl border border-[#7C5CFF]/30">
-                      <div className="flex items-center mb-4">
-                        <BookOpen className="h-5 w-5 text-[#00D4FF] mr-2" />
-                        <h3 className="text-sm font-semibold text-white">Story Mode</h3>
-                      </div>
-
-                      <div className="space-y-3">
-                        {!effectiveStoryMode && (
-                          <p className="text-xs text-slate-500">
-                            {canUseStoryMode
-                              ? 'Enable Story Mode in the Call to Actions section to continue episodic videos.'
-                              : 'Story Mode is not included in your plan.'}
-                          </p>
-                        )}
-
-                        <AnimatePresence>
-                          {effectiveStoryMode && (
-                            <m.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="space-y-3 overflow-hidden rounded-lg border border-[#7C5CFF]/20 bg-[#0B0F1A]/60 p-3">
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm text-slate-400">Current Progress: <strong className="font-mono text-base" style={{ color: '#00D4FF' }}>Part {currentPart}</strong></span>
-                                <button type="button" onClick={resetStoryProgress} className="text-xs bg-[#1A2235] hover:bg-[#2a3550] text-slate-300 px-3 py-1.5 rounded-lg transition-colors border border-[#1A2235]">
-                                  Reset Story
-                                </button>
-                              </div>
-                            </m.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    </div>
-
                     <div className="p-4 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 rounded-xl border border-[#00D4FF]/30">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center">
@@ -1829,86 +1799,46 @@ function Dashboard() {
                       <AnimatePresence>
                         {templateConfigOpen && (
                           <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                            <div className="mt-4 pt-4 border-t border-[#00D4FF]/20 space-y-4">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div>
-                                  <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
-                                  <select
-                                    id="template-font"
-                                    aria-label="Template Font"
-                                    value={templateFont}
-                                    onChange={async (e) => {
-                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
-                                      const value = e.target.value;
-                                      setTemplateFont(value);
-                                      try { await userService.updateSettings({ templateFont: value }); } catch {}
-                                    }}
-                                    className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
-                                  >
-                                    <option value="Arial">Arial</option>
-                                    <option value="Anton">Anton</option>
-                                    <option value="Montserrat">Montserrat</option>
-                                    <option value="Bebas Neue">Bebas Neue</option>
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="text-xs text-slate-400 mb-1 block">Subtitle Color</label>
-                                  <input
-                                    id="template-color"
-                                    aria-label="Template Color"
-                                    type="color"
-                                    value={templateColor}
-                                    onChange={async (e) => {
-                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
-                                      const value = e.target.value;
-                                      setTemplateColor(value);
-                                      try { await userService.updateSettings({ templateColor: value }); } catch {}
-                                    }}
-                                    className="w-full h-9 bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-1 cursor-pointer"
-                                  />
-                                </div>
+                            <div className="mt-4 pt-4 border-t border-[#00D4FF]/20 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                              <div>
+                                <label className="text-xs text-slate-400 mb-1 block">Font Style</label>
+                                <select
+                                  id="template-font"
+                                  aria-label="Template Font"
+                                  value={templateFont}
+                                  onChange={async (e) => {
+                                    if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                    const value = e.target.value;
+                                    setTemplateFont(value);
+                                    try { await userService.updateSettings({ templateFont: value }); } catch {}
+                                  }}
+                                  className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                                >
+                                  <option value="Arial">Arial</option>
+                                  <option value="Anton">Anton</option>
+                                  <option value="Montserrat">Montserrat</option>
+                                  <option value="Bebas Neue">Bebas Neue</option>
+                                </select>
                               </div>
 
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div>
-                                  <label className="text-xs text-slate-400 mb-1 block">Caption Position</label>
-                                  <select
-                                    id="template-caption-position"
-                                    aria-label="Caption Position"
-                                    value={captionPosition}
-                                    onChange={(e) => {
-                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
-                                      setCaptionPosition(e.target.value as CaptionPosition);
-                                    }}
-                                    className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
-                                  >
-                                    <option value="top">Top</option>
-                                    <option value="middle">Middle</option>
-                                    <option value="bottom">Bottom</option>
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="text-xs text-slate-400 mb-1 block">Caption Animation</label>
-                                  <select
-                                    id="template-caption-animation"
-                                    aria-label="Caption Animation"
-                                    value={captionAnimation}
-                                    onChange={(e) => {
-                                      if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
-                                      setCaptionAnimation(e.target.value as CaptionAnimation);
-                                    }}
-                                    className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
-                                  >
-                                    <option value="fade">Fade In/Out</option>
-                                    <option value="slide_left">Slide From Left</option>
-                                    <option value="slide_right">Slide From Right</option>
-                                    <option value="pop">Pop In</option>
-                                    <option value="none">No Animation</option>
-                                  </select>
-                                </div>
+                              <div>
+                                <label className="text-xs text-slate-400 mb-1 block">Subtitle Color</label>
+                                <input
+                                  id="template-color"
+                                  aria-label="Template Color"
+                                  type="color"
+                                  value={templateColor}
+                                  onChange={async (e) => {
+                                    if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                    const value = e.target.value;
+                                    setTemplateColor(value);
+                                    try { await userService.updateSettings({ templateColor: value }); } catch {}
+                                  }}
+                                  className="w-full h-9 bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-1 cursor-pointer"
+                                />
                               </div>
 
-                              <div className="sm:max-w-xs">
+                              <div className="sm:col-span-2 lg:col-span-1">
                                 <label className="text-xs text-slate-400 mb-1 block">Max Words Per Caption</label>
                                 <input
                                   id="template-max-words"
@@ -1926,6 +1856,44 @@ function Dashboard() {
                                   className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
                                 />
                                 <p className="text-[11px] text-slate-500 mt-1">Recommended range: 2-5 words per caption.</p>
+                              </div>
+
+                              <div>
+                                <label className="text-xs text-slate-400 mb-1 block">Caption Position</label>
+                                <select
+                                  id="template-caption-position"
+                                  aria-label="Caption Position"
+                                  value={captionPosition}
+                                  onChange={(e) => {
+                                    if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                    setCaptionPosition(e.target.value as CaptionPosition);
+                                  }}
+                                  className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                                >
+                                  <option value="top">Top</option>
+                                  <option value="middle">Middle</option>
+                                  <option value="bottom">Bottom</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="text-xs text-slate-400 mb-1 block">Caption Animation</label>
+                                <select
+                                  id="template-caption-animation"
+                                  aria-label="Caption Animation"
+                                  value={captionAnimation}
+                                  onChange={(e) => {
+                                    if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                                    setCaptionAnimation(e.target.value as CaptionAnimation);
+                                  }}
+                                  className="w-full bg-[#0B0F1A] text-slate-300 text-sm border border-[#1A2235] rounded-lg p-2 focus:outline-none focus:border-[#00D4FF]"
+                                >
+                                  <option value="fade">Fade In/Out</option>
+                                  <option value="slide_left">Slide From Left</option>
+                                  <option value="slide_right">Slide From Right</option>
+                                  <option value="pop">Pop In</option>
+                                  <option value="none">No Animation</option>
+                                </select>
                               </div>
                             </div>
                           </m.div>
@@ -2021,7 +1989,7 @@ function Dashboard() {
 
         {/* Right Column: Status & Connections */}
         <div className="space-y-6">
-          <m.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+          <m.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 sm:p-6 shadow-xl relative overflow-hidden">
              <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
                 <Youtube className="h-24 w-24" />
              </div>

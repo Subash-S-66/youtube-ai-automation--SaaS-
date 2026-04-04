@@ -293,7 +293,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
         </div>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-y-auto bg-[#0B0F1A] p-4 sm:p-6 lg:p-8 relative z-10">
+        <main className="flex-1 overflow-y-auto bg-[#0B0F1A] px-1.5 py-3 sm:p-6 lg:p-8 relative z-10">
           <div className={cn("mx-auto space-y-6", isWidePage ? "max-w-none" : "max-w-6xl")}>
             {children}
           </div>

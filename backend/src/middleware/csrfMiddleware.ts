@@ -10,6 +10,7 @@ const csrfCookieSameSite: 'none' | 'lax' =
   process.env.NODE_ENV === 'production' ? 'none' : 'lax';
 const csrfCookieSecure = process.env.NODE_ENV === 'production';
 const csrfSessionCookieName = '__session_id';
+const devCsrfSecret = crypto.randomBytes(32).toString('hex');
 
 const getCsrfSecret = (): string => {
   const configuredSecret = (process.env.CSRF_SECRET || '').trim();
@@ -26,7 +27,7 @@ const getCsrfSecret = (): string => {
     throw new Error('CSRF_SECRET is required in production');
   }
 
-  return 'dev-only-csrf-secret-change-me';
+  return devCsrfSecret;
 };
 
 const ensureCsrfSessionIdentifier = (req: Request, res: Response): string => {
