@@ -12,6 +12,8 @@ import { google } from 'googleapis';
 import validator from 'validator';
 import { resolveCookieDomain } from '../utils/cookieDomain';
 
+const AUTH_GOOGLE_CALLBACK_PATH = '/api/auth/google/callback';
+
 const decodeUrlValue = (value: string): string => {
   let current = value;
   for (let i = 0; i < 2; i += 1) {
@@ -77,18 +79,14 @@ const resolveGoogleAuthCallbackUrl = (req?: Request): string => {
   if (explicitRaw) {
     try {
       const parsed = new URL(explicitRaw);
-      const callbackPath =
-        parsed.pathname && parsed.pathname !== '/'
-          ? parsed.pathname.replace(/\/+$/, '')
-          : '/api/auth/google/callback';
-      return `${parsed.protocol}//${parsed.host}${callbackPath}`;
+      return `${parsed.protocol}//${parsed.host}${AUTH_GOOGLE_CALLBACK_PATH}`;
     } catch {
       // Fall through to dynamic backend URL construction
     }
   }
 
   const backendUrl = normalizeBaseUrl(resolveBackendBaseUrl(req));
-  return `${backendUrl}/api/auth/google/callback`;
+  return `${backendUrl}${AUTH_GOOGLE_CALLBACK_PATH}`;
 };
 
 const resolveBackendBaseUrl = (req?: Request) => {
