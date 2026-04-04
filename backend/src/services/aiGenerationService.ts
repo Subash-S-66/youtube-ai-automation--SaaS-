@@ -8,6 +8,33 @@ export interface AIGenerationResult {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const parseTimeoutMs = (raw: unknown, fallback: number): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1000, Math.floor(parsed));
+};
+
+const GEMINI_TIMEOUT_MS = parseTimeoutMs(process.env.GEMINI_TIMEOUT_MS, 15000);
+
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation, timeoutPromise]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
+
 const isQuotaOrRateLimit = (message: string): boolean => {
   const lower = String(message || '').toLowerCase();
   return (
@@ -18,7 +45,7 @@ const isQuotaOrRateLimit = (message: string): boolean => {
   );
 };
 
-const callNativeGemini = async (prompt: string, timeoutMs = 15000): Promise<string> => {
+const callNativeGemini = async (prompt: string, timeoutMs = GEMINI_TIMEOUT_MS): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured');
@@ -29,23 +56,23 @@ const callNativeGemini = async (prompt: string, timeoutMs = 15000): Promise<stri
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const result = await model.generateContent({
+  const result = await withTimeout(
+    model.generateContent({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.2,
       },
-    });
-    const out = (result.response.text() || '').trim();
-    if (!out) {
-      throw new Error('Native Gemini returned empty response');
-    }
-    return out;
-  } finally {
-    clearTimeout(timer);
+    }),
+    timeoutMs,
+    'Native Gemini request'
+  );
+
+  const out = (result.response.text() || '').trim();
+  if (!out) {
+    throw new Error('Native Gemini returned empty response');
   }
+
+  return out;
 };
 
 const validateAIOutput = (text: string): void => {

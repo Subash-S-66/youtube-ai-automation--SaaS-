@@ -65,6 +65,33 @@ const isObject = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 };
 
+const parseTimeoutMs = (raw: unknown, fallback: number): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1000, Math.floor(parsed));
+};
+
+const SUBTOPIC_GEN_TIMEOUT_MS = parseTimeoutMs(process.env.SUBTOPIC_GEN_TIMEOUT_MS, 7000);
+
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation, timeoutPromise]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
+
 export const normalizePipelineSettings = (rawSettings: Record<string, any>): PipelineInputAudit => {
   const settings: PipelineInputSettings = { ...rawSettings } as PipelineInputSettings;
   const aliasMappings: string[] = [];
@@ -396,7 +423,11 @@ export const enqueuePipelineJob = async ({
   let chosenSubTopic = userTopic; // FIXED: Keep deterministic fallback to original topic when AI sub-topic generation fails.
 
   try {
-    const generatedSubTopics = await generateSubTopics(userTopic, 10, recentTopics.slice(-50)); // FIXED: Generate 10 distinct sub-topics while excluding recently used user topics.
+    const generatedSubTopics = await withTimeout(
+      generateSubTopics(userTopic, 10, recentTopics.slice(-50)),
+      SUBTOPIC_GEN_TIMEOUT_MS,
+      'Sub-topic generation'
+    ); // FIXED: Bound sub-topic generation latency so /api/pipeline/run stays responsive.
     if (generatedSubTopics.length > 0) {
       const pickIndex = Math.floor(Math.random() * generatedSubTopics.length);
       chosenSubTopic = generatedSubTopics[pickIndex] || chosenSubTopic; // FIXED: Randomly pick one sub-topic for this job run.
