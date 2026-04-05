@@ -72,8 +72,20 @@ const parseTimeoutMs = (raw: unknown, fallback: number): number => {
   return Math.max(1000, Math.floor(parsed));
 };
 
-const SUBTOPIC_GEN_TIMEOUT_MS = parseTimeoutMs(process.env.SUBTOPIC_GEN_TIMEOUT_MS, 7000);
+const parsePositiveInt = (raw: unknown, fallback: number): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+};
+
+const SUBTOPIC_GEN_TIMEOUT_MS = parseTimeoutMs(process.env.SUBTOPIC_GEN_TIMEOUT_MS, 3000);
 const QUEUE_DISPATCH_TIMEOUT_MS = parseTimeoutMs(process.env.QUEUE_DISPATCH_TIMEOUT_MS, 5000);
+const MAX_CONCURRENT_PIPELINES_PER_USER = parsePositiveInt(
+  process.env.MAX_CONCURRENT_PIPELINES_PER_USER,
+  10
+);
 
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
   let timer: NodeJS.Timeout | undefined;
@@ -346,22 +358,14 @@ export const enqueuePipelineJob = async ({
     throw new AppError('User not found', 404);
   }
 
-  const concurrentLimits = {
-    free: 1,
-    basic: 3,
-    pro: 10,
-    premium: 20,
-  };
-  const maxConcurrentJobs = (concurrentLimits as any)[limitCheck.plan] || 1;
-
   const activeJobsCount = await Job.countDocuments({
     userId,
     status: { $in: ['pending', 'processing'] },
   });
 
-  if (activeJobsCount >= maxConcurrentJobs) {
+  if (activeJobsCount >= MAX_CONCURRENT_PIPELINES_PER_USER) {
     throw new AppError(
-      `Maximum concurrent jobs reached for your plan (${maxConcurrentJobs}). Please wait for an existing job to finish.`,
+      `Maximum concurrent pipelines reached (${MAX_CONCURRENT_PIPELINES_PER_USER}) for this user. Please wait for an existing job to finish.`,
       400
     );
   }

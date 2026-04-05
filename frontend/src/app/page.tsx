@@ -4,33 +4,33 @@ import { redirect } from 'next/navigation';
 import LandingPage from './landing/page';
 
 export const metadata: Metadata = {
-  title: 'ClipForge - AI Video Automation Platform | Create Viral Shorts',
+  title: 'ClipForge - Turn Videos Into Viral Clips in Seconds (AI Tool)',
   description:
-    'ClipForge is an AI video automation platform that turns long videos into viral shorts for TikTok, Instagram & YouTube.',
+    'ClipForge is an AI-powered platform that turns long videos into viral clips for TikTok, Instagram, and YouTube in seconds.',
   keywords: [
-    'clipforge',
-    'clipforge app',
-    'clipforge ai',
-    'clipforge video tool',
-    'ai video automation platform',
+    'ClipForge',
+    'ClipForge app',
+    'ClipForge AI',
+    'ClipForge video tool',
+    'AI video automation platform',
     'viral shorts creator',
   ],
   alternates: {
     canonical: '/',
   },
   openGraph: {
-    title: 'ClipForge - AI That Turns Videos into Viral Shorts (Free, Fast, No Editing Needed)',
+    title: 'ClipForge - Turn Videos Into Viral Clips in Seconds (AI Tool)',
     description:
-      'ClipForge is an AI video automation platform that turns long videos into viral shorts for TikTok, Instagram & YouTube.',
+      'ClipForge is an AI-powered platform that turns long videos into viral clips for TikTok, Instagram, and YouTube in seconds.',
     url: '/',
     siteName: 'ClipForge',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ClipForge - AI That Turns Videos into Viral Shorts (Free, Fast, No Editing Needed)',
+    title: 'ClipForge - Turn Videos Into Viral Clips in Seconds (AI Tool)',
     description:
-      'ClipForge is free to start, fast to publish, and requires no manual editing workflow.',
+      'ClipForge is an AI-powered platform that helps creators turn long videos into viral clips with minimal manual editing.',
   },
 };
 

@@ -6,17 +6,59 @@ import { getGoogleAuthUrl, exchangeCodeForTokens, getGoogleOAuthClient } from '.
 import User from '../models/User';
 import { google } from 'googleapis';
 
+const decodeUrlValue = (value: string): string => {
+  let current = value;
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const decoded = decodeURIComponent(current);
+      if (decoded === current) break;
+      current = decoded;
+    } catch {
+      break;
+    }
+  }
+  return current;
+};
+
+const normalizeBaseUrl = (value: string): string => {
+  const decoded = decodeUrlValue(value || '');
+  const withoutQuotes = decoded.replace(/^['"]+|['"]+$/g, '');
+  const compact = withoutQuotes.replace(/\s+/g, '').trim();
+  if (!compact) {
+    return '';
+  }
+
+  let candidate = compact;
+  if (!/^https?:\/\//i.test(candidate)) {
+    const localLike = /^(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(candidate);
+    candidate = `${localLike ? 'http' : 'https'}://${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return compact.replace(/\/+$/, '');
+  }
+};
+
 const resolveBackendBaseUrl = (req: Request): string => {
-  const explicit = (process.env.BACKEND_URL || '').trim();
-  if (explicit) return explicit.replace(/\/+$/, '');
+  const explicit = normalizeBaseUrl(process.env.BACKEND_URL || '');
+  if (explicit) return explicit;
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
   const host = (req.headers['x-forwarded-host'] as string) || req.get('host') || '';
-  return host ? `${proto}://${host}` : '';
+  return host ? normalizeBaseUrl(`${proto}://${host}`) : '';
 };
 
 const resolveFrontendBaseUrl = (req: Request): string => {
-  const explicit = (process.env.FRONTEND_URL || '').trim();
-  if (explicit) return explicit.replace(/\/+$/, '');
+  const explicitCandidates = [
+    process.env.FRONTEND_URL,
+    process.env.FRONTEND_URLS?.split(',')[0],
+  ];
+  const explicit = explicitCandidates
+    .map((value) => normalizeBaseUrl(value || ''))
+    .find((value) => value.length > 0);
+  if (explicit) return explicit;
   const backendBase = resolveBackendBaseUrl(req);
   return backendBase || '';
 };

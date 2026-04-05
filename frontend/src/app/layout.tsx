@@ -30,9 +30,9 @@ export const viewport = {
 
 export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
-  title: "ClipForge - AI Video Automation Platform | Create Viral Shorts",
+  title: "ClipForge | Official AI Video Automation Tool",
   description:
-    "ClipForge is an AI video automation platform that turns long videos into viral shorts for TikTok, Instagram & YouTube.",
+    "ClipForge is an AI-powered platform that turns long videos into viral clips for TikTok, Instagram, and YouTube.",
   keywords: [
     "ClipForge",
     "ClipForge App",
@@ -51,9 +51,9 @@ export const metadata: Metadata = {
     type: "website",
     url: "/",
     siteName: "ClipForge",
-    title: "ClipForge - AI That Turns Videos into Viral Shorts (Free, Fast, No Editing Needed)",
+    title: "ClipForge | Official AI Video Automation Tool",
     description:
-      "ClipForge is an AI video automation platform that turns long videos into viral shorts for TikTok, Instagram & YouTube.",
+      "ClipForge is an AI-powered platform that turns long videos into viral clips for TikTok, Instagram, and YouTube.",
     images: [
       {
         url: "/brand-logo.png",
@@ -65,8 +65,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "ClipForge - AI That Turns Videos into Viral Shorts (Free, Fast, No Editing Needed)",
-    description: "ClipForge app is free to start, fast to use, and needs no manual editing.",
+    title: "ClipForge | Official AI Video Automation Tool",
+    description: "ClipForge is an AI-powered platform for fast video-to-viral-clip automation.",
     images: ["/brand-logo.png"],
   },
   robots: {
@@ -109,7 +109,7 @@ export default function RootLayout({
 }>) {
   const apiOrigin = getApiOrigin();
   const siteUrl = getSiteUrl();
-  const structuredData = JSON.stringify({
+  const websiteStructuredData = JSON.stringify({
     "@context": "https://schema.org",
     "@type": "WebSite",
     name: "ClipForge",
@@ -122,6 +122,16 @@ export default function RootLayout({
       target: `${siteUrl}/?q={search_term_string}`,
       "query-input": "required name=search_term_string",
     },
+  });
+  const softwareApplicationStructuredData = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "ClipForge",
+    url: siteUrl,
+    applicationCategory: "VideoEditingApplication",
+    operatingSystem: "Web",
+    description:
+      "ClipForge is an AI-powered platform that turns long videos into viral clips for TikTok, Instagram, and YouTube.",
   });
   const performanceApiPolyfill = `
     (function () {
@@ -171,7 +181,11 @@ export default function RootLayout({
         </Script>
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: structuredData }}
+          dangerouslySetInnerHTML={{ __html: websiteStructuredData }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: softwareApplicationStructuredData }}
         />
         <link rel="preconnect" href={apiOrigin} />
         <link rel="dns-prefetch" href={apiOrigin} />

@@ -78,7 +78,7 @@ const howItWorksSteps: HowStep[] = [
   {
     title: 'Write a Prompt',
     description:
-      "Type any topic, idea, or niche. ClipForge's AI engine generates a viral-ready script with hooks, structure, and hashtags.",
+      'Type any topic, idea, or niche. The AI engine generates a viral-ready script with hooks, structure, and hashtags.',
     icon: PenSquare,
   },
   {
@@ -143,7 +143,7 @@ const featureCards: FeatureCard[] = [
   {
     title: 'Smart Scheduling',
     description:
-      'Schedule one-time uploads or set recurring auto-upload intervals (e.g., every 4 hours). Set it and forget it — ClipForge handles the rest.',
+      'Schedule one-time uploads or set recurring auto-upload intervals (e.g., every 4 hours). Set it and forget it — the platform handles the rest.',
     icon: Clock,
     color: '#00D4FF',
     tag: 'Auto-Pilot Mode',
@@ -221,7 +221,7 @@ const faqItems = [
   {
     question: 'Do I need a YouTube API key?',
     answer:
-      'No, you just connect your YouTube account via Google OAuth in the dashboard. ClipForge handles all the API calls.',
+      'No, you just connect your YouTube account via Google OAuth in the dashboard. The platform handles all the API calls.',
   },
   {
     question: 'Can I use my own video footage?',
@@ -236,7 +236,7 @@ const faqItems = [
   {
     question: 'How does Story Mode work?',
     answer:
-      'Enable Story Mode and ClipForge tracks part numbers and story context across generations, automatically feeding prior context into each new episode.',
+      'Enable Story Mode and the platform tracks part numbers and story context across generations, automatically feeding prior context into each new episode.',
   },
   {
     question: 'Is there a free trial?',
@@ -663,7 +663,7 @@ export default function LandingPage() {
                 transition={{ duration: 0.45, delay: 0.15 }}
                 className="mt-6 text-5xl font-black leading-tight tracking-tight drop-shadow-[0_16px_34px_rgba(0,0,0,0.45)] md:text-7xl"
               >
-                ClipForge AI Video Automation Platform
+                ClipForge - AI Video Automation Platform
               </m.h1>
 
               <m.p
@@ -672,9 +672,9 @@ export default function LandingPage() {
                 transition={{ duration: 0.45, delay: 0.25 }}
                 className="mx-auto mt-6 max-w-2xl text-lg text-slate-300 lg:mx-0"
               >
-                The ClipForge app uses ClipForge AI to write scripts, build narration, assemble cinematic visuals, and
-                publish viral shorts from your long-form videos. This ClipForge video tool is free to start, fast to
-                use, and needs no manual editing workflow.
+                ClipForge is an AI-powered platform that writes scripts, builds narration, assembles cinematic
+                visuals, and publishes viral clips from your long-form videos. The ClipForge app helps creators move
+                from idea to upload quickly without juggling multiple tools or manual editing workflows.
               </m.p>
 
               <m.div
@@ -725,8 +725,8 @@ export default function LandingPage() {
                   </div>
                 </div>
                 <p className="max-w-xl text-sm text-slate-300/90">
-                  Creators use the ClipForge app daily because ClipForge AI automates scripting, media matching, and
-                  publishing in one ClipForge video tool.
+                  Creators use ClipForge daily because it automates scripting, media matching, and publishing in one
+                  workflow.
                 </p>
               </m.div>
             </div>
@@ -1045,7 +1045,7 @@ export default function LandingPage() {
             transition={{ duration: 0.4 }}
             className="mb-10 text-center text-3xl font-black md:text-5xl"
           >
-            Creators Are Scaling Faster With ClipForge
+            Creators Are Scaling Faster
           </m.h2>
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             {testimonials.map((testimonial, index) => (
@@ -1161,35 +1161,59 @@ export default function LandingPage() {
 
         <section className="mx-auto max-w-7xl px-4 pb-16 md:px-8">
           <div className="rounded-2xl border border-[#28476F] bg-[#101A2D] p-6 md:p-8">
-            <h2 className="text-2xl font-black text-white md:text-3xl">Learn More About ClipForge</h2>
+            <h2 className="text-2xl font-black text-white md:text-3xl">Learn More About The Platform</h2>
             <p className="mt-3 max-w-3xl text-sm leading-relaxed text-[#C6D9F7] md:text-base">
-              Explore how the ClipForge app works, what makes ClipForge AI effective for creators, and why this
-              ClipForge video tool helps teams scale short-form output without editing bottlenecks.
+              Explore how ClipForge works, what makes its AI workflow effective for creators, and why the platform
+              helps teams scale short-form output without editing bottlenecks.
             </p>
-            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+              <Link
+                href="/clipforge"
+                className="rounded-xl border border-[#32507B] bg-[#0F1A2D] px-4 py-3 text-sm font-semibold text-[#9DDCFF] transition hover:border-[#00D4FF]"
+              >
+                Platform Overview
+              </Link>
+              <Link
+                href="/clipforge-ai"
+                className="rounded-xl border border-[#32507B] bg-[#0F1A2D] px-4 py-3 text-sm font-semibold text-[#9DDCFF] transition hover:border-[#00D4FF]"
+              >
+                AI Workflow Guide
+              </Link>
+              <Link
+                href="/clipforge-video-tool"
+                className="rounded-xl border border-[#32507B] bg-[#0F1A2D] px-4 py-3 text-sm font-semibold text-[#9DDCFF] transition hover:border-[#00D4FF]"
+              >
+                Video Tool Guide
+              </Link>
+              <Link
+                href="/features"
+                className="rounded-xl border border-[#32507B] bg-[#0F1A2D] px-4 py-3 text-sm font-semibold text-[#9DDCFF] transition hover:border-[#00D4FF]"
+              >
+                Feature Breakdown
+              </Link>
               <Link
                 href="/what-is-clipforge"
                 className="rounded-xl border border-[#32507B] bg-[#0F1A2D] px-4 py-3 text-sm font-semibold text-[#9DDCFF] transition hover:border-[#00D4FF]"
               >
-                What Is ClipForge?
+                What It Is
               </Link>
               <Link
                 href="/clipforge-ai-video-tool"
                 className="rounded-xl border border-[#32507B] bg-[#0F1A2D] px-4 py-3 text-sm font-semibold text-[#9DDCFF] transition hover:border-[#00D4FF]"
               >
-                ClipForge AI Video Tool Guide
+                AI Video Tool Guide
               </Link>
               <Link
                 href="/clipforge-review"
                 className="rounded-xl border border-[#32507B] bg-[#0F1A2D] px-4 py-3 text-sm font-semibold text-[#9DDCFF] transition hover:border-[#00D4FF]"
               >
-                ClipForge Review
+                User Review
               </Link>
               <Link
                 href="/how-to-use-clipforge"
                 className="rounded-xl border border-[#32507B] bg-[#0F1A2D] px-4 py-3 text-sm font-semibold text-[#9DDCFF] transition hover:border-[#00D4FF]"
               >
-                How To Use ClipForge
+                How To Use It
               </Link>
             </div>
           </div>
@@ -1214,8 +1238,7 @@ export default function LandingPage() {
               </span>
             </div>
             <p className="text-sm text-slate-400">
-              AI-native YouTube Shorts automation for creators, agencies, and growth teams. ClipForge, also known as
-              ClipForge App.
+              AI-native YouTube Shorts automation for creators, agencies, and growth teams using ClipForge.
             </p>
             <div className="mt-4 flex gap-2 text-xs text-slate-500">
               <span className="rounded-full border border-[#1A2235] px-2 py-1">X</span>
@@ -1249,7 +1272,7 @@ export default function LandingPage() {
               </li>
               <li>
                 <Link href="/what-is-clipforge" className="hover:text-[#00D4FF]">
-                  What Is ClipForge
+                  What It Is
                 </Link>
               </li>
             </ul>
@@ -1275,17 +1298,17 @@ export default function LandingPage() {
               </li>
               <li>
                 <Link href="/clipforge-ai-video-tool" className="hover:text-[#00D4FF]">
-                  ClipForge AI Video Tool
+                  AI Video Tool
                 </Link>
               </li>
               <li>
                 <Link href="/how-to-use-clipforge" className="hover:text-[#00D4FF]">
-                  How To Use ClipForge
+                  How To Use It
                 </Link>
               </li>
               <li>
                 <Link href="/clipforge-review" className="hover:text-[#00D4FF]">
-                  ClipForge Review
+                  User Review
                 </Link>
               </li>
             </ul>
@@ -1311,7 +1334,7 @@ export default function LandingPage() {
         <div className="border-t border-[#1A2235]">
           <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-4 text-xs text-slate-500 md:flex-row md:items-center md:justify-between md:px-8">
             <span>© 2026 ClipForge. All rights reserved.</span>
-            <span>ClipForge, also known as ClipForge App</span>
+            <span>Official ClipForge platform</span>
           </div>
         </div>
       </footer>

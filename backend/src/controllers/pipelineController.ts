@@ -7,6 +7,36 @@ import Job from '../models/Job';
 import Prompt from '../models/Prompt';
 import { buildStandardPrompt, extractTopicValue } from '../services/promptBuilderService';
 
+const parseTimeoutMs = (raw: unknown, fallback: number): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+};
+
+const PIPELINE_ENQUEUE_REQUEST_TIMEOUT_MS = parseTimeoutMs(
+  process.env.PIPELINE_ENQUEUE_REQUEST_TIMEOUT_MS,
+  15000
+);
+
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation, timeoutPromise]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
+
 // @desc    Get user's jobs
 // @route   GET /api/pipeline/jobs
 // @access  Private
@@ -115,7 +145,23 @@ export const startPipeline = asyncHandler(
       params.acceptedYouTubeLimitWarning = acceptedYouTubeLimitWarning;
     }
 
-    const result = await enqueuePipelineJob(params);
+    let result;
+    try {
+      result = await withTimeout(
+        enqueuePipelineJob(params),
+        PIPELINE_ENQUEUE_REQUEST_TIMEOUT_MS,
+        'Pipeline enqueue'
+      );
+    } catch (error: any) {
+      const message = String(error?.message || '');
+      if (message.toLowerCase().includes('timed out')) {
+        throw new AppError(
+          'Pipeline request timed out before queue dispatch. Please retry in a moment.',
+          503
+        );
+      }
+      throw error;
+    }
 
     if (result.warningOnly) {
       return res.status(400).json({

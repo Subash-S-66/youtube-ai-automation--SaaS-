@@ -17,7 +17,7 @@ import Media from '../models/Media';
 import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { generateContent } from '../services/contentGenerationService';
 import { encrypt } from '../utils/encryption';
-import { triggerAzureJob } from './azureJobTrigger';
+import { triggerAzureJob, resolveAzureArmApiVersion } from './azureJobTrigger';
 import { triggerLocalPipeline } from './localPipelineTrigger';
 import { triggerRemotePipeline } from './remotePipelineTrigger';
 import * as Sentry from '@sentry/node';
@@ -1165,7 +1165,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          if (armAccessToken) {
            const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
            const AZURE_RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP;
-           const armApiVersion = process.env.AZURE_ARM_API_VERSION || '2023-05-01';
+           const armApiVersion = resolveAzureArmApiVersion(process.env.AZURE_ARM_API_VERSION);
            const executionsUrl = executionName
              ? `https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions/${encodeURIComponent(executionName)}?api-version=${armApiVersion}`
              : `https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions?api-version=${armApiVersion}`;

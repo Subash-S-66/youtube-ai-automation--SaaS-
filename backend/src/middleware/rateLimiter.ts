@@ -5,8 +5,16 @@ import { connection } from '../config/redis';
 const createRedisStore = (prefix: string) =>
   connection
     ? new RedisStore({
-        // @ts-expect-error - ioredis types mismatch in express-rate-limit
-        sendCommand: (...args: string[]) => connection.call(...args),
+        sendCommand: (...args: string[]) => {
+          if (!connection) {
+            return Promise.reject(new Error('Redis connection is not initialized'));
+          }
+          const status = String((connection as any).status || '').toLowerCase();
+          if (status === 'end' || status === 'close') {
+            return Promise.reject(new Error(`Redis unavailable (status=${status || 'unknown'})`));
+          }
+          return (connection as any).call(...args);
+        },
         prefix,
       })
     : undefined;
@@ -14,6 +22,7 @@ const createRedisStore = (prefix: string) =>
 const withStore = (options: Partial<Options>, prefix: string) => {
   if (!connection) return rateLimit(options);
   return rateLimit({
+    passOnStoreError: true,
     ...options,
     store: createRedisStore(prefix) as unknown as Store,
   });

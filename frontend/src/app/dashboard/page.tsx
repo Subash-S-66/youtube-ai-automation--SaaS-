@@ -1051,6 +1051,11 @@ function Dashboard() {
   const handleApiError = (err: unknown) => {
      const apiError = err as ApiErrorShape;
      const errorMsg = apiError.response?.data?.message || apiError.message || 'An unknown error occurred.';
+     const isConcurrencyLimitError = /maximum\s+concurrent\s+(jobs|pipelines)\s+reached/i.test(errorMsg);
+     const isUploadQuotaError =
+       errorMsg.includes('videos running/pending') ||
+       errorMsg.includes('Not enough uploads remaining') ||
+       errorMsg.includes('exceeds the strict limit');
 
      if (errorMsg.includes('youtube_token_expired') || errorMsg.includes('YouTube channel is not connected or token is invalid')) {
          const reconnectTarget = reconnectChannelsToShow[0]?.channelId || selectedChannelId || invalidYouTubeChannels[0]?.channelId || '';
@@ -1064,7 +1069,18 @@ function Dashboard() {
              cancelText: 'Close',
              onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
          });
-     } else if (errorMsg.includes('Maximum concurrent jobs reached') || errorMsg.includes('videos running/pending') || errorMsg.includes('Not enough uploads remaining') || errorMsg.includes('exceeds the strict limit')) {
+         } else if (isConcurrencyLimitError) {
+           setModalConfig({
+             isOpen: true,
+             title: 'Pipeline Limit Reached',
+             description: `${errorMsg} Please wait for one running job to finish, then try again.`,
+             type: 'warning',
+             confirmText: 'OK',
+             onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+             cancelText: 'Dismiss',
+             onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+           });
+         } else if (isUploadQuotaError) {
          setModalConfig({
              isOpen: true,
              title: 'Upload Limit Reached',

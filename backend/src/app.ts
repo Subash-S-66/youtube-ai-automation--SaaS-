@@ -21,6 +21,7 @@ import { errorHandler, AppError } from './middleware/errorHandler';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { getAllowedOrigins } from './utils/cors';
+import { connection as redisConnection } from './config/redis';
 
 const app: Application = express();
 
@@ -146,10 +147,14 @@ app.get('/', (req: Request, res: Response) => {
 
 import mongoose from 'mongoose';
 app.get('/health', (req: Request, res: Response) => {
+  const redisStatus = process.env.REDIS_URL
+    ? String((redisConnection as any)?.status || 'unknown')
+    : 'disabled';
+
   res.json({
     status: 'ok',
     db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    redis: process.env.REDIS_URL ? 'enabled' : 'disabled',
+    redis: redisStatus,
     uptime: process.uptime()
   });
 });

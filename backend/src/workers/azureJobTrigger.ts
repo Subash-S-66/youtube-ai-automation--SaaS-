@@ -2,6 +2,19 @@ import axios from 'axios';
 
 const DEFAULT_AZURE_ARM_API_VERSION = '2023-05-01';
 
+export const resolveAzureArmApiVersion = (raw: unknown): string => {
+  const value = String(raw || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+  if (value) {
+    console.warn(
+      `[Azure] Invalid AZURE_ARM_API_VERSION="${value}". Falling back to ${DEFAULT_AZURE_ARM_API_VERSION}.`
+    );
+  }
+  return DEFAULT_AZURE_ARM_API_VERSION;
+};
+
 const parseExecutionNameFromLocation = (locationHeader: string): string | null => {
   if (!locationHeader) return null;
   const match = locationHeader.match(/\/executions\/([^/?]+)(?:\?|$)/i);
@@ -39,7 +52,7 @@ export async function triggerAzureJob(
     const subscriptionId = process.env.AZURE_SUBSCRIPTION_ID;
     const resourceGroup = process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP;
     const containerName = process.env.AZURE_JOB_CONTAINER_NAME || jobName;
-    const apiVersion = process.env.AZURE_ARM_API_VERSION || DEFAULT_AZURE_ARM_API_VERSION;
+    const apiVersion = resolveAzureArmApiVersion(process.env.AZURE_ARM_API_VERSION);
     const accessToken = await getAzureToken();
 
     if (!accessToken || !subscriptionId || !resourceGroup) {
