@@ -20,6 +20,14 @@ SERVICE_HOST = os.getenv("PIPELINE_SERVICE_HOST", "0.0.0.0")
 SERVICE_PORT = int(os.getenv("PIPELINE_SERVICE_PORT", "8090"))
 AUTH_SECRET = (os.getenv("PIPELINE_SERVICE_SECRET", "") or os.getenv("WEBHOOK_SECRET", "")).strip()
 
+
+def _is_truthy(value: str | None) -> bool:
+    normalized = (value or "").strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
+ALLOW_STANDALONE_PIPELINE_SERVICE = _is_truthy(os.getenv("ALLOW_STANDALONE_PIPELINE_SERVICE", "false"))
+
 RUN_STATE: dict[str, str] = {}
 RUN_LOCK = threading.Lock()
 
@@ -110,6 +118,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    if not ALLOW_STANDALONE_PIPELINE_SERVICE:
+        print("[pipeline-service] disabled by default. Set ALLOW_STANDALONE_PIPELINE_SERVICE=true to enable direct /run mode.")
+        print("[pipeline-service] Queue-only mode is recommended for production: run worker/docker-compose.yml or worker/docker-compose.build.yml.")
+        raise SystemExit(1)
+
     server = ThreadingHTTPServer((SERVICE_HOST, SERVICE_PORT), Handler)
     print(f"[pipeline-service] listening on http://{SERVICE_HOST}:{SERVICE_PORT}")
     server.serve_forever()

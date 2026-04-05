@@ -1,8 +1,8 @@
-# Worker-Only Deployment
+# Worker Deployment
 
-This folder lets you deploy a dedicated worker runtime (queue consumer + pipeline runtime) without running the backend HTTP server process.
+This folder is for queue worker mode (BullMQ + Mongo job models).
 
-## What Runs Here
+## Queue Worker Mode: What Runs Here
 
 - BullMQ pipeline worker (`dist/workers/startPipelineWorker.js`)
 - Python pipeline runtime (`pipeline/src`)
@@ -13,7 +13,9 @@ This folder lets you deploy a dedicated worker runtime (queue consumer + pipelin
 - Express backend server
 - Auth/payment/admin HTTP API routes
 
-## Prerequisites
+Queue worker mode still depends on shared Mongo and Redis data contract used by backend models.
+
+## Queue Worker Mode: Prerequisites
 
 1. Shared MongoDB with backend API
 2. Shared Redis with backend API
@@ -21,10 +23,10 @@ This folder lets you deploy a dedicated worker runtime (queue consumer + pipelin
 
 ## Quick Start (Docker)
 
-Two deployment modes are supported:
+Queue-only policy:
 
-1. VM with worker folder only (run prebuilt image)
-2. Full repository checkout (build image locally)
+- Use only `docker-compose.yml` or `docker-compose.build.yml`.
+- Keep `PIPELINE_SERVICE_URL` empty unless you intentionally use queue-based remote runner dispatch.
 
 1. Copy env template:
 
@@ -77,3 +79,7 @@ On DigitalOcean backend API service, keep these disabled:
 - `AUTO_START_EMBEDDED_WORKER_WHEN_MISSING=false`
 
 That keeps API as brain-only while workers run on VM/laptop/Azure.
+
+## Which Mode Should You Use?
+
+- Use queue worker mode. Backend manages users/jobs/plans and dispatches work through Redis queue.

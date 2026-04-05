@@ -33,7 +33,7 @@ RUN npm ci --omit=dev
 
 COPY --from=node_builder /src/backend/dist ./dist
 # Keep runtime worker modules only; remove API server entrypoints.
-RUN rm -rf dist/controllers dist/routes dist/middleware dist/app.js dist/server.js dist/socket.js
+RUN rm -rf dist/controllers dist/routes dist/app.js dist/server.js dist/socket.js
 
 COPY pipeline ./pipeline
 COPY --from=python_deps /opt/pydeps /opt/pydeps
