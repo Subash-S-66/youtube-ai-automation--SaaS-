@@ -146,16 +146,50 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 import mongoose from 'mongoose';
-app.get('/health', (req: Request, res: Response) => {
+const countPipelineWorkerHeartbeats = async (): Promise<number> => {
+  if (!process.env.REDIS_URL) {
+    return 0;
+  }
+
+  try {
+    let cursor = '0';
+    let count = 0;
+
+    do {
+      const scanResult = await (redisConnection as any).scan(
+        cursor,
+        'MATCH',
+        'pipeline:worker:heartbeat:*',
+        'COUNT',
+        100
+      );
+      const nextCursor = Array.isArray(scanResult) ? String(scanResult[0] ?? '0') : '0';
+      const keys = Array.isArray(scanResult) && Array.isArray(scanResult[1]) ? scanResult[1] : [];
+      count += keys.length;
+      cursor = nextCursor;
+    } while (cursor !== '0');
+
+    return count;
+  } catch {
+    return 0;
+  }
+};
+
+app.get('/health', async (req: Request, res: Response) => {
   const redisStatus = process.env.REDIS_URL
     ? String((redisConnection as any)?.status || 'unknown')
     : 'disabled';
+  const workerHeartbeats = await countPipelineWorkerHeartbeats();
 
   res.json({
     status: 'ok',
     db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     redis: redisStatus,
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    pipelineRunner: (process.env.PIPELINE_RUNNER || 'local').toLowerCase(),
+    embeddedWorkerConfigured: String(process.env.RUN_EMBEDDED_WORKER || '').toLowerCase() === 'true',
+    autoStartEmbeddedWorkerWhenMissing: String(process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING || 'true').toLowerCase() !== 'false',
+    pipelineWorkerHeartbeats: workerHeartbeats,
   });
 });
 

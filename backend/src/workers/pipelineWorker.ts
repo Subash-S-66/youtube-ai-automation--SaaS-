@@ -64,6 +64,59 @@ connectDB();
 
 console.log('Worker is starting and connected to Redis/MongoDB...');
 
+const parsePositiveInt = (value: unknown, fallback: number): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+};
+
+const WORKER_HEARTBEAT_INTERVAL_MS = parsePositiveInt(process.env.PIPELINE_WORKER_HEARTBEAT_MS, 10000);
+const WORKER_HEARTBEAT_TTL_SEC = Math.max(15, Math.ceil((WORKER_HEARTBEAT_INTERVAL_MS * 3) / 1000));
+const workerStartIso = new Date().toISOString();
+const workerHeartbeatKey = `pipeline:worker:heartbeat:${process.pid}`;
+let workerHeartbeatTimer: NodeJS.Timeout | null = null;
+
+const publishWorkerHeartbeat = async (): Promise<void> => {
+  try {
+    await (connection as any).set(
+      workerHeartbeatKey,
+      JSON.stringify({
+        pid: process.pid,
+        hostname: process.env.HOSTNAME || 'unknown',
+        startedAt: workerStartIso,
+        runner: process.env.PIPELINE_RUNNER || 'local',
+      }),
+      'EX',
+      WORKER_HEARTBEAT_TTL_SEC
+    );
+  } catch (error) {
+    console.warn('[PipelineWorker] Failed to publish worker heartbeat:', error);
+  }
+};
+
+const startWorkerHeartbeat = (): void => {
+  void publishWorkerHeartbeat();
+  workerHeartbeatTimer = setInterval(() => {
+    void publishWorkerHeartbeat();
+  }, WORKER_HEARTBEAT_INTERVAL_MS);
+  workerHeartbeatTimer.unref();
+};
+
+const stopWorkerHeartbeat = async (): Promise<void> => {
+  if (workerHeartbeatTimer) {
+    clearInterval(workerHeartbeatTimer);
+    workerHeartbeatTimer = null;
+  }
+
+  try {
+    await (connection as any).del(workerHeartbeatKey);
+  } catch {
+    // Best effort cleanup only
+  }
+};
+
 const MAX_LOG_SIZE = 100 * 1024; // Limit log to 100 KB
 
 // Helper to batch log updates
@@ -1546,6 +1599,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
   }
 );
 
+startWorkerHeartbeat();
+
 pipelineWorker.on('completed', (job) => {
   console.log(`[PipelineWorker] BullMQ completed job ${job.id}.`);
 });
@@ -1561,6 +1616,7 @@ pipelineWorker.on('stalled', (jobId) => {
 // Graceful Shutdown
 const shutdown = async (signal: string) => {
   console.log(`Received ${signal}, closing worker gracefully...`);
+  await stopWorkerHeartbeat();
   await pipelineWorker.close();
   if (connection) {
     await connection.quit();
