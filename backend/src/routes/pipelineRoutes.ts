@@ -18,4 +18,12 @@ router.post(
   startPipeline
 );
 
+// Alias endpoint to bypass provider-level routing issues on specific path names.
+router.post(
+  '/start',
+  pipelineRateLimiter,
+  validate(runPipelineSchema),
+  startPipeline
+);
+
 export default router;

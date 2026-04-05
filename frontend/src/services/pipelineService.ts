@@ -8,8 +8,19 @@ interface GetJobsOptions {
 
 export const pipelineService = {
   async runPipeline(promptId: string, settings: any, acceptedYouTubeLimitWarning: boolean = false) {
-    const response = await api.post('/pipeline/run', { promptId, settings, acceptedYouTubeLimitWarning });
-    return response.data;
+    const payload = { promptId, settings, acceptedYouTubeLimitWarning };
+
+    try {
+      const response = await api.post('/pipeline/start', payload);
+      return response.data;
+    } catch (error: any) {
+      const status = Number(error?.response?.status || 0);
+      if (status === 404 || status === 405) {
+        const fallbackResponse = await api.post('/pipeline/run', payload);
+        return fallbackResponse.data;
+      }
+      throw error;
+    }
   },
 
   async getJobs(page = 1, limit = 10, options: GetJobsOptions = {}) {
