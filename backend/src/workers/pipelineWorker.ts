@@ -78,6 +78,22 @@ const parsePositiveInt = (value: unknown, fallback: number): number => {
   return Math.floor(parsed);
 };
 
+const parseBooleanEnv = (value: unknown, fallback: boolean): boolean => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+  return fallback;
+};
+
+const pipelineRunnerPinnedToEnv = parseBooleanEnv(process.env.PIPELINE_RUNNER_PINNED, false);
+
 const WORKER_HEARTBEAT_INTERVAL_MS = parsePositiveInt(process.env.PIPELINE_WORKER_HEARTBEAT_MS, 10000);
 const WORKER_HEARTBEAT_TTL_SEC = Math.max(15, Math.ceil((WORKER_HEARTBEAT_INTERVAL_MS * 3) / 1000));
 const workerStartIso = new Date().toISOString();
@@ -251,10 +267,11 @@ const resolvePipelineRunner = async (
       ? config.pipelineRunner
       : null;
 
+  const autoPrimary: 'local' | 'azure' | 'remote' = process.env.PIPELINE_SERVICE_URL ? 'remote' : 'local';
   const derivedPrimary: 'local' | 'azure' | 'remote' =
-    (envPrimary as any) ||
-    (configPrimary as any) ||
-    (process.env.PIPELINE_SERVICE_URL ? 'remote' : 'local');
+    (pipelineRunnerPinnedToEnv
+      ? ((envPrimary as any) || (configPrimary as any) || autoPrimary)
+      : ((configPrimary as any) || (envPrimary as any) || autoPrimary));
 
   const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
   const sequence = buildRunnerSequence(derivedPrimary, fallbackOrder);

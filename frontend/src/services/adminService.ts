@@ -53,6 +53,11 @@ export const adminService = {
     return response.data;
   },
 
+  async getPipelineRuntimeStatus() {
+    const response = await api.get('/admin/runtime-status');
+    return response.data;
+  },
+
   async updateSystemConfig(data: {
     betaMode: boolean;
     pipelineRunner?: 'local' | 'azure' | 'remote';

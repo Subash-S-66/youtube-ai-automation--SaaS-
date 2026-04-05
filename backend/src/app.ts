@@ -181,6 +181,8 @@ app.get('/health', async (req: Request, res: Response) => {
     : 'disabled';
   const workerHeartbeats = await countPipelineWorkerHeartbeats();
   const pipelineRunner = (process.env.PIPELINE_RUNNER || 'local').toLowerCase();
+  const pipelineRunnerPinned = String(process.env.PIPELINE_RUNNER_PINNED || '').toLowerCase() === 'true';
+  const remoteRunnerConfigured = Boolean(String(process.env.PIPELINE_SERVICE_URL || '').trim());
   const missingAzureEnv: string[] = [];
   if (!String(process.env.AZURE_JOB_NAME || '').trim()) {
     missingAzureEnv.push('AZURE_JOB_NAME');
@@ -207,10 +209,12 @@ app.get('/health', async (req: Request, res: Response) => {
     redis: redisStatus,
     uptime: process.uptime(),
     pipelineRunner,
+    pipelineRunnerPinned,
     embeddedWorkerConfigured: String(process.env.RUN_EMBEDDED_WORKER || '').toLowerCase() === 'true',
     autoStartEmbeddedWorkerWhenMissing: String(process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING || 'true').toLowerCase() !== 'false',
     pipelineWorkerHeartbeats: workerHeartbeats,
     azureRunnerConfigured: missingAzureEnv.length === 0,
+    remoteRunnerConfigured,
     missingAzureEnv,
   });
 });

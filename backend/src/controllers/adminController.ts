@@ -26,6 +26,7 @@ import {
   sanitizeJobHistoryMinAgeDays,
 } from '../services/jobHistoryRetentionPolicyService';
 import { getUploadLimits } from '../services/uploadLimitService';
+import { connection } from '../config/redis';
 
 // Stripe disabled. Using Razorpay for payments.
 
@@ -33,10 +34,130 @@ const SUPPORTED_PLANS = ['free', 'basic', 'pro', 'premium'] as const;
 const STAFF_ROLES = ['admin', 'helper'] as const;
 const DEFAULT_QUEUE_WAIT_TIMEOUT_MINUTES = 100;
 const DEFAULT_PROCESSING_HARD_TIMEOUT_MINUTES = 100;
+const SUPPORTED_PIPELINE_RUNNERS = ['local', 'azure', 'remote'] as const;
+
+type PipelineRunnerType = (typeof SUPPORTED_PIPELINE_RUNNERS)[number];
 
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const generateReferralCode = () => crypto.randomBytes(4).toString('hex').toUpperCase();
+
+const parseBooleanEnv = (value: unknown, fallback: boolean): boolean => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+  return fallback;
+};
+
+const normalizePipelineRunner = (value: unknown): PipelineRunnerType | null => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'local' || normalized === 'azure' || normalized === 'remote') {
+    return normalized;
+  }
+  return null;
+};
+
+const getMissingAzureRunnerEnv = (): string[] => {
+  const missing: string[] = [];
+  if (!String(process.env.AZURE_JOB_NAME || '').trim()) {
+    missing.push('AZURE_JOB_NAME');
+  }
+  if (!String(process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP || '').trim()) {
+    missing.push('AZURE_RESOURCE_GROUP|RESOURCE_GROUP');
+  }
+  if (!String(process.env.AZURE_SUBSCRIPTION_ID || '').trim()) {
+    missing.push('AZURE_SUBSCRIPTION_ID');
+  }
+  if (!String(process.env.AZURE_TENANT_ID || '').trim()) {
+    missing.push('AZURE_TENANT_ID');
+  }
+  if (!String(process.env.AZURE_CLIENT_ID || '').trim()) {
+    missing.push('AZURE_CLIENT_ID');
+  }
+  if (!String(process.env.AZURE_CLIENT_SECRET || '').trim()) {
+    missing.push('AZURE_CLIENT_SECRET');
+  }
+  return missing;
+};
+
+const getMissingRemoteRunnerEnv = (): string[] => {
+  return String(process.env.PIPELINE_SERVICE_URL || '').trim()
+    ? []
+    : ['PIPELINE_SERVICE_URL'];
+};
+
+const getPipelineWorkerHeartbeatSummary = async (): Promise<{
+  total: number;
+  byRunner: Record<PipelineRunnerType, number>;
+}> => {
+  const byRunner: Record<PipelineRunnerType, number> = {
+    local: 0,
+    azure: 0,
+    remote: 0,
+  };
+
+  const redisClient = connection as any;
+  if (!redisClient || !process.env.REDIS_URL) {
+    return { total: 0, byRunner };
+  }
+
+  try {
+    let cursor = '0';
+    const allKeys: string[] = [];
+
+    do {
+      const scanResult = await redisClient.scan(
+        cursor,
+        'MATCH',
+        'pipeline:worker:heartbeat:*',
+        'COUNT',
+        100
+      );
+      cursor = Array.isArray(scanResult) ? String(scanResult[0] ?? '0') : '0';
+      const keys = Array.isArray(scanResult) && Array.isArray(scanResult[1]) ? scanResult[1] : [];
+      if (Array.isArray(keys) && keys.length > 0) {
+        allKeys.push(...keys.map((key: unknown) => String(key)));
+      }
+    } while (cursor !== '0');
+
+    if (allKeys.length === 0) {
+      return { total: 0, byRunner };
+    }
+
+    const rawValues = await redisClient.mget(...allKeys);
+    const values: unknown[] = Array.isArray(rawValues) ? rawValues : [];
+
+    values.forEach((entry) => {
+      if (typeof entry !== 'string' || !entry.trim()) {
+        return;
+      }
+      try {
+        const payload = JSON.parse(entry) as { runner?: unknown };
+        const runner = normalizePipelineRunner(payload?.runner);
+        if (runner) {
+          byRunner[runner] += 1;
+        }
+      } catch {
+        // Ignore malformed heartbeat payloads.
+      }
+    });
+
+    return {
+      total: allKeys.length,
+      byRunner,
+    };
+  } catch (error) {
+    console.warn('[Admin] Failed to inspect pipeline worker heartbeats:', error);
+    return { total: 0, byRunner };
+  }
+};
 
 export const getAdminStats = asyncHandler(async (req: Request, res: Response) => {
   const totalUsers = await User.countDocuments();
@@ -170,6 +291,93 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
   res.status(200).json({
     success: true,
     data: config,
+  });
+});
+
+export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: Response) => {
+  const heartbeatSummary = await getPipelineWorkerHeartbeatSummary();
+  const redisEnabled = Boolean(process.env.REDIS_URL);
+  const redisStatus = redisEnabled
+    ? String((connection as any)?.status || 'unknown')
+    : 'disabled';
+
+  let config: any = null;
+  try {
+    config = await SystemConfig.findOne()
+      .sort({ updatedAt: -1 })
+      .select('pipelineRunner pipelineRunnerFallbackOrder');
+  } catch (error) {
+    console.warn('[Admin] Failed to load SystemConfig for runtime status:', error);
+  }
+
+  const configPrimary = normalizePipelineRunner(config?.pipelineRunner);
+  const envPrimary = normalizePipelineRunner(process.env.PIPELINE_RUNNER);
+  const envPinned = parseBooleanEnv(process.env.PIPELINE_RUNNER_PINNED, false);
+  const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
+  const autoPrimary: PipelineRunnerType = String(process.env.PIPELINE_SERVICE_URL || '').trim()
+    ? 'remote'
+    : 'local';
+  const effectivePrimary = envPinned
+    ? (envPrimary || configPrimary || autoPrimary)
+    : (configPrimary || envPrimary || autoPrimary);
+
+  const missingAzureEnv = getMissingAzureRunnerEnv();
+  const missingRemoteEnv = getMissingRemoteRunnerEnv();
+
+  const dynamicModeConnected = !envPinned && heartbeatSummary.total > 0;
+  const localConnected = heartbeatSummary.byRunner.local > 0 || dynamicModeConnected;
+  const azureConnected = heartbeatSummary.byRunner.azure > 0 || dynamicModeConnected;
+  const remoteConnected = heartbeatSummary.byRunner.remote > 0 || dynamicModeConnected;
+
+  const localConfigured = true;
+  const azureConfigured = missingAzureEnv.length === 0;
+  const remoteConfigured = missingRemoteEnv.length === 0;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      redis: {
+        enabled: redisEnabled,
+        status: redisStatus,
+      },
+      workerHeartbeats: heartbeatSummary,
+      runners: {
+        local: {
+          connected: localConnected,
+          configured: localConfigured,
+          ready: localConnected && localConfigured,
+          activeWorkers: heartbeatSummary.byRunner.local,
+          missingEnv: [],
+        },
+        azure: {
+          connected: azureConnected,
+          configured: azureConfigured,
+          ready: azureConnected && azureConfigured,
+          activeWorkers: heartbeatSummary.byRunner.azure,
+          missingEnv: missingAzureEnv,
+        },
+        remote: {
+          connected: remoteConnected,
+          configured: remoteConfigured,
+          ready: remoteConnected && remoteConfigured,
+          activeWorkers: heartbeatSummary.byRunner.remote,
+          missingEnv: missingRemoteEnv,
+        },
+      },
+      runnerSelection: {
+        effectivePrimary,
+        systemConfigPrimary: configPrimary,
+        envPrimary,
+        envPinned,
+        mode: envPinned ? 'pinned' : 'dynamic',
+        fallbackOrder,
+      },
+      embeddedWorkerConfigured: parseBooleanEnv(process.env.RUN_EMBEDDED_WORKER, false),
+      autoStartEmbeddedWorkerWhenMissing: parseBooleanEnv(
+        process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING,
+        true
+      ),
+    },
   });
 });
 

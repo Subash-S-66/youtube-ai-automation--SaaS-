@@ -12,6 +12,7 @@ import {
   getGlobalBannerConfig,
   deleteUserByAdmin,
   getSystemConfig,
+  getPipelineRuntimeStatus,
   updateSystemConfig,
   updateTimeoutConfig,
   triggerWeeklyReports,
@@ -35,6 +36,7 @@ router.post('/notify', createNotification);
 router.post('/banner', setGlobalBanner);
 router.get('/banner', getGlobalBannerConfig);
 router.get('/config', getSystemConfig);
+router.get('/runtime-status', getPipelineRuntimeStatus);
 router.post('/config', updateSystemConfig);
 router.put('/config/timeout', updateTimeoutConfig);
 router.post('/trigger-reports', triggerWeeklyReports);

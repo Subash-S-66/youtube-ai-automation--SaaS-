@@ -33,6 +33,37 @@ interface UserSummary {
 }
 
 type AdminSection = 'overview' | 'communication' | 'system' | 'plans';
+type PipelineRunnerType = 'local' | 'azure' | 'remote';
+
+interface RunnerRuntimeStatus {
+  connected: boolean;
+  configured: boolean;
+  ready: boolean;
+  activeWorkers: number;
+  missingEnv: string[];
+}
+
+interface PipelineRuntimeStatus {
+  redis: {
+    enabled: boolean;
+    status: string;
+  };
+  workerHeartbeats: {
+    total: number;
+    byRunner: Record<PipelineRunnerType, number>;
+  };
+  runners: Record<PipelineRunnerType, RunnerRuntimeStatus>;
+  runnerSelection: {
+    effectivePrimary: PipelineRunnerType;
+    systemConfigPrimary: PipelineRunnerType | null;
+    envPrimary: PipelineRunnerType | null;
+    envPinned: boolean;
+    mode: 'pinned' | 'dynamic';
+    fallbackOrder: PipelineRunnerType[];
+  };
+  embeddedWorkerConfigured: boolean;
+  autoStartEmbeddedWorkerWhenMissing: boolean;
+}
 
 export default function AdminDashboard() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
@@ -83,6 +114,9 @@ export default function AdminDashboard() {
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlans, setSavingPlans] = useState(false);
   const [activeSection, setActiveSection] = useState<AdminSection>('overview');
+  const [runtimeStatus, setRuntimeStatus] = useState<PipelineRuntimeStatus | null>(null);
+  const [runtimeStatusLoading, setRuntimeStatusLoading] = useState(false);
+  const [runtimeStatusError, setRuntimeStatusError] = useState('');
 
   const sectionTabs: Array<{
     id: AdminSection;
@@ -138,6 +172,34 @@ export default function AdminDashboard() {
     queueWaitTimeoutMinutes,
     processingHardTimeoutMinutes,
   });
+
+  const runnerLabelMap: Record<PipelineRunnerType, string> = {
+    local: 'Local Worker',
+    azure: 'Azure Container Apps',
+    remote: 'Remote Pipeline Service',
+  };
+
+  const fetchPipelineRuntimeStatus = async (silent = true) => {
+    if (!silent) {
+      setRuntimeStatusLoading(true);
+    }
+
+    try {
+      const runtimeRes = await adminService.getPipelineRuntimeStatus();
+      if (runtimeRes?.success && runtimeRes?.data) {
+        setRuntimeStatus(runtimeRes.data as PipelineRuntimeStatus);
+        setRuntimeStatusError('');
+      } else {
+        setRuntimeStatusError('Failed to load pipeline runtime status.');
+      }
+    } catch (err: any) {
+      setRuntimeStatusError(err?.response?.data?.message || 'Failed to load pipeline runtime status.');
+    } finally {
+      if (!silent) {
+        setRuntimeStatusLoading(false);
+      }
+    }
+  };
 
   const handleFallbackOrderChange = (index: number, value: 'local' | 'azure' | 'remote') => {
     setPipelineRunnerFallbackOrder((prev) => {
@@ -360,6 +422,7 @@ export default function AdminDashboard() {
     setSavingPipelineRunner(true);
     try {
       await adminService.updateSystemConfig(getSystemConfigPayload());
+      await fetchPipelineRuntimeStatus(false);
       const runnerLabel = pipelineRunner === 'local'
         ? 'Local Worker'
         : (pipelineRunner === 'azure' ? 'Azure Container Apps' : 'Remote Pipeline Service');
@@ -766,6 +829,43 @@ const handleDeleteUser = () => {
     };
   }, [userPage, userSearch]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadRuntimeStatus = async (silent: boolean) => {
+      if (!silent && isMounted) {
+        setRuntimeStatusLoading(true);
+      }
+      try {
+        const runtimeRes = await adminService.getPipelineRuntimeStatus();
+        if (!isMounted) return;
+        if (runtimeRes?.success && runtimeRes?.data) {
+          setRuntimeStatus(runtimeRes.data as PipelineRuntimeStatus);
+          setRuntimeStatusError('');
+        } else {
+          setRuntimeStatusError('Failed to load pipeline runtime status.');
+        }
+      } catch (err: any) {
+        if (!isMounted) return;
+        setRuntimeStatusError(err?.response?.data?.message || 'Failed to load pipeline runtime status.');
+      } finally {
+        if (!silent && isMounted) {
+          setRuntimeStatusLoading(false);
+        }
+      }
+    };
+
+    void loadRuntimeStatus(false);
+    const timer = window.setInterval(() => {
+      void loadRuntimeStatus(true);
+    }, 15000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   return (
     <>
       <div className="max-w-7xl mx-auto py-8">
@@ -987,6 +1087,55 @@ const handleDeleteUser = () => {
                 <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
                   <p className="text-sm font-semibold text-white mb-2">Pipeline Runner</p>
                   <p className="text-xs text-slate-400 mb-3">Choose primary execution environment for pipeline runs.</p>
+                  <div className="mb-3 p-3 rounded-lg border border-[#1A2235] bg-[#111827]">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-slate-200">Worker Connectivity</p>
+                      <button
+                        type="button"
+                        onClick={() => { void fetchPipelineRuntimeStatus(false); }}
+                        className="text-[11px] px-2 py-1 rounded bg-[#1A2235] text-slate-200 hover:text-white transition-colors"
+                      >
+                        {runtimeStatusLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : 'Refresh'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {(['local', 'azure', 'remote'] as const).map((runner) => {
+                        const runnerStatus = runtimeStatus?.runners?.[runner];
+                        const isReady = Boolean(runnerStatus?.ready);
+                        const dotClass = isReady ? 'bg-green-500' : 'bg-red-500';
+                        const statusLabel = isReady ? 'Connected' : 'Not Connected';
+                        const workerCount = runnerStatus?.activeWorkers ?? 0;
+                        const missingEnv = runnerStatus?.missingEnv || [];
+
+                        return (
+                          <div key={`runtime-${runner}`} className="rounded-lg border border-[#1A2235] bg-[#0B0F1A] p-2.5">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[11px] text-slate-300 font-semibold">{runnerLabelMap[runner]}</p>
+                              <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
+                            </div>
+                            <p className={`mt-1 text-[11px] font-semibold ${isReady ? 'text-green-400' : 'text-red-400'}`}>
+                              {statusLabel}
+                            </p>
+                            <p className="text-[10px] text-slate-500">Workers: {workerCount}</p>
+                            {missingEnv.length > 0 ? (
+                              <p className="mt-1 text-[10px] text-amber-300">Missing: {missingEnv.join(', ')}</p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {runtimeStatus ? (
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        Redis: {runtimeStatus.redis.status} | Total Heartbeats: {runtimeStatus.workerHeartbeats.total} | Mode: {runtimeStatus.runnerSelection.mode} | Effective: {runnerLabelMap[runtimeStatus.runnerSelection.effectivePrimary]}
+                      </p>
+                    ) : null}
+
+                    {runtimeStatusError ? (
+                      <p className="mt-2 text-[11px] text-red-400">{runtimeStatusError}</p>
+                    ) : null}
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">Runner</label>
