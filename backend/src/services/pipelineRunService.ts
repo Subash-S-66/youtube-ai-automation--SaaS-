@@ -82,6 +82,14 @@ const parsePositiveInt = (raw: unknown, fallback: number): number => {
 
 const SUBTOPIC_GEN_TIMEOUT_MS = parseTimeoutMs(process.env.SUBTOPIC_GEN_TIMEOUT_MS, 3000);
 const QUEUE_DISPATCH_TIMEOUT_MS = parseTimeoutMs(process.env.QUEUE_DISPATCH_TIMEOUT_MS, 5000);
+const CHANNEL_UPLOAD_WINDOW_CHECK_TIMEOUT_MS = parseTimeoutMs(
+  process.env.CHANNEL_UPLOAD_WINDOW_CHECK_TIMEOUT_MS,
+  1500
+);
+const PIPELINE_RETRY_CONFIG_TIMEOUT_MS = parseTimeoutMs(
+  process.env.PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
+  1500
+);
 const MAX_CONCURRENT_PIPELINES_PER_USER = parsePositiveInt(
   process.env.MAX_CONCURRENT_PIPELINES_PER_USER,
   10
@@ -450,7 +458,18 @@ export const enqueuePipelineJob = async ({
   // Do not block enqueue on token refresh network calls.
   // Worker validates/refreshes channel token right before execution.
 
-  const uploadsLast24h = await getConsumedUploadsLast24hForChannel(userId, selectedChannelId);
+  let uploadsLast24h = 0;
+  try {
+    uploadsLast24h = await withTimeout(
+      getConsumedUploadsLast24hForChannel(userId, selectedChannelId),
+      CHANNEL_UPLOAD_WINDOW_CHECK_TIMEOUT_MS,
+      'Channel upload window check'
+    );
+  } catch (error) {
+    // This check is advisory (warning-only), so avoid blocking enqueue on slow DB aggregation.
+    uploadsLast24h = 0;
+    console.warn('[PipelineRunService] Channel upload window check timed out or failed:', error);
+  }
 
   if (uploadsLast24h + requestedVideoCount > 10 && !acceptedYouTubeLimitWarning) {
     return {
@@ -559,7 +578,17 @@ export const enqueuePipelineJob = async ({
   const count = finalSettings.videoCount || 1;
   const jobTimeoutMinutes = 10 + (count - 1) * 5;
   const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
-  const retryConfig = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRetriesByPlan').lean();
+  let retryConfig: any = null;
+  try {
+    retryConfig = await withTimeout(
+      SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRetriesByPlan').lean(),
+      PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
+      'Pipeline retry config lookup'
+    );
+  } catch (error) {
+    retryConfig = null;
+    console.warn('[PipelineRunService] Retry config lookup timed out, using default retry policy:', error);
+  }
   const jobAttempts = getPipelineAttemptsForPlan(finalLimitCheck.plan, retryConfig as any);
   const queueJobId = `${userId}-${promptId}-${Date.now()}`;
 
