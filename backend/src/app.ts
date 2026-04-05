@@ -180,16 +180,38 @@ app.get('/health', async (req: Request, res: Response) => {
     ? String((redisConnection as any)?.status || 'unknown')
     : 'disabled';
   const workerHeartbeats = await countPipelineWorkerHeartbeats();
+  const pipelineRunner = (process.env.PIPELINE_RUNNER || 'local').toLowerCase();
+  const missingAzureEnv: string[] = [];
+  if (!String(process.env.AZURE_JOB_NAME || '').trim()) {
+    missingAzureEnv.push('AZURE_JOB_NAME');
+  }
+  if (!String(process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP || '').trim()) {
+    missingAzureEnv.push('AZURE_RESOURCE_GROUP|RESOURCE_GROUP');
+  }
+  if (!String(process.env.AZURE_SUBSCRIPTION_ID || '').trim()) {
+    missingAzureEnv.push('AZURE_SUBSCRIPTION_ID');
+  }
+  if (!String(process.env.AZURE_TENANT_ID || '').trim()) {
+    missingAzureEnv.push('AZURE_TENANT_ID');
+  }
+  if (!String(process.env.AZURE_CLIENT_ID || '').trim()) {
+    missingAzureEnv.push('AZURE_CLIENT_ID');
+  }
+  if (!String(process.env.AZURE_CLIENT_SECRET || '').trim()) {
+    missingAzureEnv.push('AZURE_CLIENT_SECRET');
+  }
 
   res.json({
     status: 'ok',
     db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     redis: redisStatus,
     uptime: process.uptime(),
-    pipelineRunner: (process.env.PIPELINE_RUNNER || 'local').toLowerCase(),
+    pipelineRunner,
     embeddedWorkerConfigured: String(process.env.RUN_EMBEDDED_WORKER || '').toLowerCase() === 'true',
     autoStartEmbeddedWorkerWhenMissing: String(process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING || 'true').toLowerCase() !== 'false',
     pipelineWorkerHeartbeats: workerHeartbeats,
+    azureRunnerConfigured: missingAzureEnv.length === 0,
+    missingAzureEnv,
   });
 });
 

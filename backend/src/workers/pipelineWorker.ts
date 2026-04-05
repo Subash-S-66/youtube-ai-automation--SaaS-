@@ -182,9 +182,50 @@ const appendLogSafe = async (jobId: string, newText: string, status?: string): P
   }
 };
 
+type PipelineRunner = 'local' | 'azure' | 'remote';
+
+const getMissingAzureRunnerEnv = (): string[] => {
+  const missing: string[] = [];
+  if (!String(process.env.AZURE_JOB_NAME || '').trim()) {
+    missing.push('AZURE_JOB_NAME');
+  }
+  if (!String(process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP || '').trim()) {
+    missing.push('AZURE_RESOURCE_GROUP|RESOURCE_GROUP');
+  }
+  if (!String(process.env.AZURE_SUBSCRIPTION_ID || '').trim()) {
+    missing.push('AZURE_SUBSCRIPTION_ID');
+  }
+  if (!String(process.env.AZURE_TENANT_ID || '').trim()) {
+    missing.push('AZURE_TENANT_ID');
+  }
+  if (!String(process.env.AZURE_CLIENT_ID || '').trim()) {
+    missing.push('AZURE_CLIENT_ID');
+  }
+  if (!String(process.env.AZURE_CLIENT_SECRET || '').trim()) {
+    missing.push('AZURE_CLIENT_SECRET');
+  }
+  return missing;
+};
+
+const isRunnerAvailable = (runner: PipelineRunner): boolean => {
+  if (runner === 'azure') {
+    return getMissingAzureRunnerEnv().length === 0;
+  }
+  if (runner === 'remote') {
+    return Boolean(String(process.env.PIPELINE_SERVICE_URL || '').trim());
+  }
+  return true;
+};
+
 const resolvePipelineRunner = async (
   attemptsMade: number
-): Promise<{ runner: 'local' | 'azure' | 'remote'; primary: 'local' | 'azure' | 'remote'; sequence: Array<'local' | 'azure' | 'remote'> }> => {
+): Promise<{
+  runner: PipelineRunner;
+  primary: PipelineRunner;
+  sequence: PipelineRunner[];
+  availability: Record<PipelineRunner, boolean>;
+  missingAzureEnv: string[];
+}> => {
   let config: any = null;
   const envRunner = (process.env.PIPELINE_RUNNER || '').toLowerCase();
   const envPrimary = (envRunner === 'local' || envRunner === 'azure' || envRunner === 'remote')
@@ -211,12 +252,33 @@ const resolvePipelineRunner = async (
 
   const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
   const sequence = buildRunnerSequence(derivedPrimary, fallbackOrder);
-  const selectedRunner = pickRunnerForAttempt(derivedPrimary, sequence, attemptsMade);
+  const selectedRunner = pickRunnerForAttempt(derivedPrimary, sequence, attemptsMade) as PipelineRunner;
+
+  const availability: Record<PipelineRunner, boolean> = {
+    local: isRunnerAvailable('local'),
+    azure: isRunnerAvailable('azure'),
+    remote: isRunnerAvailable('remote'),
+  };
+
+  let resolvedRunner = selectedRunner;
+  if (!availability[selectedRunner]) {
+    const fallback = sequence.find((runner) => availability[runner as PipelineRunner]);
+    if (fallback) {
+      resolvedRunner = fallback as PipelineRunner;
+      console.warn(
+        `[PipelineWorker] Selected runner "${selectedRunner}" is unavailable. Falling back to "${resolvedRunner}".`
+      );
+    }
+  }
+
+  const missingAzureEnv = availability.azure ? [] : getMissingAzureRunnerEnv();
 
   return {
-    runner: selectedRunner,
+    runner: resolvedRunner,
     primary: derivedPrimary,
     sequence,
+    availability,
+    missingAzureEnv,
   };
 };
 
@@ -968,6 +1030,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           selectedRunner: pipelineRunner,
           primaryRunner: runnerSelection.primary,
           runnerSequence: runnerSelection.sequence,
+          runnerAvailability: runnerSelection.availability,
+          missingAzureEnv: runnerSelection.missingAzureEnv,
         })}\n`
       );
 
@@ -1169,8 +1233,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       const AZURE_RESOURCE_GROUP = process.env.AZURE_RESOURCE_GROUP;
       const AZURE_SUBSCRIPTION_ID = process.env.AZURE_SUBSCRIPTION_ID;
 
-      if (!AZURE_JOB_NAME || !AZURE_RESOURCE_GROUP || !AZURE_SUBSCRIPTION_ID) {
-         const err: any = new Error("Azure Container App Job configuration is missing.");
+      const missingAzureEnv = getMissingAzureRunnerEnv();
+      if (missingAzureEnv.length > 0 || !AZURE_JOB_NAME || !AZURE_RESOURCE_GROUP || !AZURE_SUBSCRIPTION_ID) {
+        const err: any = new Error(`Azure Container App Job configuration is missing: ${missingAzureEnv.join(', ')}`);
          err.stage = 'RENDER';
          throw err;
       }

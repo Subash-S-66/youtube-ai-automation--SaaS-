@@ -56,8 +56,33 @@ export async function triggerAzureJob(
     const accessToken = await getAzureToken();
 
     if (!accessToken || !subscriptionId || !resourceGroup) {
-      console.warn('Azure credentials missing, simulating job trigger.');
-      return { success: true, accessToken: null, executionName: null }; // fallback for dev
+      const missing: string[] = [];
+      if (!subscriptionId) {
+        missing.push('AZURE_SUBSCRIPTION_ID');
+      }
+      if (!resourceGroup) {
+        missing.push('AZURE_RESOURCE_GROUP|RESOURCE_GROUP');
+      }
+      if (!process.env.AZURE_TENANT_ID) {
+        missing.push('AZURE_TENANT_ID');
+      }
+      if (!process.env.AZURE_CLIENT_ID) {
+        missing.push('AZURE_CLIENT_ID');
+      }
+      if (!process.env.AZURE_CLIENT_SECRET) {
+        missing.push('AZURE_CLIENT_SECRET');
+      }
+
+      const allowAzureSimulation =
+        process.env.NODE_ENV !== 'production' &&
+        String(process.env.ALLOW_AZURE_SIMULATION || '').toLowerCase() === 'true';
+
+      if (allowAzureSimulation) {
+        console.warn(`Azure credentials missing (${missing.join(', ')}), simulating job trigger.`);
+        return { success: true, accessToken: null, executionName: null };
+      }
+
+      throw new Error(`Azure credentials missing: ${missing.join(', ') || 'unknown'}`);
     }
 
     // Trigger Job
