@@ -1,0 +1,9 @@
+services:
+  clipforge-worker:
+    build:
+      context: ..
+      dockerfile: worker/Dockerfile
+    image: clipforge-worker:latest
+    env_file:
+      - .env
+    restart: unless-stopped

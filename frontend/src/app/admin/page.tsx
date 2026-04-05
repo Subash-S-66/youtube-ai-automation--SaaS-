@@ -34,12 +34,14 @@ interface UserSummary {
 
 type AdminSection = 'overview' | 'communication' | 'system' | 'plans';
 type PipelineRunnerType = 'local' | 'azure' | 'remote';
+type WorkerProfileType = 'local' | 'vm' | 'cloud';
 
 interface RunnerRuntimeStatus {
   connected: boolean;
   configured: boolean;
   ready: boolean;
   activeWorkers: number;
+  embeddedWorkers?: number;
   missingEnv: string[];
 }
 
@@ -51,7 +53,18 @@ interface PipelineRuntimeStatus {
   workerHeartbeats: {
     total: number;
     byRunner: Record<PipelineRunnerType, number>;
+    bySource?: {
+      dedicated: number;
+      embedded: number;
+    };
+    byRunnerSource?: {
+      dedicated: Record<PipelineRunnerType, number>;
+      embedded: Record<PipelineRunnerType, number>;
+    };
   };
+  dedicatedWorkerHeartbeats?: number;
+  embeddedWorkerHeartbeats?: number;
+  includeEmbeddedWorkersInConnectivity?: boolean;
   runners: Record<PipelineRunnerType, RunnerRuntimeStatus>;
   runnerSelection: {
     effectivePrimary: PipelineRunnerType;
@@ -63,6 +76,10 @@ interface PipelineRuntimeStatus {
   };
   embeddedWorkerConfigured: boolean;
   autoStartEmbeddedWorkerWhenMissing: boolean;
+  workerRuntime?: {
+    profile: WorkerProfileType;
+    concurrency: number | null;
+  };
 }
 
 export default function AdminDashboard() {
@@ -96,6 +113,12 @@ export default function AdminDashboard() {
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
   const [betaMode, setBetaMode] = useState(false);
   const [pipelineRunner, setPipelineRunner] = useState<'local' | 'azure' | 'remote'>('local');
+  const [pipelineRunnerPinned, setPipelineRunnerPinned] = useState(false);
+  const [runEmbeddedWorker, setRunEmbeddedWorker] = useState(false);
+  const [autoStartEmbeddedWorkerWhenMissing, setAutoStartEmbeddedWorkerWhenMissing] = useState(false);
+  const [includeEmbeddedWorkersInRuntimeStatus, setIncludeEmbeddedWorkersInRuntimeStatus] = useState(false);
+  const [pipelineWorkerProfile, setPipelineWorkerProfile] = useState<WorkerProfileType>('local');
+  const [pipelineWorkerConcurrency, setPipelineWorkerConcurrency] = useState<number | ''>('');
   const [pipelineConcurrencyByPlan, setPipelineConcurrencyByPlan] = useState({ free: 2, basic: 5, pro: 10, premium: 20 });
   const [pipelineRetriesByPlan, setPipelineRetriesByPlan] = useState({ free: 2, basic: 3, pro: 3, premium: 5 });
   const [pipelineRunnerFallbackOrder, setPipelineRunnerFallbackOrder] = useState<Array<'local' | 'azure' | 'remote'>>(['azure', 'remote', 'local']);
@@ -107,6 +130,7 @@ export default function AdminDashboard() {
   const [planValueMap, setPlanValueMap] = useState({ free: 0, basic: 1, pro: 2, premium: 4 });
   const [savingProration, setSavingProration] = useState(false);
   const [savingPipelineRunner, setSavingPipelineRunner] = useState(false);
+  const [savingWorkerRuntimePolicy, setSavingWorkerRuntimePolicy] = useState(false);
   const [savingConcurrencyPolicy, setSavingConcurrencyPolicy] = useState(false);
   const [savingRetryPolicy, setSavingRetryPolicy] = useState(false);
   const [savingHistoryRetentionPolicy, setSavingHistoryRetentionPolicy] = useState(false);
@@ -164,6 +188,12 @@ export default function AdminDashboard() {
     betaMode,
     planValueMap,
     pipelineRunner,
+    pipelineRunnerPinned,
+    runEmbeddedWorker,
+    autoStartEmbeddedWorkerWhenMissing,
+    includeEmbeddedWorkersInRuntimeStatus,
+    pipelineWorkerProfile,
+    pipelineWorkerConcurrency: pipelineWorkerConcurrency === '' ? null : Number(pipelineWorkerConcurrency),
     pipelineConcurrencyByPlan,
     pipelineRetriesByPlan,
     pipelineRunnerFallbackOrder,
@@ -445,6 +475,33 @@ export default function AdminDashboard() {
       });
     } finally {
       setSavingPipelineRunner(false);
+    }
+  };
+
+  const handleSaveWorkerRuntimePolicy = async () => {
+    setSavingWorkerRuntimePolicy(true);
+    try {
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      await fetchPipelineRuntimeStatus(false);
+      setModalConfig({
+        isOpen: true,
+        title: 'Worker Runtime Updated',
+        description: 'Worker runtime controls were saved. Dedicated workers may require restart to apply profile/concurrency changes.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update worker runtime controls.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingWorkerRuntimePolicy(false);
     }
   };
 
@@ -745,6 +802,29 @@ const handleDeleteUser = () => {
             setBetaMode(configRes.value.data.betaMode);
             if (configRes.value.data.pipelineRunner) {
               setPipelineRunner(configRes.value.data.pipelineRunner as 'local' | 'azure' | 'remote');
+            }
+            if (typeof configRes.value.data.pipelineRunnerPinned === 'boolean') {
+              setPipelineRunnerPinned(configRes.value.data.pipelineRunnerPinned);
+            }
+            if (typeof configRes.value.data.runEmbeddedWorker === 'boolean') {
+              setRunEmbeddedWorker(configRes.value.data.runEmbeddedWorker);
+            }
+            if (typeof configRes.value.data.autoStartEmbeddedWorkerWhenMissing === 'boolean') {
+              setAutoStartEmbeddedWorkerWhenMissing(configRes.value.data.autoStartEmbeddedWorkerWhenMissing);
+            }
+            if (typeof configRes.value.data.includeEmbeddedWorkersInRuntimeStatus === 'boolean') {
+              setIncludeEmbeddedWorkersInRuntimeStatus(configRes.value.data.includeEmbeddedWorkersInRuntimeStatus);
+            }
+            if (typeof configRes.value.data.pipelineWorkerProfile === 'string') {
+              const workerProfile = String(configRes.value.data.pipelineWorkerProfile || '').trim().toLowerCase();
+              if (workerProfile === 'local' || workerProfile === 'vm' || workerProfile === 'cloud') {
+                setPipelineWorkerProfile(workerProfile as WorkerProfileType);
+              }
+            }
+            if (typeof configRes.value.data.pipelineWorkerConcurrency === 'number' && Number.isFinite(configRes.value.data.pipelineWorkerConcurrency)) {
+              setPipelineWorkerConcurrency(Math.max(1, Math.min(32, Math.floor(configRes.value.data.pipelineWorkerConcurrency))));
+            } else {
+              setPipelineWorkerConcurrency('');
             }
             if (configRes.value.data.pipelineConcurrencyByPlan) {
               setPipelineConcurrencyByPlan({
@@ -1106,6 +1186,7 @@ const handleDeleteUser = () => {
                         const dotClass = isReady ? 'bg-green-500' : 'bg-red-500';
                         const statusLabel = isReady ? 'Connected' : 'Not Connected';
                         const workerCount = runnerStatus?.activeWorkers ?? 0;
+                        const embeddedWorkerCount = runnerStatus?.embeddedWorkers ?? 0;
                         const missingEnv = runnerStatus?.missingEnv || [];
 
                         return (
@@ -1118,6 +1199,9 @@ const handleDeleteUser = () => {
                               {statusLabel}
                             </p>
                             <p className="text-[10px] text-slate-500">Workers: {workerCount}</p>
+                            {embeddedWorkerCount > 0 ? (
+                              <p className="text-[10px] text-amber-300">Embedded(API): {embeddedWorkerCount}</p>
+                            ) : null}
                             {missingEnv.length > 0 ? (
                               <p className="mt-1 text-[10px] text-amber-300">Missing: {missingEnv.join(', ')}</p>
                             ) : null}
@@ -1128,7 +1212,13 @@ const handleDeleteUser = () => {
 
                     {runtimeStatus ? (
                       <p className="mt-2 text-[11px] text-slate-500">
-                        Redis: {runtimeStatus.redis.status} | Total Heartbeats: {runtimeStatus.workerHeartbeats.total} | Mode: {runtimeStatus.runnerSelection.mode} | Effective: {runnerLabelMap[runtimeStatus.runnerSelection.effectivePrimary]}
+                        Redis: {runtimeStatus.redis.status} | Dedicated Workers: {runtimeStatus.dedicatedWorkerHeartbeats ?? runtimeStatus.workerHeartbeats.bySource?.dedicated ?? runtimeStatus.workerHeartbeats.total} | Embedded(API): {runtimeStatus.embeddedWorkerHeartbeats ?? runtimeStatus.workerHeartbeats.bySource?.embedded ?? 0} | Mode: {runtimeStatus.runnerSelection.mode} | Effective: {runnerLabelMap[runtimeStatus.runnerSelection.effectivePrimary]} | Worker Profile: {runtimeStatus.workerRuntime?.profile || pipelineWorkerProfile} | Concurrency: {runtimeStatus.workerRuntime?.concurrency ?? 'auto'}
+                      </p>
+                    ) : null}
+
+                    {runtimeStatus?.autoStartEmbeddedWorkerWhenMissing ? (
+                      <p className="mt-2 text-[11px] text-amber-300">
+                        Embedded worker auto-recovery is enabled on API server. Disable this for brain-only backend mode.
                       </p>
                     ) : null}
 
@@ -1162,6 +1252,97 @@ const handleDeleteUser = () => {
                       </button>
                     </div>
                   </div>
+                </div>
+
+                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                  <p className="text-sm font-semibold text-white mb-2">Worker Runtime Controls</p>
+                  <p className="text-xs text-slate-400 mb-3">Manage worker behavior from admin panel. Profile/concurrency updates apply after dedicated worker restart.</p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label className="flex items-center justify-between rounded-lg border border-[#1A2235] bg-[#111827] px-3 py-2">
+                      <span className="text-xs text-slate-300">Pin runner to env value</span>
+                      <input
+                        type="checkbox"
+                        checked={pipelineRunnerPinned}
+                        onChange={(e) => setPipelineRunnerPinned(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-600 bg-[#0B0F1A]"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between rounded-lg border border-[#1A2235] bg-[#111827] px-3 py-2">
+                      <span className="text-xs text-slate-300">Run embedded worker on API</span>
+                      <input
+                        type="checkbox"
+                        checked={runEmbeddedWorker}
+                        onChange={(e) => setRunEmbeddedWorker(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-600 bg-[#0B0F1A]"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between rounded-lg border border-[#1A2235] bg-[#111827] px-3 py-2">
+                      <span className="text-xs text-slate-300">Auto-start embedded worker if no dedicated heartbeat</span>
+                      <input
+                        type="checkbox"
+                        checked={autoStartEmbeddedWorkerWhenMissing}
+                        onChange={(e) => setAutoStartEmbeddedWorkerWhenMissing(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-600 bg-[#0B0F1A]"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between rounded-lg border border-[#1A2235] bg-[#111827] px-3 py-2">
+                      <span className="text-xs text-slate-300">Include embedded workers in connectivity cards</span>
+                      <input
+                        type="checkbox"
+                        checked={includeEmbeddedWorkersInRuntimeStatus}
+                        onChange={(e) => setIncludeEmbeddedWorkersInRuntimeStatus(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-600 bg-[#0B0F1A]"
+                      />
+                    </label>
+
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Worker profile</label>
+                      <select
+                        value={pipelineWorkerProfile}
+                        onChange={(e) => setPipelineWorkerProfile(e.target.value as WorkerProfileType)}
+                        className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                      >
+                        <option value="local">Local (single worker)</option>
+                        <option value="vm">VM (parallel)</option>
+                        <option value="cloud">Cloud (high parallel)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Worker concurrency override</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="32"
+                        placeholder="Auto"
+                        value={pipelineWorkerConcurrency}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (!raw.trim()) {
+                            setPipelineWorkerConcurrency('');
+                            return;
+                          }
+                          const parsed = Number(raw);
+                          const safe = Number.isFinite(parsed) ? Math.max(1, Math.min(32, Math.floor(parsed))) : 1;
+                          setPipelineWorkerConcurrency(safe);
+                        }}
+                        className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveWorkerRuntimePolicy}
+                    disabled={savingWorkerRuntimePolicy}
+                    className="mt-3 w-full py-2 bg-[#22c55e] hover:bg-[#16a34a] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingWorkerRuntimePolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Worker Runtime Controls'}
+                  </button>
                 </div>
 
                 <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">

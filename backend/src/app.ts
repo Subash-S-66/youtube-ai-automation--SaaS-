@@ -22,8 +22,23 @@ import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { getAllowedOrigins } from './utils/cors';
 import { connection as redisConnection } from './config/redis';
+import SystemConfig from './models/SystemConfig';
 
 const app: Application = express();
+
+const parseBooleanEnv = (value: unknown, fallback: boolean): boolean => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+  return fallback;
+};
 
 // Initialize Sentry if DSN is provided
 if (process.env.SENTRY_DSN) {
@@ -176,12 +191,29 @@ const countPipelineWorkerHeartbeats = async (): Promise<number> => {
 };
 
 app.get('/health', async (req: Request, res: Response) => {
+  let config: any = null;
+  try {
+    config = await SystemConfig.findOne()
+      .sort({ updatedAt: -1 })
+      .select('pipelineRunner pipelineRunnerPinned runEmbeddedWorker autoStartEmbeddedWorkerWhenMissing');
+  } catch {
+    // Keep health endpoint resilient even if config lookup fails.
+  }
+
   const redisStatus = process.env.REDIS_URL
     ? String((redisConnection as any)?.status || 'unknown')
     : 'disabled';
   const workerHeartbeats = await countPipelineWorkerHeartbeats();
-  const pipelineRunner = (process.env.PIPELINE_RUNNER || 'local').toLowerCase();
-  const pipelineRunnerPinned = String(process.env.PIPELINE_RUNNER_PINNED || '').toLowerCase() === 'true';
+  const pipelineRunner = String(config?.pipelineRunner || process.env.PIPELINE_RUNNER || 'local').toLowerCase();
+  const pipelineRunnerPinned = typeof config?.pipelineRunnerPinned === 'boolean'
+    ? config.pipelineRunnerPinned
+    : parseBooleanEnv(process.env.PIPELINE_RUNNER_PINNED, false);
+  const embeddedWorkerConfigured = typeof config?.runEmbeddedWorker === 'boolean'
+    ? config.runEmbeddedWorker
+    : parseBooleanEnv(process.env.RUN_EMBEDDED_WORKER, false);
+  const autoStartEmbeddedWorkerWhenMissing = typeof config?.autoStartEmbeddedWorkerWhenMissing === 'boolean'
+    ? config.autoStartEmbeddedWorkerWhenMissing
+    : parseBooleanEnv(process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING, false);
   const remoteRunnerConfigured = Boolean(String(process.env.PIPELINE_SERVICE_URL || '').trim());
   const missingAzureEnv: string[] = [];
   if (!String(process.env.AZURE_JOB_NAME || '').trim()) {
@@ -210,8 +242,8 @@ app.get('/health', async (req: Request, res: Response) => {
     uptime: process.uptime(),
     pipelineRunner,
     pipelineRunnerPinned,
-    embeddedWorkerConfigured: String(process.env.RUN_EMBEDDED_WORKER || '').toLowerCase() === 'true',
-    autoStartEmbeddedWorkerWhenMissing: String(process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING || 'true').toLowerCase() !== 'false',
+    embeddedWorkerConfigured,
+    autoStartEmbeddedWorkerWhenMissing,
     pipelineWorkerHeartbeats: workerHeartbeats,
     azureRunnerConfigured: missingAzureEnv.length === 0,
     remoteRunnerConfigured,

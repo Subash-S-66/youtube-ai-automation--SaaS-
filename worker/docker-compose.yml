@@ -1,0 +1,9 @@
+services:
+  clipforge-worker:
+    image: ${WORKER_IMAGE:-clipforge-worker:latest}
+    env_file:
+      - .env
+    restart: unless-stopped
+    # Uncomment if host ffmpeg hardware acceleration devices are required.
+    # devices:
+    #   - /dev/dri:/dev/dri

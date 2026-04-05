@@ -9,11 +9,43 @@ import {
   sanitizeJobHistoryMinAgeDays,
 } from '../services/jobHistoryRetentionPolicyService';
 
+const parseBooleanConfig = (value: unknown, fallback: boolean): boolean => {
+  return typeof value === 'boolean' ? value : fallback;
+};
+
+const normalizeWorkerProfile = (value: unknown): 'local' | 'vm' | 'cloud' => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'vm') {
+    return 'vm';
+  }
+  if (normalized === 'cloud') {
+    return 'cloud';
+  }
+  return 'local';
+};
+
+const normalizeWorkerConcurrency = (value: unknown): number | null => {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return Math.max(1, Math.min(32, Math.floor(parsed)));
+};
+
 export const ensureSystemConfigSingleton = async (): Promise<void> => {
   const latest = await SystemConfig.findOne().sort({ updatedAt: -1 });
   if (!latest) {
     await SystemConfig.create({
       betaMode: false,
+      pipelineRunnerPinned: false,
+      runEmbeddedWorker: false,
+      autoStartEmbeddedWorkerWhenMissing: false,
+      includeEmbeddedWorkersInRuntimeStatus: false,
+      pipelineWorkerProfile: 'local',
+      pipelineWorkerConcurrency: null,
       pipelineConcurrencyByPlan: sanitizePipelineConcurrencyByPlan(undefined),
       pipelineRetriesByPlan: sanitizePipelineRetriesByPlan(undefined),
       pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder(undefined),
@@ -30,6 +62,12 @@ export const ensureSystemConfigSingleton = async (): Promise<void> => {
         pipelineConcurrencyByPlan: sanitizePipelineConcurrencyByPlan((latest as any).pipelineConcurrencyByPlan),
         pipelineRetriesByPlan: sanitizePipelineRetriesByPlan((latest as any).pipelineRetriesByPlan),
         pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder((latest as any).pipelineRunnerFallbackOrder),
+        pipelineRunnerPinned: parseBooleanConfig((latest as any).pipelineRunnerPinned, false),
+        runEmbeddedWorker: parseBooleanConfig((latest as any).runEmbeddedWorker, false),
+        autoStartEmbeddedWorkerWhenMissing: parseBooleanConfig((latest as any).autoStartEmbeddedWorkerWhenMissing, false),
+        includeEmbeddedWorkersInRuntimeStatus: parseBooleanConfig((latest as any).includeEmbeddedWorkersInRuntimeStatus, false),
+        pipelineWorkerProfile: normalizeWorkerProfile((latest as any).pipelineWorkerProfile),
+        pipelineWorkerConcurrency: normalizeWorkerConcurrency((latest as any).pipelineWorkerConcurrency),
         jobHistoryLimitByPlan: sanitizeJobHistoryLimitByPlan((latest as any).jobHistoryLimitByPlan),
         jobHistoryMinAgeDays: sanitizeJobHistoryMinAgeDays((latest as any).jobHistoryMinAgeDays),
       },

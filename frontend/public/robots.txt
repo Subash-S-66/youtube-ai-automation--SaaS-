@@ -15,4 +15,5 @@ Disallow: /verify-email
 Disallow: /forgot-password
 
 Sitemap: https://clipforgeapp.tech/sitemap.xml
+Sitemap: https://clipforgeapp.tech/sitemap-index.xml
 Host: clipforgeapp.tech

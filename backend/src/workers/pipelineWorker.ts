@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import * as os from 'os';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 import { Worker, Job as BullJob, UnrecoverableError } from 'bullmq';
@@ -66,7 +67,9 @@ const getRequestedUploadCount = (value: unknown): number => {
 };
 
 // Connect to MongoDB BEFORE starting worker
-connectDB();
+if (mongoose.connection.readyState === 0) {
+  connectDB();
+}
 
 console.log('Worker is starting and connected to Redis/MongoDB...');
 
@@ -76,6 +79,10 @@ const parsePositiveInt = (value: unknown, fallback: number): number => {
     return fallback;
   }
   return Math.floor(parsed);
+};
+
+const clampInt = (value: number, min: number, max: number): number => {
+  return Math.max(min, Math.min(max, Math.floor(value)));
 };
 
 const parseBooleanEnv = (value: unknown, fallback: boolean): boolean => {
@@ -92,7 +99,92 @@ const parseBooleanEnv = (value: unknown, fallback: boolean): boolean => {
   return fallback;
 };
 
-const pipelineRunnerPinnedToEnv = parseBooleanEnv(process.env.PIPELINE_RUNNER_PINNED, false);
+type WorkerProfileType = 'local' | 'vm' | 'cloud';
+
+const normalizeWorkerProfile = (value: unknown): WorkerProfileType => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'vm') {
+    return 'vm';
+  }
+  if (normalized === 'cloud' || normalized === 'azure') {
+    return 'cloud';
+  }
+  return 'local';
+};
+
+const resolveDefaultConcurrencyForProfile = (profile: WorkerProfileType): number => {
+  const cpuCount = Math.max(1, os.cpus().length || 1);
+  if (profile === 'local') {
+    return 1;
+  }
+  if (profile === 'vm') {
+    return clampInt(Math.max(2, cpuCount - 1), 2, 16);
+  }
+  return clampInt(Math.max(4, cpuCount), 4, 24);
+};
+
+const resolveWorkerConcurrency = (profile: WorkerProfileType): number => {
+  const explicitConcurrency = parsePositiveInt(process.env.PIPELINE_WORKER_CONCURRENCY, 0);
+  if (explicitConcurrency > 0) {
+    return clampInt(explicitConcurrency, 1, 32);
+  }
+  return resolveDefaultConcurrencyForProfile(profile);
+};
+
+const workerProfile = normalizeWorkerProfile(process.env.PIPELINE_WORKER_PROFILE);
+const workerConcurrency = resolveWorkerConcurrency(workerProfile);
+console.log(`[PipelineWorker] Worker profile=${workerProfile}, concurrency=${workerConcurrency}`);
+
+const normalizePipelineRunner = (value: unknown): 'local' | 'azure' | 'remote' | null => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'local' || normalized === 'azure' || normalized === 'remote') {
+    return normalized;
+  }
+  return null;
+};
+
+const pipelineRunnerPinnedFallback = parseBooleanEnv(process.env.PIPELINE_RUNNER_PINNED, false);
+const envPrimaryRunner = normalizePipelineRunner(process.env.PIPELINE_RUNNER);
+const isEmbeddedWorkerProcess = parseBooleanEnv(process.env.PIPELINE_WORKER_EMBEDDED, false);
+const HEARTBEAT_RUNNER_CACHE_MS = parsePositiveInt(process.env.PIPELINE_HEARTBEAT_RUNNER_CACHE_MS, 30000);
+
+let heartbeatRunnerCache: {
+  value: 'local' | 'azure' | 'remote';
+  expiresAt: number;
+} | null = null;
+
+const resolveHeartbeatRunner = async (): Promise<'local' | 'azure' | 'remote'> => {
+  const now = Date.now();
+  if (heartbeatRunnerCache && heartbeatRunnerCache.expiresAt > now) {
+    return heartbeatRunnerCache.value;
+  }
+
+  let configPrimary: 'local' | 'azure' | 'remote' | null = null;
+  let effectivePinned = pipelineRunnerPinnedFallback;
+  try {
+    const configDoc = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRunner pipelineRunnerPinned');
+    configPrimary = normalizePipelineRunner((configDoc as any)?.pipelineRunner);
+    if (typeof (configDoc as any)?.pipelineRunnerPinned === 'boolean') {
+      effectivePinned = (configDoc as any).pipelineRunnerPinned;
+    }
+  } catch {
+    // Best effort only; fall back to env and auto runner.
+  }
+
+  const autoPrimary: 'local' | 'azure' | 'remote' = String(process.env.PIPELINE_SERVICE_URL || '').trim()
+    ? 'remote'
+    : 'local';
+  const resolved = effectivePinned
+    ? (envPrimaryRunner || configPrimary || autoPrimary)
+    : (configPrimary || envPrimaryRunner || autoPrimary);
+
+  heartbeatRunnerCache = {
+    value: resolved,
+    expiresAt: now + HEARTBEAT_RUNNER_CACHE_MS,
+  };
+
+  return resolved;
+};
 
 const WORKER_HEARTBEAT_INTERVAL_MS = parsePositiveInt(process.env.PIPELINE_WORKER_HEARTBEAT_MS, 10000);
 const WORKER_HEARTBEAT_TTL_SEC = Math.max(15, Math.ceil((WORKER_HEARTBEAT_INTERVAL_MS * 3) / 1000));
@@ -102,13 +194,17 @@ let workerHeartbeatTimer: NodeJS.Timeout | null = null;
 
 const publishWorkerHeartbeat = async (): Promise<void> => {
   try {
+    const heartbeatRunner = await resolveHeartbeatRunner();
     await (connection as any).set(
       workerHeartbeatKey,
       JSON.stringify({
         pid: process.pid,
         hostname: process.env.HOSTNAME || 'unknown',
         startedAt: workerStartIso,
-        runner: process.env.PIPELINE_RUNNER || 'local',
+        runner: heartbeatRunner,
+        profile: workerProfile,
+        concurrency: workerConcurrency,
+        source: isEmbeddedWorkerProcess ? 'embedded' : 'dedicated',
       }),
       'EX',
       WORKER_HEARTBEAT_TTL_SEC
@@ -255,7 +351,7 @@ const resolvePipelineRunner = async (
     : null;
 
   try {
-    config = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRunner pipelineRunnerFallbackOrder');
+    config = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned');
   } catch (error) {
     console.warn('Failed to load SystemConfig for pipeline runner. Falling back to env.', error);
   }
@@ -268,8 +364,11 @@ const resolvePipelineRunner = async (
       : null;
 
   const autoPrimary: 'local' | 'azure' | 'remote' = process.env.PIPELINE_SERVICE_URL ? 'remote' : 'local';
+  const effectivePinned = typeof config?.pipelineRunnerPinned === 'boolean'
+    ? config.pipelineRunnerPinned
+    : pipelineRunnerPinnedFallback;
   const derivedPrimary: 'local' | 'azure' | 'remote' =
-    (pipelineRunnerPinnedToEnv
+    (effectivePinned
       ? ((envPrimary as any) || (configPrimary as any) || autoPrimary)
       : ((configPrimary as any) || (envPrimary as any) || autoPrimary));
 
@@ -1684,7 +1783,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
   },
   {
     connection: connection as any, // Cast to any to bypass strict type matching
-    concurrency: 5, // Limit concurrency to 5 jobs at a time to improve performance
+    concurrency: workerConcurrency,
     lockDuration: 60000,
     stalledInterval: 30000,
     maxStalledCount: 2,

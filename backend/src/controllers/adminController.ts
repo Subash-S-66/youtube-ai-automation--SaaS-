@@ -35,8 +35,12 @@ const STAFF_ROLES = ['admin', 'helper'] as const;
 const DEFAULT_QUEUE_WAIT_TIMEOUT_MINUTES = 100;
 const DEFAULT_PROCESSING_HARD_TIMEOUT_MINUTES = 100;
 const SUPPORTED_PIPELINE_RUNNERS = ['local', 'azure', 'remote'] as const;
+const SUPPORTED_PIPELINE_WORKER_PROFILES = ['local', 'vm', 'cloud'] as const;
+const SUPPORTED_WORKER_HEARTBEAT_SOURCES = ['dedicated', 'embedded'] as const;
 
 type PipelineRunnerType = (typeof SUPPORTED_PIPELINE_RUNNERS)[number];
+type PipelineWorkerProfileType = (typeof SUPPORTED_PIPELINE_WORKER_PROFILES)[number];
+type WorkerHeartbeatSourceType = (typeof SUPPORTED_WORKER_HEARTBEAT_SOURCES)[number];
 
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -62,6 +66,36 @@ const normalizePipelineRunner = (value: unknown): PipelineRunnerType | null => {
     return normalized;
   }
   return null;
+};
+
+const normalizePipelineWorkerProfile = (value: unknown): PipelineWorkerProfileType => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'vm') {
+    return 'vm';
+  }
+  if (normalized === 'cloud') {
+    return 'cloud';
+  }
+  return 'local';
+};
+
+const normalizePipelineWorkerConcurrency = (value: unknown): number | null => {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return Math.max(1, Math.min(32, Math.floor(parsed)));
+};
+
+const normalizeWorkerHeartbeatSource = (value: unknown): WorkerHeartbeatSourceType => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'embedded') {
+    return 'embedded';
+  }
+  return 'dedicated';
 };
 
 const getMissingAzureRunnerEnv = (): string[] => {
@@ -96,16 +130,34 @@ const getMissingRemoteRunnerEnv = (): string[] => {
 const getPipelineWorkerHeartbeatSummary = async (): Promise<{
   total: number;
   byRunner: Record<PipelineRunnerType, number>;
+  bySource: Record<WorkerHeartbeatSourceType, number>;
+  byRunnerSource: Record<WorkerHeartbeatSourceType, Record<PipelineRunnerType, number>>;
 }> => {
   const byRunner: Record<PipelineRunnerType, number> = {
     local: 0,
     azure: 0,
     remote: 0,
   };
+  const bySource: Record<WorkerHeartbeatSourceType, number> = {
+    dedicated: 0,
+    embedded: 0,
+  };
+  const byRunnerSource: Record<WorkerHeartbeatSourceType, Record<PipelineRunnerType, number>> = {
+    dedicated: {
+      local: 0,
+      azure: 0,
+      remote: 0,
+    },
+    embedded: {
+      local: 0,
+      azure: 0,
+      remote: 0,
+    },
+  };
 
   const redisClient = connection as any;
   if (!redisClient || !process.env.REDIS_URL) {
-    return { total: 0, byRunner };
+    return { total: 0, byRunner, bySource, byRunnerSource };
   }
 
   try {
@@ -128,7 +180,7 @@ const getPipelineWorkerHeartbeatSummary = async (): Promise<{
     } while (cursor !== '0');
 
     if (allKeys.length === 0) {
-      return { total: 0, byRunner };
+      return { total: 0, byRunner, bySource, byRunnerSource };
     }
 
     const rawValues = await redisClient.mget(...allKeys);
@@ -139,10 +191,18 @@ const getPipelineWorkerHeartbeatSummary = async (): Promise<{
         return;
       }
       try {
-        const payload = JSON.parse(entry) as { runner?: unknown };
+        const payload = JSON.parse(entry) as { runner?: unknown; source?: unknown; embedded?: unknown };
+        const source = normalizeWorkerHeartbeatSource(
+          typeof payload?.source !== 'undefined'
+            ? payload.source
+            : (payload?.embedded ? 'embedded' : 'dedicated')
+        );
+        bySource[source] += 1;
+
         const runner = normalizePipelineRunner(payload?.runner);
         if (runner) {
           byRunner[runner] += 1;
+          byRunnerSource[source][runner] += 1;
         }
       } catch {
         // Ignore malformed heartbeat payloads.
@@ -152,10 +212,12 @@ const getPipelineWorkerHeartbeatSummary = async (): Promise<{
     return {
       total: allKeys.length,
       byRunner,
+      bySource,
+      byRunnerSource,
     };
   } catch (error) {
     console.warn('[Admin] Failed to inspect pipeline worker heartbeats:', error);
-    return { total: 0, byRunner };
+    return { total: 0, byRunner, bySource, byRunnerSource };
   }
 };
 
@@ -275,6 +337,12 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
     config = await SystemConfig.create({
       betaMode: false,
       pipelineRunner: 'local',
+      pipelineRunnerPinned: false,
+      runEmbeddedWorker: false,
+      autoStartEmbeddedWorkerWhenMissing: false,
+      includeEmbeddedWorkersInRuntimeStatus: false,
+      pipelineWorkerProfile: 'local',
+      pipelineWorkerConcurrency: null,
       pipelineConcurrencyByPlan: sanitizePipelineConcurrencyByPlan(undefined),
       pipelineRetriesByPlan: sanitizePipelineRetriesByPlan(undefined),
       pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder(undefined),
@@ -305,29 +373,54 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
   try {
     config = await SystemConfig.findOne()
       .sort({ updatedAt: -1 })
-      .select('pipelineRunner pipelineRunnerFallbackOrder');
+      .select(
+        'pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned runEmbeddedWorker autoStartEmbeddedWorkerWhenMissing includeEmbeddedWorkersInRuntimeStatus pipelineWorkerProfile pipelineWorkerConcurrency'
+      );
   } catch (error) {
     console.warn('[Admin] Failed to load SystemConfig for runtime status:', error);
   }
 
   const configPrimary = normalizePipelineRunner(config?.pipelineRunner);
   const envPrimary = normalizePipelineRunner(process.env.PIPELINE_RUNNER);
-  const envPinned = parseBooleanEnv(process.env.PIPELINE_RUNNER_PINNED, false);
+  const envPinnedFallback = parseBooleanEnv(process.env.PIPELINE_RUNNER_PINNED, false);
+  const effectivePinned = typeof config?.pipelineRunnerPinned === 'boolean'
+    ? config.pipelineRunnerPinned
+    : envPinnedFallback;
   const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
   const autoPrimary: PipelineRunnerType = String(process.env.PIPELINE_SERVICE_URL || '').trim()
     ? 'remote'
     : 'local';
-  const effectivePrimary = envPinned
+  const effectivePrimary = effectivePinned
     ? (envPrimary || configPrimary || autoPrimary)
     : (configPrimary || envPrimary || autoPrimary);
 
   const missingAzureEnv = getMissingAzureRunnerEnv();
   const missingRemoteEnv = getMissingRemoteRunnerEnv();
+  const includeEmbeddedWorkersInConnectivity = typeof config?.includeEmbeddedWorkersInRuntimeStatus === 'boolean'
+    ? config.includeEmbeddedWorkersInRuntimeStatus
+    : parseBooleanEnv(process.env.INCLUDE_EMBEDDED_WORKERS_IN_RUNTIME_STATUS, false);
+  const embeddedWorkerConfigured = typeof config?.runEmbeddedWorker === 'boolean'
+    ? config.runEmbeddedWorker
+    : parseBooleanEnv(process.env.RUN_EMBEDDED_WORKER, false);
+  const autoStartEmbeddedWorkerWhenMissing = typeof config?.autoStartEmbeddedWorkerWhenMissing === 'boolean'
+    ? config.autoStartEmbeddedWorkerWhenMissing
+    : parseBooleanEnv(process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING, false);
+  const workerRuntimeProfile = normalizePipelineWorkerProfile(
+    typeof config?.pipelineWorkerProfile !== 'undefined'
+      ? config.pipelineWorkerProfile
+      : process.env.PIPELINE_WORKER_PROFILE
+  );
+  const workerRuntimeConcurrency = normalizePipelineWorkerConcurrency(
+    typeof config?.pipelineWorkerConcurrency !== 'undefined'
+      ? config.pipelineWorkerConcurrency
+      : process.env.PIPELINE_WORKER_CONCURRENCY
+  );
+  const dedicatedWorkersByRunner = heartbeatSummary.byRunnerSource.dedicated;
+  const embeddedWorkersByRunner = heartbeatSummary.byRunnerSource.embedded;
 
-  const dynamicModeConnected = !envPinned && heartbeatSummary.total > 0;
-  const localConnected = heartbeatSummary.byRunner.local > 0 || dynamicModeConnected;
-  const azureConnected = heartbeatSummary.byRunner.azure > 0 || dynamicModeConnected;
-  const remoteConnected = heartbeatSummary.byRunner.remote > 0 || dynamicModeConnected;
+  const localConnected = dedicatedWorkersByRunner.local > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.local > 0);
+  const azureConnected = dedicatedWorkersByRunner.azure > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.azure > 0);
+  const remoteConnected = dedicatedWorkersByRunner.remote > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.remote > 0);
 
   const localConfigured = true;
   const azureConfigured = missingAzureEnv.length === 0;
@@ -341,26 +434,32 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
         status: redisStatus,
       },
       workerHeartbeats: heartbeatSummary,
+      dedicatedWorkerHeartbeats: heartbeatSummary.bySource.dedicated,
+      embeddedWorkerHeartbeats: heartbeatSummary.bySource.embedded,
+      includeEmbeddedWorkersInConnectivity,
       runners: {
         local: {
           connected: localConnected,
           configured: localConfigured,
           ready: localConnected && localConfigured,
-          activeWorkers: heartbeatSummary.byRunner.local,
+          activeWorkers: dedicatedWorkersByRunner.local,
+          embeddedWorkers: embeddedWorkersByRunner.local,
           missingEnv: [],
         },
         azure: {
           connected: azureConnected,
           configured: azureConfigured,
           ready: azureConnected && azureConfigured,
-          activeWorkers: heartbeatSummary.byRunner.azure,
+          activeWorkers: dedicatedWorkersByRunner.azure,
+          embeddedWorkers: embeddedWorkersByRunner.azure,
           missingEnv: missingAzureEnv,
         },
         remote: {
           connected: remoteConnected,
           configured: remoteConfigured,
           ready: remoteConnected && remoteConfigured,
-          activeWorkers: heartbeatSummary.byRunner.remote,
+          activeWorkers: dedicatedWorkersByRunner.remote,
+          embeddedWorkers: embeddedWorkersByRunner.remote,
           missingEnv: missingRemoteEnv,
         },
       },
@@ -368,15 +467,16 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
         effectivePrimary,
         systemConfigPrimary: configPrimary,
         envPrimary,
-        envPinned,
-        mode: envPinned ? 'pinned' : 'dynamic',
+        envPinned: effectivePinned,
+        mode: effectivePinned ? 'pinned' : 'dynamic',
         fallbackOrder,
       },
-      embeddedWorkerConfigured: parseBooleanEnv(process.env.RUN_EMBEDDED_WORKER, false),
-      autoStartEmbeddedWorkerWhenMissing: parseBooleanEnv(
-        process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING,
-        true
-      ),
+      workerRuntime: {
+        profile: workerRuntimeProfile,
+        concurrency: workerRuntimeConcurrency,
+      },
+      embeddedWorkerConfigured,
+      autoStartEmbeddedWorkerWhenMissing,
     },
   });
 });
@@ -385,6 +485,12 @@ const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
     pipelineRunner: z.enum(['local', 'azure', 'remote']).optional(),
+    pipelineRunnerPinned: z.boolean().optional(),
+    runEmbeddedWorker: z.boolean().optional(),
+    autoStartEmbeddedWorkerWhenMissing: z.boolean().optional(),
+    includeEmbeddedWorkersInRuntimeStatus: z.boolean().optional(),
+    pipelineWorkerProfile: z.enum(['local', 'vm', 'cloud']).optional(),
+    pipelineWorkerConcurrency: z.number().int().min(1).max(32).nullable().optional(),
     pipelineConcurrencyByPlan: z
       .object({
         free: z.number().int().min(1).max(100),
@@ -472,6 +578,12 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
 
   const {
     betaMode,
+    pipelineRunnerPinned,
+    runEmbeddedWorker,
+    autoStartEmbeddedWorkerWhenMissing,
+    includeEmbeddedWorkersInRuntimeStatus,
+    pipelineWorkerProfile,
+    pipelineWorkerConcurrency,
     planValueMap,
     pipelineConcurrencyByPlan,
     pipelineRetriesByPlan,
@@ -484,6 +596,24 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
   const updatePayload: any = { betaMode };
   if (validation.data.body.pipelineRunner) {
     updatePayload.pipelineRunner = validation.data.body.pipelineRunner;
+  }
+  if (typeof pipelineRunnerPinned === 'boolean') {
+    updatePayload.pipelineRunnerPinned = pipelineRunnerPinned;
+  }
+  if (typeof runEmbeddedWorker === 'boolean') {
+    updatePayload.runEmbeddedWorker = runEmbeddedWorker;
+  }
+  if (typeof autoStartEmbeddedWorkerWhenMissing === 'boolean') {
+    updatePayload.autoStartEmbeddedWorkerWhenMissing = autoStartEmbeddedWorkerWhenMissing;
+  }
+  if (typeof includeEmbeddedWorkersInRuntimeStatus === 'boolean') {
+    updatePayload.includeEmbeddedWorkersInRuntimeStatus = includeEmbeddedWorkersInRuntimeStatus;
+  }
+  if (pipelineWorkerProfile) {
+    updatePayload.pipelineWorkerProfile = normalizePipelineWorkerProfile(pipelineWorkerProfile);
+  }
+  if (typeof pipelineWorkerConcurrency !== 'undefined') {
+    updatePayload.pipelineWorkerConcurrency = normalizePipelineWorkerConcurrency(pipelineWorkerConcurrency);
   }
   if (pipelineConcurrencyByPlan) {
     updatePayload.pipelineConcurrencyByPlan = sanitizePipelineConcurrencyByPlan(pipelineConcurrencyByPlan);

@@ -1,24 +1,26 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import dynamic from "next/dynamic";
 import Script from "next/script";
 import { getApiOrigin } from "../lib/apiBase";
 import FramerMotionProvider from "../components/layout/FramerMotionProvider";
+import ClientOnlyEnhancements from "../components/layout/ClientOnlyEnhancements";
 import { getSiteUrl } from "../lib/site";
-
-const GlobalBanner = dynamic(() => import("../components/layout/GlobalBanner"));
-const DisableNumberScroll = dynamic(() => import("../components/DisableNumberScroll"));
+import { getAbsoluteUrl } from "../lib/seo";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
 });
+
+const siteUrl = getSiteUrl();
 
 export const viewport = {
   themeColor: "#0B0F1A",
@@ -29,7 +31,7 @@ export const viewport = {
 };
 
 export const metadata: Metadata = {
-  metadataBase: new URL(getSiteUrl()),
+  metadataBase: new URL(siteUrl),
   title: "ClipForge | Official AI Video Automation Tool",
   description:
     "ClipForge is an AI-powered platform that turns long videos into viral clips for TikTok, Instagram, and YouTube.",
@@ -45,18 +47,22 @@ export const metadata: Metadata = {
     "AI video automation platform",
   ],
   alternates: {
-    canonical: "/",
+    canonical: getAbsoluteUrl('/'),
+    languages: {
+      'en-US': getAbsoluteUrl('/'),
+      'x-default': getAbsoluteUrl('/'),
+    },
   },
   openGraph: {
     type: "website",
-    url: "/",
+    url: getAbsoluteUrl('/'),
     siteName: "ClipForge",
     title: "ClipForge | Official AI Video Automation Tool",
     description:
       "ClipForge is an AI-powered platform that turns long videos into viral clips for TikTok, Instagram, and YouTube.",
     images: [
       {
-        url: "/brand-logo.png",
+        url: getAbsoluteUrl('/brand-logo.png'),
         width: 1024,
         height: 1024,
         alt: "ClipForge",
@@ -67,7 +73,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "ClipForge | Official AI Video Automation Tool",
     description: "ClipForge is an AI-powered platform for fast video-to-viral-clip automation.",
-    images: ["/brand-logo.png"],
+    images: [getAbsoluteUrl('/brand-logo.png')],
   },
   robots: {
     index: true,
@@ -108,7 +114,6 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const apiOrigin = getApiOrigin();
-  const siteUrl = getSiteUrl();
   const websiteStructuredData = JSON.stringify({
     "@context": "https://schema.org",
     "@type": "WebSite",
@@ -187,6 +192,7 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: softwareApplicationStructuredData }}
         />
+        <link rel="preload" href="/brand-logo.png" as="image" fetchPriority="high" />
         <link rel="preconnect" href={apiOrigin} />
         <link rel="dns-prefetch" href={apiOrigin} />
       </head>
@@ -194,8 +200,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <FramerMotionProvider>
-          <GlobalBanner />
-          <DisableNumberScroll />
+          <ClientOnlyEnhancements />
           {children}
         </FramerMotionProvider>
       </body>

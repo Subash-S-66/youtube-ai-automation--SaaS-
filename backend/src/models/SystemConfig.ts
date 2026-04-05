@@ -3,6 +3,12 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface ISystemConfig extends Document {
   betaMode: boolean;
   pipelineRunner?: 'local' | 'azure' | 'remote';
+  pipelineRunnerPinned?: boolean;
+  runEmbeddedWorker?: boolean;
+  autoStartEmbeddedWorkerWhenMissing?: boolean;
+  includeEmbeddedWorkersInRuntimeStatus?: boolean;
+  pipelineWorkerProfile?: 'local' | 'vm' | 'cloud';
+  pipelineWorkerConcurrency?: number | null;
   pipelineConcurrencyByPlan?: {
     free: number;
     basic: number;
@@ -52,6 +58,33 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       type: String,
       enum: ['local', 'azure', 'remote'],
       default: 'local',
+    },
+    pipelineRunnerPinned: {
+      type: Boolean,
+      default: false,
+    },
+    runEmbeddedWorker: {
+      type: Boolean,
+      default: false,
+    },
+    autoStartEmbeddedWorkerWhenMissing: {
+      type: Boolean,
+      default: false,
+    },
+    includeEmbeddedWorkersInRuntimeStatus: {
+      type: Boolean,
+      default: false,
+    },
+    pipelineWorkerProfile: {
+      type: String,
+      enum: ['local', 'vm', 'cloud'],
+      default: 'local',
+    },
+    pipelineWorkerConcurrency: {
+      type: Number,
+      default: null,
+      min: 1,
+      max: 32,
     },
     pipelineConcurrencyByPlan: {
       free: { type: Number, default: 2, min: 1, max: 100 },

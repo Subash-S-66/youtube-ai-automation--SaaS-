@@ -61,6 +61,12 @@ export const adminService = {
   async updateSystemConfig(data: {
     betaMode: boolean;
     pipelineRunner?: 'local' | 'azure' | 'remote';
+    pipelineRunnerPinned?: boolean;
+    runEmbeddedWorker?: boolean;
+    autoStartEmbeddedWorkerWhenMissing?: boolean;
+    includeEmbeddedWorkersInRuntimeStatus?: boolean;
+    pipelineWorkerProfile?: 'local' | 'vm' | 'cloud';
+    pipelineWorkerConcurrency?: number | null;
     pipelineConcurrencyByPlan?: { free: number; basic: number; pro: number; premium: number };
     pipelineRetriesByPlan?: { free: number; basic: number; pro: number; premium: number };
     pipelineRunnerFallbackOrder?: Array<'local' | 'azure' | 'remote'>;

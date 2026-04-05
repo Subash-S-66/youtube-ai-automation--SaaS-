@@ -73,7 +73,8 @@ flowchart LR
 ```text
 .
 |- frontend/        # Next.js dashboard (App Router)
-|- backend/         # Express API + BullMQ workers
+|- backend/         # Express API (brain) + shared worker modules
+|- worker/          # Worker-only deployment assets (Docker, env template, runbook)
 |- pipeline/        # Python media generation runtime
 |- tests/           # Python tests
 |- deploy/          # Cloud deployment assets
@@ -166,6 +167,14 @@ cd backend
 npm run worker
 ```
 
+Terminal B alternative (worker-only docker runtime):
+
+```bash
+cd worker
+cp .env.example .env
+docker compose -f docker-compose.build.yml up -d --build
+```
+
 Terminal C (frontend):
 
 ```bash
@@ -242,6 +251,14 @@ npm run worker
 npm run start:worker
 ```
 
+Worker-only deployment assets:
+
+```bash
+cd worker
+docker compose -f docker-compose.build.yml up -d --build
+docker compose logs -f clipforge-worker
+```
+
 Frontend:
 
 ```bash
@@ -277,7 +294,7 @@ Recommended split:
 
 1. Frontend on Vercel.
 2. Backend API on DigitalOcean App Platform.
-3. Worker as separate backend worker service.
+3. Worker as separate service using the `worker/` folder runtime.
 4. Managed MongoDB and Redis.
 
 ### Required production rules
