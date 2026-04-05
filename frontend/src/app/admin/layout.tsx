@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { RefreshCw } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { authService } from '../../services/authService';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
@@ -16,8 +17,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const initAdmin = async () => {
       try {
         const me = await authService.getMe();
-        if (!me?.data?.user || me.data.user.role !== 'admin') {
-          if (isMounted) router.replace('/dashboard');
+        const currentRole = String(me?.data?.user?.role || '').toLowerCase();
+        const isTicketsRoute = pathname === '/admin/tickets' || pathname.startsWith('/admin/tickets/');
+        const isAdmin = currentRole === 'admin';
+        const isHelperOnTickets = currentRole === 'helper' && isTicketsRoute;
+
+        if (!me?.data?.user || (!isAdmin && !isHelperOnTickets)) {
+          if (isMounted) {
+            router.replace(currentRole === 'helper' ? '/admin/tickets' : '/dashboard');
+          }
           return;
         }
         if (!isMounted) return;
@@ -30,7 +38,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     };
     initAdmin();
     return () => { isMounted = false; };
-  }, [router]);
+  }, [pathname, router]);
 
   if (loading) {
     return (

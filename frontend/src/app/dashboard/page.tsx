@@ -83,6 +83,14 @@ interface DashboardUser {
   isYoutubeConnected?: boolean;
   youtubeChannels?: YouTubeChannel[];
   plan?: string;
+  planLimits?: {
+    max_media_items?: number;
+    max_video_items?: number;
+    max_image_items?: number;
+    max_thumbnail_items?: number;
+    max_clip_length_seconds?: number;
+    max_total_video_duration_seconds?: number;
+  };
   planFeatures?: {
     voice_selection?: boolean;
     scheduling?: boolean;
@@ -148,6 +156,15 @@ interface JobsResponse {
 
 interface MediaResponse {
   data: MediaRecord[];
+  policy?: {
+    plan: string;
+    maxMediaItems: number;
+    maxVideoItems: number;
+    maxImageItems: number;
+    maxThumbnailItems: number;
+    maxClipLengthSeconds: number;
+    maxTotalVideoDurationSeconds: number;
+  };
 }
 
 interface SequenceResponse {
@@ -188,6 +205,7 @@ function Dashboard() {
   const [, setJobs] = useState<JobRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [mediaList, setMediaList] = useState<MediaRecord[]>([]);
+  const [mediaPolicy, setMediaPolicy] = useState<MediaResponse['policy'] | null>(null);
   const [sequenceItems, setSequenceItems] = useState<SequenceRecord[]>([]);
   const [channelInputCache, setChannelInputCache] = useState<Record<string, ChannelInputCacheEntry>>({});
 
@@ -521,6 +539,10 @@ function Dashboard() {
         if (mediaResult.status === 'fulfilled') {
           const mediaData = mediaResult.value as MediaResponse;
           setMediaList(mediaData.data || []);
+          setMediaPolicy(mediaData.policy || null);
+        } else {
+          setMediaList([]);
+          setMediaPolicy(null);
         }
 
         if (sequenceResult.status === 'fulfilled') {
@@ -760,6 +782,31 @@ function Dashboard() {
   const sequenceList = sequenceItems.filter(item => item?.media);
   const sequenceVideoCount = sequenceList.filter(item => item.media?.type === 'video').length;
   const sequenceImageCount = sequenceList.filter(item => item.media?.type === 'image').length;
+  const selectedCustomVideoIds = useCustomMedia
+    ? Array.from(new Set(
+        sequenceList
+          .filter((item) => item.media?.type === 'video')
+          .map((item) => item.media?._id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      ))
+    : [];
+  const selectedCustomImageIds = useCustomMedia
+    ? Array.from(new Set(
+        sequenceList
+          .filter((item) => item.media?.type === 'image')
+          .map((item) => item.media?._id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      ))
+    : [];
+  const activeMediaPolicy = mediaPolicy || {
+    plan: currentPlan,
+    maxMediaItems: Number(user?.planLimits?.max_media_items || 0),
+    maxVideoItems: Number(user?.planLimits?.max_video_items || 0),
+    maxImageItems: Number(user?.planLimits?.max_image_items || 0),
+    maxThumbnailItems: Number(user?.planLimits?.max_thumbnail_items || 0),
+    maxClipLengthSeconds: Number(user?.planLimits?.max_clip_length_seconds || 0),
+    maxTotalVideoDurationSeconds: Number(user?.planLimits?.max_total_video_duration_seconds || 0),
+  };
   const sequenceTotalDuration = Math.round(sequenceList.reduce((acc, item) => {
     const mediaItem = item?.media;
     if (!mediaItem) return acc;
@@ -1144,8 +1191,8 @@ function Dashboard() {
           captionAnimation,
           maxWordsPerCaption: normalizedMaxWordsPerCaption,
         },
-        customVideoIds: useCustomMedia ? mediaList.filter(m => m.type === 'video').map(m => m._id) : [],
-        customImageIds: useCustomMedia ? mediaList.filter(m => m.type === 'image').map(m => m._id) : [],
+        customVideoIds: selectedCustomVideoIds,
+        customImageIds: selectedCustomImageIds,
         customThumbnailId: useCustomMedia && selectedThumbnailId ? selectedThumbnailId : undefined
       };
 
@@ -1967,8 +2014,10 @@ function Dashboard() {
                           <div className="mt-4 pt-4 border-t border-[#FF4FD8]/20 grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
                               <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Sequence Builder</span>
-                              <p className="text-sm text-white font-medium">{sequenceVideoCount} Videos, {sequenceImageCount} Images in sequence.</p>
-                              <p className="text-xs text-slate-400 mt-1">Total duration: <span className="text-white font-semibold">{sequenceTotalDuration}s</span></p>
+                              <p className="text-sm text-white font-medium">{sequenceVideoCount} videos, {sequenceImageCount} images in sequence.</p>
+                              <p className="text-xs text-slate-400 mt-1">Selected for next run: <span className="text-white font-semibold">{selectedCustomVideoIds.length}</span> videos, <span className="text-white font-semibold">{selectedCustomImageIds.length}</span> images</p>
+                              <p className="text-xs text-slate-400 mt-1">Total duration: <span className="text-white font-semibold">{sequenceTotalDuration}s</span> / <span className="text-white font-semibold">{activeMediaPolicy.maxTotalVideoDurationSeconds || 0}s</span></p>
+                              <p className="text-[11px] text-slate-500 mt-1">Only sequence items are injected into generation. Reorder/edit them from Media Library.</p>
                             </div>
                             <div className="bg-[#0B0F1A] rounded-lg p-3 border border-[#1A2235]">
                               <span className="text-xs text-slate-400 uppercase tracking-wider font-bold block mb-1">Custom Thumbnail</span>

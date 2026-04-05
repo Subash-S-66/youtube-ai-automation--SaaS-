@@ -18,6 +18,11 @@ export const adminService = {
     return response.data;
   },
 
+  async createAdminUser(data: { email: string; password: string; role?: 'admin' | 'helper' }) {
+    const response = await api.post('/admin/users/create-admin', data);
+    return response.data;
+  },
+
   async updateUserPlan(id: string, data: { plan: string, subscriptionExpiresAt?: string | null }) {
     const response = await api.put(`/admin/users/${id}/plan`, data);
     return response.data;
@@ -51,8 +56,13 @@ export const adminService = {
   async updateSystemConfig(data: {
     betaMode: boolean;
     pipelineRunner?: 'local' | 'azure' | 'remote';
+    pipelineConcurrencyByPlan?: { free: number; basic: number; pro: number; premium: number };
     pipelineRetriesByPlan?: { free: number; basic: number; pro: number; premium: number };
     pipelineRunnerFallbackOrder?: Array<'local' | 'azure' | 'remote'>;
+    jobHistoryLimitByPlan?: { free: number; basic: number; pro: number; premium: number };
+    jobHistoryMinAgeDays?: number;
+    queueWaitTimeoutMinutes?: number;
+    processingHardTimeoutMinutes?: number;
     planLimits?: { free: number; basic: number; pro: number; premium: number };
     planValueMap?: { free: number; basic: number; pro: number; premium: number };
   }) {

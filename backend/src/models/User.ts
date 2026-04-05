@@ -26,7 +26,7 @@ export interface IUser extends Document {
   provider: 'local' | 'google';
   googleId?: string;
   profileImage?: string;
-  role: string;
+  role: 'user' | 'admin' | 'helper';
   plan: PlanType;
   subscriptionExpiresAt?: Date;
   subscriptionStatus: 'active' | 'inactive';
@@ -155,7 +155,7 @@ const UserSchema = new Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ['user', 'admin'],
+      enum: ['user', 'admin', 'helper'],
       default: 'user',
     },
     plan: {

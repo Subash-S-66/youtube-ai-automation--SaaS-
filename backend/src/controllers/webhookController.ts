@@ -3,6 +3,7 @@ import asyncHandler from '../utils/asyncHandler';
 import JobModel from '../models/Job';
 import User from '../models/User';
 import crypto from 'crypto';
+import { applyUserJobHistoryRetention } from '../services/jobHistoryRetentionPolicyService';
 
 const appendRecentTopic = async (userId: string, topic: string): Promise<void> => {
   const chosenTopic = String(topic || '').trim(); // FIXED: Normalize chosen topic before storing in history.
@@ -262,6 +263,9 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
          await releaseReservedCredits(job.userId.toString(), successSettlement.releaseCount).catch(console.error);
        }
        await appendRecentTopic(updatedJob.userId.toString(), String((updatedJob as any).chosenSubTopic || '')).catch(console.error); // FIXED: Update user recent topics after webhook-confirmed success.
+       await applyUserJobHistoryRetention(updatedJob.userId.toString()).catch((error) => {
+         console.warn(`[Webhook] Failed to apply job history retention for user ${updatedJob.userId}:`, error);
+       });
      } else {
        console.log(`[Webhook] Job ${jobId} already processed (success). Skipping duplicate update.`);
      }
@@ -304,6 +308,9 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        if (failureSettlement.releaseCount > 0) {
          await releaseReservedCredits(job.userId.toString(), failureSettlement.releaseCount).catch(console.error);
        }
+       await applyUserJobHistoryRetention(updatedJob.userId.toString()).catch((error) => {
+         console.warn(`[Webhook] Failed to apply job history retention for user ${updatedJob.userId}:`, error);
+       });
      } else {
        console.log(`[Webhook] Job ${jobId} already processed (failed). Skipping duplicate update.`);
      }
@@ -344,6 +351,9 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        if (rejectedSettlement.releaseCount > 0) {
          await releaseReservedCredits(job.userId.toString(), rejectedSettlement.releaseCount).catch(console.error);
        }
+       await applyUserJobHistoryRetention(updatedJob.userId.toString()).catch((error) => {
+         console.warn(`[Webhook] Failed to apply job history retention for user ${updatedJob.userId}:`, error);
+       });
      } else {
        console.log(`[Webhook] Job ${jobId} already processed (youtube_rejected). Skipping duplicate update.`);
      }
@@ -582,6 +592,9 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
     if (nextStatus === 'success') {
       await appendRecentTopic(finalized.userId.toString(), String((finalized as any).chosenSubTopic || '')).catch(console.error);
     }
+    await applyUserJobHistoryRetention(finalized.userId.toString()).catch((error) => {
+      console.warn(`[Webhook] Failed to apply job history retention for user ${finalized.userId}:`, error);
+    });
     res.status(200).json({ success: true });
     return;
   }

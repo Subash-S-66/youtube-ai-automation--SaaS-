@@ -7,6 +7,8 @@ import { AppError } from '../middleware/errorHandler';
 import { sendEmail } from '../services/emailService';
 import { getSocketIo } from '../socket';
 
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Helper to determine if an old ticket is still valid for read-only view (24h window)
 const isTicketIn24hWindow = (ticket: any): boolean => {
   if (ticket.status === 'open') return true;
@@ -19,7 +21,9 @@ const isTicketIn24hWindow = (ticket: any): boolean => {
 // @access  Private
 export const getUserTicket = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user?.id;
+  const role = String(req.user?.role || '').toLowerCase();
   if (!userId) throw new AppError('Not authorized', 401);
+  if (role === 'helper') throw new AppError('Helpers must use the staff ticket inbox', 403);
 
   // Find an open ticket first
   let ticket = await SupportTicket.findOne({ userId, status: 'open' });
@@ -55,7 +59,8 @@ export const getUserTicket = asyncHandler(async (req: Request, res: Response) =>
 export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user?.id;
   const { message, ticketId } = req.body;
-  const isAdmin = req.user?.role === 'admin';
+  const role = String(req.user?.role || '').toLowerCase();
+  const isSupportStaff = role === 'admin' || role === 'helper';
 
   if (!userId) throw new AppError('Not authorized', 401);
   if (!message || message.trim() === '') {
@@ -64,8 +69,8 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
 
   let ticket;
 
-  if (isAdmin) {
-    if (!ticketId) throw new AppError('ticketId required for admin reply', 400);
+  if (isSupportStaff) {
+    if (!ticketId) throw new AppError('ticketId required for support reply', 400);
     ticket = await SupportTicket.findById(ticketId);
     if (!ticket) throw new AppError('Ticket not found', 404);
   } else {
@@ -92,7 +97,7 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
 
   const newMsg = await SupportMessage.create({
     ticketId: ticket._id,
-    sender: isAdmin ? 'admin' : 'user',
+    sender: isSupportStaff ? 'admin' : 'user',
     message: message.trim(),
   });
 
@@ -108,10 +113,10 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
   }
 
   // Automatically send email notification to the user if an admin replied
-  if (isAdmin) {
+  if (isSupportStaff) {
      const userToNotify = await User.findById(ticket.userId);
      if (userToNotify && userToNotify.email) {
-        sendEmail(userToNotify.email, "New reply from Support", `You have a new reply on your support ticket.\n\nAdmin says: ${message.trim()}`).catch(console.error);
+        sendEmail(userToNotify.email, "New reply from Support", `You have a new reply on your support ticket.\n\nSupport says: ${message.trim()}`).catch(console.error);
      }
   }
 
@@ -127,10 +132,14 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
 // @access  Private
 export const closeTicket = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user?.id;
-  const isAdmin = req.user?.role === 'admin';
+  const role = String(req.user?.role || '').toLowerCase();
+  const isAdmin = role === 'admin';
   const ticketId = req.params.id;
 
   if (!userId) throw new AppError('Not authorized', 401);
+  if (role === 'helper') {
+    throw new AppError('Helpers are not authorized to close tickets', 403);
+  }
 
   const ticket = await SupportTicket.findById(ticketId);
   if (!ticket) throw new AppError('Ticket not found', 404);
@@ -173,7 +182,11 @@ export const closeTicket = asyncHandler(async (req: Request, res: Response) => {
 // @route   GET /api/support/admin/tickets
 // @access  Private/Admin
 export const getAdminTickets = asyncHandler(async (req: Request, res: Response) => {
-  const tickets = await SupportTicket.find()
+  const search = String(req.query.search || '').trim().slice(0, 120);
+  const status = String(req.query.status || '').trim().toLowerCase();
+  const statusFilter = status === 'open' || status === 'closed' ? status : undefined;
+
+  const tickets = await SupportTicket.find(statusFilter ? { status: statusFilter } : {})
     .sort({ updatedAt: -1 })
     .populate('userId', 'email plan');
 
@@ -187,9 +200,20 @@ export const getAdminTickets = asyncHandler(async (req: Request, res: Response) 
     };
   }));
 
+  const filteredTickets = search
+    ? ticketsWithPreview.filter((ticket: any) => {
+        const searchRegex = new RegExp(escapeRegex(search), 'i');
+        return (
+          searchRegex.test(String(ticket?.userId?.email || '')) ||
+          searchRegex.test(String(ticket?.latestMessage || '')) ||
+          searchRegex.test(String(ticket?.status || ''))
+        );
+      })
+    : ticketsWithPreview;
+
   res.status(200).json({
     success: true,
-    data: ticketsWithPreview,
+    data: filteredTickets,
   });
 });
 

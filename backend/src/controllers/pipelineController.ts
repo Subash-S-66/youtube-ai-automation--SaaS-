@@ -6,6 +6,7 @@ import { enqueuePipelineJob } from '../services/pipelineRunService';
 import Job from '../models/Job';
 import Prompt from '../models/Prompt';
 import { buildStandardPrompt, extractTopicValue } from '../services/promptBuilderService';
+import { applyUserJobHistoryRetention } from '../services/jobHistoryRetentionPolicyService';
 
 const parseTimeoutMs = (raw: unknown, fallback: number): number => {
   const parsed = Number(raw);
@@ -45,27 +46,55 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError('Not authorized', 401);
   }
 
-  const limit = parseInt(req.query.limit as string) || 10;
+  const rawLimit = parseInt(req.query.limit as string, 10);
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, rawLimit)) : 10;
+  const rawPage = parseInt(req.query.page as string, 10);
+  const page = Number.isFinite(rawPage) ? Math.max(1, rawPage) : 1;
   const cursor = req.query.cursor as string;
+  const rawSearch = String(req.query.search || '').trim();
+  const search = rawSearch.slice(0, 120);
   const includeLogs = String(req.query.includeLogs ?? 'true').toLowerCase() !== 'false';
   const includeTotal = String(req.query.includeTotal ?? 'false').toLowerCase() === 'true';
   const query: any = { userId: req.user.id };
+
+  if (includeTotal) {
+    await applyUserJobHistoryRetention(req.user.id).catch((error) => {
+      console.warn(`[PipelineController] Failed to apply job history retention for user ${req.user?.id}:`, error);
+    });
+  }
 
   if (cursor) {
     // cursor based pagination using _id which contains timestamp
     query._id = { $lt: cursor };
   }
 
+  if (search) {
+    const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'i');
+    query.$or = [
+      { status: regex },
+      { errorMessage: regex },
+      { error: regex },
+    ];
+  }
+
   const projection = includeLogs
     ? '_id createdAt status progress logs error errorMessage errorStage videoUrl youtubeVideoId completedAt'
     : '_id createdAt status progress error errorMessage errorStage videoUrl youtubeVideoId completedAt';
 
-  // Request limit + 1 to check if there is a next page
-  const jobs = await Job.find(query)
-    .select(projection)
-    .sort({ _id: -1 })
-    .limit(limit + 1)
-    .lean();
+  // Cursor mode is used for timeline polling. Page mode is used for explicit pagination UI.
+  const jobs = cursor
+    ? await Job.find(query)
+        .select(projection)
+        .sort({ _id: -1 })
+        .limit(limit + 1)
+        .lean()
+    : await Job.find(query)
+        .select(projection)
+        .sort({ _id: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit + 1)
+        .lean();
 
   let nextCursor = null;
   if (jobs.length > limit) {
@@ -84,13 +113,14 @@ export const getJobs = asyncHandler(async (req: Request, res: Response) => {
     return job;
   });
 
-  const total = includeTotal ? await Job.countDocuments({ userId: req.user.id }) : undefined;
+  const total = includeTotal ? await Job.countDocuments(query) : undefined;
   const pages = typeof total === 'number' ? Math.max(1, Math.ceil(total / limit)) : undefined;
 
   res.status(200).json({
     success: true,
     data: sanitizedJobs,
     pagination: {
+      page,
       limit,
       ...(typeof total === 'number' ? { total } : {}),
       ...(typeof pages === 'number' ? { pages } : {}),

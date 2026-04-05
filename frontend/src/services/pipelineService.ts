@@ -4,6 +4,7 @@ interface GetJobsOptions {
   includeLogs?: boolean;
   includeTotal?: boolean;
   cursor?: string;
+  search?: string;
 }
 
 export const pipelineService = {
@@ -37,6 +38,9 @@ export const pipelineService = {
     }
     if (options.cursor) {
       params.set('cursor', options.cursor);
+    }
+    if (typeof options.search === 'string' && options.search.trim()) {
+      params.set('search', options.search.trim());
     }
 
     const response = await api.get(`/pipeline/jobs?${params.toString()}`, {

@@ -18,6 +18,12 @@ export interface IPlan extends Document {
   limits: {
     max_channels: number;
     daily_upload_limit: number;
+    max_media_items: number;
+    max_video_items: number;
+    max_image_items: number;
+    max_thumbnail_items: number;
+    max_clip_length_seconds: number;
+    max_total_video_duration_seconds: number;
   };
   discountPercentage: number;
   featuresList: string[];
@@ -46,6 +52,12 @@ const PlanSchema = new Schema<IPlan>(
     limits: {
       max_channels: { type: Number, default: 1 },
       daily_upload_limit: { type: Number, default: 1 },
+      max_media_items: { type: Number, default: 0 },
+      max_video_items: { type: Number, default: 0 },
+      max_image_items: { type: Number, default: 0 },
+      max_thumbnail_items: { type: Number, default: 0 },
+      max_clip_length_seconds: { type: Number, default: 0 },
+      max_total_video_duration_seconds: { type: Number, default: 0 },
     },
   },
   {

@@ -18,8 +18,18 @@ export const supportService = {
   },
 
   // Admin endpoints
-  async getAdminTickets() {
-    const response = await api.get('/support/admin/tickets');
+  async getAdminTickets(search = '', status: 'all' | 'open' | 'closed' = 'all') {
+    const params = new URLSearchParams();
+    const trimmedSearch = search.trim();
+    if (trimmedSearch) {
+      params.set('search', trimmedSearch);
+    }
+    if (status !== 'all') {
+      params.set('status', status);
+    }
+
+    const query = params.toString();
+    const response = await api.get(query ? `/support/admin/tickets?${query}` : '/support/admin/tickets');
     return response.data;
   },
 

@@ -9,6 +9,7 @@ import AppModal, { AppModalType } from '../../../components/ui/AppModal';
 interface UserSummary {
   _id: string;
   email: string;
+  role: string;
   plan: string;
   uploadsUsedToday: number;
   uploadsOnHold: number;
@@ -28,6 +29,10 @@ export default function AdminUsersPage() {
   const [userPage, setUserPage] = useState(1);
   const [userTotalPages, setUserTotalPages] = useState(1);
   const [userSearch, setUserSearch] = useState('');
+  const [createAdminEmail, setCreateAdminEmail] = useState('');
+  const [createAdminPassword, setCreateAdminPassword] = useState('');
+  const [createStaffRole, setCreateStaffRole] = useState<'admin' | 'helper'>('admin');
+  const [creatingAdmin, setCreatingAdmin] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDetails, setUserDetails] = useState<UserDetails | null>(null);
   const [editPlan, setEditPlan] = useState('free');
@@ -176,12 +181,98 @@ export default function AdminUsersPage() {
     });
   };
 
+  const handleCreateAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createAdminEmail.trim() || !createAdminPassword.trim()) {
+      return;
+    }
+
+    setCreatingAdmin(true);
+    try {
+      await adminService.createAdminUser({
+        email: createAdminEmail.trim(),
+        password: createAdminPassword,
+        role: createStaffRole,
+      });
+
+      setCreateAdminEmail('');
+      setCreateAdminPassword('');
+
+      const usersRes = await adminService.getUsers(userPage, 10, userSearch);
+      if (usersRes?.success) {
+        setUsers(usersRes.data);
+        setUserTotalPages(usersRes.pagination?.pages || 1);
+      }
+
+      setModalConfig({
+        isOpen: true,
+        title: `${createStaffRole === 'helper' ? 'Helper' : 'Admin'} Created`,
+        description: `New ${createStaffRole} account was created successfully.`,
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: `Create ${createStaffRole === 'helper' ? 'Helper' : 'Admin'} Failed`,
+        description: err.response?.data?.message || `Unable to create ${createStaffRole} user.`,
+        type: 'error',
+        confirmText: 'Dismiss',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setCreatingAdmin(false);
+    }
+  };
+
   return (
     <>
       <div className="max-w-7xl mx-auto py-8">
         {!selectedUserId ? (
           <div className="space-y-6">
             <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Users Directory</h1>
+
+            <div className="bg-[#111827] border border-[#1A2235] rounded-2xl shadow-xl p-6">
+              <div className="mb-4">
+                <h2 className="text-lg font-bold text-white">Create Staff User</h2>
+                <p className="text-xs text-slate-400 mt-1">Create admin or helper logins securely from the dashboard.</p>
+              </div>
+              <form onSubmit={handleCreateAdmin} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <input
+                  type="email"
+                  value={createAdminEmail}
+                  onChange={(e) => setCreateAdminEmail(e.target.value)}
+                  placeholder="admin@example.com"
+                  className="bg-[#0B0F1A] border border-[#1A2235] rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-[#7C5CFF]"
+                  required
+                />
+                <input
+                  type="password"
+                  value={createAdminPassword}
+                  onChange={(e) => setCreateAdminPassword(e.target.value)}
+                  placeholder="Password (min 8 chars, letter + number)"
+                  className="bg-[#0B0F1A] border border-[#1A2235] rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-[#7C5CFF]"
+                  minLength={8}
+                  required
+                />
+                <select
+                  value={createStaffRole}
+                  onChange={(e) => setCreateStaffRole(e.target.value as 'admin' | 'helper')}
+                  className="bg-[#0B0F1A] border border-[#1A2235] rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-[#7C5CFF]"
+                >
+                  <option value="admin">Admin</option>
+                  <option value="helper">Helper (tickets reply only)</option>
+                </select>
+                <button
+                  type="submit"
+                  disabled={creatingAdmin}
+                  className="rounded-xl bg-[#7C5CFF] hover:bg-[#6b4fe0] disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold text-sm px-4 py-2 flex items-center justify-center"
+                >
+                  {creatingAdmin ? <RefreshCw className="h-4 w-4 animate-spin" /> : `Create ${createStaffRole === 'helper' ? 'Helper' : 'Admin'}`}
+                </button>
+              </form>
+            </div>
 
             <div className="bg-[#111827] border border-[#1A2235] rounded-2xl shadow-xl overflow-hidden">
               <div className="p-6 border-b border-[#1A2235] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -205,6 +296,7 @@ export default function AdminUsersPage() {
                   <thead>
                     <tr className="bg-[#0B0F1A] text-slate-400 text-xs uppercase tracking-wider">
                       <th className="p-4 font-medium">Email</th>
+                      <th className="p-4 font-medium">Role</th>
                       <th className="p-4 font-medium">Plan</th>
                       <th className="p-4 font-medium hidden sm:table-cell">Usage (Today)</th>
                       <th className="p-4 font-medium hidden sm:table-cell">On Hold</th>
@@ -216,6 +308,18 @@ export default function AdminUsersPage() {
                       <tr key={u._id} onClick={() => loadUserDetails(u._id)} className="hover:bg-[#1A2235]/50 cursor-pointer transition-colors group">
                         <td className="p-4 font-medium text-slate-200 group-hover:text-white transition-colors">{u.email}</td>
                         <td className="p-4">
+                          <span className={cn(
+                            'px-2.5 py-1 text-xs font-bold rounded-lg border',
+                            u.role === 'admin'
+                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                              : u.role === 'helper'
+                              ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                              : 'bg-slate-500/10 text-slate-300 border-slate-500/20'
+                          )}>
+                            {String(u.role || 'user').toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="p-4">
                           <span className={cn("px-2.5 py-1 text-xs font-bold rounded-lg border", u.plan === 'free' ? "bg-slate-500/10 text-slate-300 border-slate-500/20" : "bg-[#7C5CFF]/10 text-[#7C5CFF] border-[#7C5CFF]/20")}>{u.plan.toUpperCase()}</span>
                         </td>
                         <td className="p-4 text-slate-400 hidden sm:table-cell">{u.uploadsUsedToday}</td>
@@ -224,10 +328,10 @@ export default function AdminUsersPage() {
                       </tr>
                     ))}
                     {dashboardLoading && (
-                      <tr><td colSpan={5} className="p-8 text-center text-slate-500">Loading users...</td></tr>
+                      <tr><td colSpan={6} className="p-8 text-center text-slate-500">Loading users...</td></tr>
                     )}
                     {!dashboardLoading && users.length === 0 && (
-                      <tr><td colSpan={5} className="p-8 text-center text-slate-500">No users found.</td></tr>
+                      <tr><td colSpan={6} className="p-8 text-center text-slate-500">No users found.</td></tr>
                     )}
                   </tbody>
                 </table>

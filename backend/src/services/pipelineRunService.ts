@@ -11,6 +11,7 @@ import { buildStandardPrompt } from './promptBuilderService';
 import { generateSubTopics } from './subTopicService';
 import { decrementChannelVideosOnHold } from './channelHoldService';
 import { getPipelineAttemptsForPlan } from './pipelineRetryPolicyService';
+import { getPipelineConcurrencyLimitForPlan } from './pipelineConcurrencyPolicyService';
 
 export interface PipelineInputSettings {
   targetDuration?: number;
@@ -90,7 +91,7 @@ const PIPELINE_RETRY_CONFIG_TIMEOUT_MS = parseTimeoutMs(
   process.env.PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
   1500
 );
-const MAX_CONCURRENT_PIPELINES_PER_USER = parsePositiveInt(
+const MAX_CONCURRENT_PIPELINES_PER_USER_FALLBACK = parsePositiveInt(
   process.env.MAX_CONCURRENT_PIPELINES_PER_USER,
   10
 );
@@ -361,6 +362,24 @@ export const enqueuePipelineJob = async ({
     );
   }
 
+  let queueConfig: any = null;
+  try {
+    queueConfig = await withTimeout(
+      SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineConcurrencyByPlan pipelineRetriesByPlan').lean(),
+      PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
+      'Pipeline queue config lookup'
+    );
+  } catch (error) {
+    queueConfig = null;
+    console.warn('[PipelineRunService] Queue config lookup timed out, using fallback limits:', error);
+  }
+  const dynamicQueueLimit = getPipelineConcurrencyLimitForPlan(
+    limitCheck.plan,
+    queueConfig as any,
+    MAX_CONCURRENT_PIPELINES_PER_USER_FALLBACK
+  );
+  const normalizedPlanLabel = String(limitCheck.displayPlan || limitCheck.plan || 'free');
+
   const user = await User.findById(userId);
   if (!user) {
     throw new AppError('User not found', 404);
@@ -371,9 +390,9 @@ export const enqueuePipelineJob = async ({
     status: { $in: ['pending', 'processing'] },
   });
 
-  if (activeJobsCount >= MAX_CONCURRENT_PIPELINES_PER_USER) {
+  if (activeJobsCount >= dynamicQueueLimit) {
     throw new AppError(
-      `Maximum concurrent pipelines reached (${MAX_CONCURRENT_PIPELINES_PER_USER}) for this user. Please wait for an existing job to finish.`,
+      `Maximum concurrent pipelines reached (${dynamicQueueLimit}) for plan ${normalizedPlanLabel}. Please wait for an existing job to finish.`,
       400
     );
   }
@@ -411,9 +430,9 @@ export const enqueuePipelineJob = async ({
     }
   }
 
-  if (channel.videosOnHold + requestedVideoCount > 10) {
+  if (channel.videosOnHold + requestedVideoCount > dynamicQueueLimit) {
     throw new AppError(
-      `Cannot queue job. This channel currently has ${channel.videosOnHold} videos running/pending. Requesting ${requestedVideoCount} more exceeds the strict limit of 10 per channel.`,
+      `Cannot queue job. This channel currently has ${channel.videosOnHold} videos running/pending. Requesting ${requestedVideoCount} more exceeds the queue limit of ${dynamicQueueLimit} for plan ${normalizedPlanLabel}.`,
       400
     );
   }
@@ -458,23 +477,23 @@ export const enqueuePipelineJob = async ({
   // Do not block enqueue on token refresh network calls.
   // Worker validates/refreshes channel token right before execution.
 
-  let uploadsLast24h = 0;
+  let uploadsUsedInDailyWindow = 0;
   try {
-    uploadsLast24h = await withTimeout(
+    uploadsUsedInDailyWindow = await withTimeout(
       getConsumedUploadsLast24hForChannel(userId, selectedChannelId),
       CHANNEL_UPLOAD_WINDOW_CHECK_TIMEOUT_MS,
       'Channel upload window check'
     );
   } catch (error) {
     // This check is advisory (warning-only), so avoid blocking enqueue on slow DB aggregation.
-    uploadsLast24h = 0;
+    uploadsUsedInDailyWindow = 0;
     console.warn('[PipelineRunService] Channel upload window check timed out or failed:', error);
   }
 
-  if (uploadsLast24h + requestedVideoCount > 10 && !acceptedYouTubeLimitWarning) {
+  if (uploadsUsedInDailyWindow + requestedVideoCount > 10 && !acceptedYouTubeLimitWarning) {
     return {
       warningOnly: true,
-      warning: 'YouTube daily upload limit reached for this channel (10 videos / 24 hours). If you continue now, upload credits may still be consumed even when YouTube rejects the upload. Continue?',
+      warning: 'YouTube daily upload limit reached for this channel (10 videos per IST day). If you continue now, upload credits may still be consumed even when YouTube rejects the upload. Continue?',
     };
   }
 
@@ -489,9 +508,18 @@ export const enqueuePipelineJob = async ({
      throw new AppError('Daily upload limit reached or insufficient credits', 403);
   }
 
-  // Still increment channel-specific hold
+  // Atomically increment channel-specific hold only if it still fits this plan's queue cap.
   const updatedUser = await User.findOneAndUpdate(
-    { _id: userId, 'youtubeChannels.channelId': selectedChannelId }, // FIXED: Increment hold on the exact selected channel.
+    {
+      _id: userId,
+      youtubeChannels: {
+        $elemMatch: {
+          channelId: selectedChannelId,
+          status: { $ne: 'disabled_due_to_plan' },
+          videosOnHold: { $lte: Math.max(0, dynamicQueueLimit - requestedVideoCount) },
+        },
+      },
+    },
     {
       $inc: {
         'youtubeChannels.$.videosOnHold': requestedVideoCount,
@@ -499,6 +527,14 @@ export const enqueuePipelineJob = async ({
     },
     { returnDocument: 'after' }
   );
+
+  if (!updatedUser) {
+    await releaseReservedCredits(userId, requestedVideoCount).catch(console.error);
+    throw new AppError(
+      `Cannot queue job. Queue limit is ${dynamicQueueLimit} for plan ${normalizedPlanLabel}. Please wait for pending/processing jobs to settle.`,
+      400
+    );
+  }
 
   const finalLimitCheck = await getUploadLimits(userId);
   const persistedPipelineConfig = { ...finalSettings, channelId: selectedChannelId }; // FIXED: Explicitly persist selected channelId in pipelineConfig.channelId.
@@ -578,16 +614,18 @@ export const enqueuePipelineJob = async ({
   const count = finalSettings.videoCount || 1;
   const jobTimeoutMinutes = 10 + (count - 1) * 5;
   const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
-  let retryConfig: any = null;
-  try {
-    retryConfig = await withTimeout(
-      SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRetriesByPlan').lean(),
-      PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
-      'Pipeline retry config lookup'
-    );
-  } catch (error) {
-    retryConfig = null;
-    console.warn('[PipelineRunService] Retry config lookup timed out, using default retry policy:', error);
+  let retryConfig: any = queueConfig;
+  if (!retryConfig || !retryConfig.pipelineRetriesByPlan) {
+    try {
+      retryConfig = await withTimeout(
+        SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRetriesByPlan').lean(),
+        PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
+        'Pipeline retry config lookup'
+      );
+    } catch (error) {
+      retryConfig = null;
+      console.warn('[PipelineRunService] Retry config lookup timed out, using default retry policy:', error);
+    }
   }
   const jobAttempts = getPipelineAttemptsForPlan(finalLimitCheck.plan, retryConfig as any);
   const queueJobId = `${userId}-${promptId}-${Date.now()}`;
@@ -666,8 +704,8 @@ export const enqueuePipelineJob = async ({
     },
   };
 
-  if (uploadsLast24h + requestedVideoCount > 10) {
-    result.warning = 'YouTube daily upload limit reached for this channel (10 videos / 24 hours). If you continue now, upload credits may still be consumed even when YouTube rejects the upload. Continue?';
+  if (uploadsUsedInDailyWindow + requestedVideoCount > 10) {
+    result.warning = 'YouTube daily upload limit reached for this channel (10 videos per IST day). If you continue now, upload credits may still be consumed even when YouTube rejects the upload. Continue?';
   }
 
   return result;

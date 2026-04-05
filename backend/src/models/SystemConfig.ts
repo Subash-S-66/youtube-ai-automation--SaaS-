@@ -3,6 +3,12 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface ISystemConfig extends Document {
   betaMode: boolean;
   pipelineRunner?: 'local' | 'azure' | 'remote';
+  pipelineConcurrencyByPlan?: {
+    free: number;
+    basic: number;
+    pro: number;
+    premium: number;
+  };
   pipelineRetriesByPlan?: {
     free: number;
     basic: number;
@@ -22,6 +28,15 @@ export interface ISystemConfig extends Document {
     pro: number;
     premium: number;
   };
+  jobHistoryLimitByPlan?: {
+    free: number;
+    basic: number;
+    pro: number;
+    premium: number;
+  };
+  jobHistoryMinAgeDays?: number;
+  queueWaitTimeoutMinutes?: number;
+  processingHardTimeoutMinutes?: number;
   perVideoTimeoutMs: number;
   baseTimeoutMs: number;
   updatedAt: Date;
@@ -37,6 +52,12 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       type: String,
       enum: ['local', 'azure', 'remote'],
       default: 'local',
+    },
+    pipelineConcurrencyByPlan: {
+      free: { type: Number, default: 2, min: 1, max: 100 },
+      basic: { type: Number, default: 5, min: 1, max: 100 },
+      pro: { type: Number, default: 10, min: 1, max: 100 },
+      premium: { type: Number, default: 20, min: 1, max: 100 },
     },
     pipelineRetriesByPlan: {
       free: { type: Number, default: 2, min: 0, max: 10 },
@@ -63,6 +84,30 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       basic: { type: Number, default: 1 },
       pro: { type: Number, default: 2 },
       premium: { type: Number, default: 4 },
+    },
+    jobHistoryLimitByPlan: {
+      free: { type: Number, default: 10, min: 1, max: 5000 },
+      basic: { type: Number, default: 50, min: 1, max: 5000 },
+      pro: { type: Number, default: 100, min: 1, max: 5000 },
+      premium: { type: Number, default: 200, min: 1, max: 5000 },
+    },
+    jobHistoryMinAgeDays: {
+      type: Number,
+      default: 7,
+      min: 1,
+      max: 3650,
+    },
+    queueWaitTimeoutMinutes: {
+      type: Number,
+      default: 100,
+      min: 5,
+      max: 1440,
+    },
+    processingHardTimeoutMinutes: {
+      type: Number,
+      default: 100,
+      min: 10,
+      max: 1440,
     },
     perVideoTimeoutMs: {
       type: Number,

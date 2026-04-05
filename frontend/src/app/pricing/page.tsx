@@ -46,17 +46,33 @@ export default function PricingPage() {
           const mappedPlans = plansData.data.map((p: any) => {
              const planId = String(p.name || '').toLowerCase();
              const rawName = String(p.name || planId || 'plan');
-             const dynamicFeatures = [
-               `${p.limits?.daily_upload_limit || 0} video uploads per day`,
-               `${p.limits?.max_channels || 0} YouTube channels`,
-               p.features?.voice_selection ? 'Premium AI voices' : 'Standard voices',
-               p.features?.scheduling ? 'Scheduling enabled' : 'No scheduling',
-               p.features?.story_mode ? 'Story Mode enabled' : 'No Story Mode',
-               p.features?.cta ? 'Custom Call-to-Actions' : 'No custom CTAs',
-               p.features?.format_selection ? 'Multiple format selections' : 'Standard format',
-               p.features?.template_customization ? 'Subtitle font & color control' : 'No subtitle customization',
-               p.features?.custom_media ? 'Custom media library' : 'No custom media'
+             const limits = p.limits || {};
+             const features = p.features || {};
+             const adminFeatures = Array.isArray(p.featuresList)
+               ? p.featuresList.map((item: unknown) => String(item || '').trim()).filter(Boolean)
+               : [];
+
+             const computedHighlights = [
+               `${limits.daily_upload_limit || 0} video uploads per day`,
+               `${limits.max_channels || 0} YouTube channels`,
+               features.custom_media
+                 ? `Custom media: ${limits.max_media_items || 0} items (${limits.max_video_items || 0} videos, ${limits.max_image_items || 0} images, ${limits.max_thumbnail_items || 0} thumbnails)`
+                 : 'AI stock media library',
+               features.custom_media
+                 ? `Clip limits: ${limits.max_clip_length_seconds || 0}s per clip, ${limits.max_total_video_duration_seconds || 0}s total`
+                 : 'Auto-generated media for every run',
              ];
+
+             const capabilityFeatures = [
+               features.voice_selection ? 'Premium AI voices' : '',
+               features.scheduling ? 'Scheduling enabled' : '',
+               features.story_mode ? 'Story Mode enabled' : '',
+               features.cta ? 'Custom Call-to-Actions' : '',
+               features.format_selection ? 'Multiple format selections' : '',
+               features.template_customization ? 'Subtitle font & color control' : '',
+             ].filter(Boolean);
+
+             const dynamicFeatures = Array.from(new Set([...computedHighlights, ...adminFeatures, ...capabilityFeatures]));
 
              return {
                id: planId,

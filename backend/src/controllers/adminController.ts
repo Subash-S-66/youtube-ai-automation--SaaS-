@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
+import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import User from '../models/User';
 import Job from '../models/Job';
 import Prompt from '../models/Prompt';
@@ -8,15 +10,33 @@ import Notification from '../models/Notification';
 import GlobalBanner from '../models/GlobalBanner';
 import DeletedUser from '../models/DeletedUser';
 import SystemConfig from '../models/SystemConfig';
+import Plan from '../models/Plan';
 import { z } from 'zod';
+import validator from 'validator';
 import { emailQueue } from '../queues/emailQueue';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import {
   sanitizePipelineRetriesByPlan,
   sanitizePipelineRunnerFallbackOrder,
 } from '../services/pipelineRetryPolicyService';
+import { sanitizePipelineConcurrencyByPlan } from '../services/pipelineConcurrencyPolicyService';
+import {
+  applyUserJobHistoryRetention,
+  sanitizeJobHistoryLimitByPlan,
+  sanitizeJobHistoryMinAgeDays,
+} from '../services/jobHistoryRetentionPolicyService';
+import { getUploadLimits } from '../services/uploadLimitService';
 
 // Stripe disabled. Using Razorpay for payments.
+
+const SUPPORTED_PLANS = ['free', 'basic', 'pro', 'premium'] as const;
+const STAFF_ROLES = ['admin', 'helper'] as const;
+const DEFAULT_QUEUE_WAIT_TIMEOUT_MINUTES = 100;
+const DEFAULT_PROCESSING_HARD_TIMEOUT_MINUTES = 100;
+
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const generateReferralCode = () => crypto.randomBytes(4).toString('hex').toUpperCase();
 
 export const getAdminStats = asyncHandler(async (req: Request, res: Response) => {
   const totalUsers = await User.countDocuments();
@@ -134,8 +154,13 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
     config = await SystemConfig.create({
       betaMode: false,
       pipelineRunner: 'local',
+      pipelineConcurrencyByPlan: sanitizePipelineConcurrencyByPlan(undefined),
       pipelineRetriesByPlan: sanitizePipelineRetriesByPlan(undefined),
       pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder(undefined),
+      jobHistoryLimitByPlan: sanitizeJobHistoryLimitByPlan(undefined),
+      jobHistoryMinAgeDays: sanitizeJobHistoryMinAgeDays(undefined),
+      queueWaitTimeoutMinutes: DEFAULT_QUEUE_WAIT_TIMEOUT_MINUTES,
+      processingHardTimeoutMinutes: DEFAULT_PROCESSING_HARD_TIMEOUT_MINUTES,
     });
   } else {
     // Ensure only one config doc exists.
@@ -152,6 +177,14 @@ const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
     pipelineRunner: z.enum(['local', 'azure', 'remote']).optional(),
+    pipelineConcurrencyByPlan: z
+      .object({
+        free: z.number().int().min(1).max(100),
+        basic: z.number().int().min(1).max(100),
+        pro: z.number().int().min(1).max(100),
+        premium: z.number().int().min(1).max(100),
+      })
+      .optional(),
     pipelineRetriesByPlan: z
       .object({
         free: z.number().min(0).max(10),
@@ -165,6 +198,17 @@ const configSchema = z.object({
       .min(1)
       .max(3)
       .optional(),
+    jobHistoryLimitByPlan: z
+      .object({
+        free: z.number().int().min(1).max(5000),
+        basic: z.number().int().min(1).max(5000),
+        pro: z.number().int().min(1).max(5000),
+        premium: z.number().int().min(1).max(5000),
+      })
+      .optional(),
+    jobHistoryMinAgeDays: z.number().int().min(1).max(3650).optional(),
+    queueWaitTimeoutMinutes: z.number().int().min(5).max(1440).optional(),
+    processingHardTimeoutMinutes: z.number().int().min(10).max(1440).optional(),
     planValueMap: z
       .object({
         free: z.number(),
@@ -218,16 +262,41 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     throw new AppError(errorMessages, 400);
   }
 
-  const { betaMode, planValueMap, pipelineRetriesByPlan, pipelineRunnerFallbackOrder } = validation.data.body;
+  const {
+    betaMode,
+    planValueMap,
+    pipelineConcurrencyByPlan,
+    pipelineRetriesByPlan,
+    pipelineRunnerFallbackOrder,
+    jobHistoryLimitByPlan,
+    jobHistoryMinAgeDays,
+    queueWaitTimeoutMinutes,
+    processingHardTimeoutMinutes,
+  } = validation.data.body;
   const updatePayload: any = { betaMode };
   if (validation.data.body.pipelineRunner) {
     updatePayload.pipelineRunner = validation.data.body.pipelineRunner;
+  }
+  if (pipelineConcurrencyByPlan) {
+    updatePayload.pipelineConcurrencyByPlan = sanitizePipelineConcurrencyByPlan(pipelineConcurrencyByPlan);
   }
   if (pipelineRetriesByPlan) {
     updatePayload.pipelineRetriesByPlan = sanitizePipelineRetriesByPlan(pipelineRetriesByPlan);
   }
   if (pipelineRunnerFallbackOrder) {
     updatePayload.pipelineRunnerFallbackOrder = sanitizePipelineRunnerFallbackOrder(pipelineRunnerFallbackOrder);
+  }
+  if (jobHistoryLimitByPlan) {
+    updatePayload.jobHistoryLimitByPlan = sanitizeJobHistoryLimitByPlan(jobHistoryLimitByPlan);
+  }
+  if (typeof jobHistoryMinAgeDays === 'number') {
+    updatePayload.jobHistoryMinAgeDays = sanitizeJobHistoryMinAgeDays(jobHistoryMinAgeDays);
+  }
+  if (typeof queueWaitTimeoutMinutes === 'number') {
+    updatePayload.queueWaitTimeoutMinutes = Math.max(5, Math.min(1440, Math.floor(queueWaitTimeoutMinutes)));
+  }
+  if (typeof processingHardTimeoutMinutes === 'number') {
+    updatePayload.processingHardTimeoutMinutes = Math.max(10, Math.min(1440, Math.floor(processingHardTimeoutMinutes)));
   }
   if (planValueMap) {
     updatePayload.planValueMap = planValueMap;
@@ -343,32 +412,40 @@ export const deleteUserByAdmin = asyncHandler(async (req: Request, res: Response
 });
 
 export const getAllUsers = asyncHandler(async (req: Request, res: Response) => {
-  const limit = parseInt(req.query.limit as string) || 10;
-  const search = req.query.search as string;
-  const cursor = req.query.cursor as string;
+  const limitRaw = Number(req.query.limit);
+  const pageRaw = Number(req.query.page);
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(100, Math.floor(limitRaw))) : 10;
+  const page = Number.isFinite(pageRaw) ? Math.max(1, Math.floor(pageRaw)) : 1;
+  const search = String(req.query.search || '').trim();
+  const cursor = String(req.query.cursor || '').trim();
 
   const query: any = {};
-  if (search && typeof search === 'string') {
-    // Escape regex to prevent ReDoS
-    const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (search) {
+    const escapedSearch = escapeRegex(search);
     query.email = { $regex: escapedSearch, $options: 'i' };
   }
+
+  const usingCursorPagination = cursor.length > 0;
   if (cursor) {
     query._id = { $lt: cursor };
   }
 
-  const users = await User.find(query)
-    .select('email plan uploadsUsedToday uploadsOnHold subscriptionExpiresAt createdAt')
-    .sort({ _id: -1 })
-    .limit(limit + 1);
+  const baseUsersQuery = User.find(query)
+    .select('email role plan uploadsUsedToday uploadsOnHold subscriptionExpiresAt createdAt')
+    .sort({ _id: -1 });
+
+  const users = usingCursorPagination
+    ? await baseUsersQuery.limit(limit + 1)
+    : await baseUsersQuery.skip((page - 1) * limit).limit(limit);
 
   let nextCursor = null;
-  if (users.length > limit) {
+  if (usingCursorPagination && users.length > limit) {
     const nextUser = users.pop();
     nextCursor = nextUser?._id;
   }
 
   const total = await User.countDocuments(query);
+  const pages = Math.max(1, Math.ceil(total / limit));
 
   res.status(200).json({
     success: true,
@@ -376,21 +453,35 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response) => {
     pagination: {
       total,
       limit,
+      page,
+      pages,
       nextCursor,
     },
   });
 });
 
 export const getUserDetails = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const userId = String(req.params.id || '').trim();
+  if (!userId) {
+    throw new AppError('User id is required', 400);
+  }
 
-  const user = await User.findById(id).select('-password');
+  // Refresh lazy daily reset + hold reconciliation before returning admin usage stats.
+  await getUploadLimits(userId).catch((error) => {
+    console.warn(`[Admin] Failed to refresh upload counters for user ${userId}:`, error);
+  });
+
+  await applyUserJobHistoryRetention(userId).catch((error) => {
+    console.warn(`[Admin] Failed to apply job history retention for user ${userId}:`, error);
+  });
+
+  const user = await User.findById(userId).select('-password');
   if (!user) {
     throw new AppError('User not found', 404);
   }
 
-  const jobs = await Job.find({ userId: id as string }).sort({ createdAt: -1 });
-  const prompts = await Prompt.find({ userId: id as string }).sort({ createdAt: -1 });
+  const jobs = await Job.find({ userId }).sort({ createdAt: -1 });
+  const prompts = await Prompt.find({ userId }).sort({ createdAt: -1 });
 
   res.status(200).json({
     success: true,
@@ -404,15 +495,101 @@ export const getUserDetails = asyncHandler(async (req: Request, res: Response) =
 
 const updateUserPlanSchema = z.object({
   body: z.object({
-    plan: z.enum(['free', 'basic', 'pro', 'premium'], {
+    plan: z.enum(SUPPORTED_PLANS, {
       message: "plan must be 'free', 'basic', 'pro', or 'premium'",
     }),
     subscriptionExpiresAt: z.string().optional().nullable(),
   }),
 });
 
+const createAdminSchema = z.object({
+  body: z.object({
+    email: z
+      .string({ message: 'Email is required' })
+      .trim()
+      .email('Enter a valid email address'),
+    password: z
+      .string({ message: 'Password is required' })
+      .min(8, 'Password must be at least 8 characters long')
+      .regex(/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d@$!%*?&]+$/, 'Password must contain at least one letter and one number'),
+    role: z.enum(STAFF_ROLES).default('admin'),
+  }),
+});
+
+export const createAdminUser = asyncHandler(async (req: Request, res: Response) => {
+  const validation = createAdminSchema.safeParse({ body: req.body });
+
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const normalizedEmail = String(validation.data.body.email || '').trim().toLowerCase();
+  const password = validation.data.body.password;
+  const role = validation.data.body.role;
+  const roleLabel = role === 'helper' ? 'helper' : 'admin';
+
+  if (!validator.isEmail(normalizedEmail)) {
+    throw new AppError('Enter a valid email address', 400);
+  }
+
+  const existing = await User.findOne({ email: normalizedEmail }).select('role');
+  if (existing?.role) {
+    if (existing.role === role) {
+      throw new AppError(`A ${roleLabel} account already exists with this email`, 409);
+    }
+
+    throw new AppError('An account already exists with this email', 409);
+  }
+
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(password, salt);
+
+  let createdAdmin: any = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      createdAdmin = await User.create({
+        email: normalizedEmail,
+        password: hashedPassword,
+        provider: 'local',
+        role,
+        plan: 'free',
+        subscriptionStatus: 'inactive',
+        isEmailVerified: true,
+        referralCode: generateReferralCode(),
+      });
+      break;
+    } catch (error: any) {
+      const duplicateReferralCode = error?.code === 11000 && Boolean(error?.keyPattern?.referralCode);
+      if (duplicateReferralCode) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (!createdAdmin) {
+    throw new AppError(`Failed to create ${roleLabel} user. Please retry.`, 500);
+  }
+
+  res.status(201).json({
+    success: true,
+    message: `${roleLabel === 'helper' ? 'Helper' : 'Admin'} user created successfully`,
+    data: {
+      _id: createdAdmin.id,
+      email: createdAdmin.email,
+      role: createdAdmin.role,
+      plan: createdAdmin.plan,
+      createdAt: createdAdmin.createdAt,
+    },
+  });
+});
+
 export const updateUserPlan = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const id = String(req.params.id || '').trim();
+  if (!id) {
+    throw new AppError('User id is required', 400);
+  }
   const validation = updateUserPlanSchema.safeParse({ body: req.body });
 
   if (!validation.success) {
@@ -439,6 +616,10 @@ export const updateUserPlan = asyncHandler(async (req: Request, res: Response) =
 
   await user.save();
 
+  await applyUserJobHistoryRetention(id).catch((error) => {
+    console.warn(`[Admin] Failed to apply job history retention after plan update for user ${id}:`, error);
+  });
+
   res.status(200).json({
     success: true,
     message: 'User plan updated successfully',
@@ -453,18 +634,72 @@ export const updateUserPlan = asyncHandler(async (req: Request, res: Response) =
 });
 
 export const getPlans = asyncHandler(async (req: Request, res: Response) => {
-  const Plan = require('../models/Plan').default;
-  const plans = await Plan.find();
+  const plans = await Plan.find().sort({ price: 1, name: 1 });
   res.status(200).json({
     success: true,
     data: plans,
   });
 });
 
+const updatePlanSchema = z.object({
+  body: z
+    .object({
+      price: z.coerce.number().min(0).max(1000000).optional(),
+      discountPercentage: z.coerce.number().min(0).max(100).optional(),
+      priority_weight: z.coerce.number().int().min(0).max(1000).optional(),
+      is_active: z.boolean().optional(),
+      featuresList: z.array(z.string().trim().min(1).max(120)).max(100).optional(),
+      features: z
+        .object({
+          voice_selection: z.boolean().optional(),
+          scheduling: z.boolean().optional(),
+          multi_channel: z.boolean().optional(),
+          story_mode: z.boolean().optional(),
+          cta: z.boolean().optional(),
+          format_selection: z.boolean().optional(),
+          template_customization: z.boolean().optional(),
+          custom_media: z.boolean().optional(),
+        })
+        .strict()
+        .optional(),
+      limits: z
+        .object({
+          max_channels: z.coerce.number().int().min(1).max(500).optional(),
+          daily_upload_limit: z.coerce.number().int().min(1).max(5000).optional(),
+          max_media_items: z.coerce.number().int().min(1).max(5000).optional(),
+          max_video_items: z.coerce.number().int().min(1).max(5000).optional(),
+          max_image_items: z.coerce.number().int().min(1).max(5000).optional(),
+          max_thumbnail_items: z.coerce.number().int().min(1).max(5000).optional(),
+          max_clip_length_seconds: z.coerce.number().int().min(1).max(86400).optional(),
+          max_total_video_duration_seconds: z.coerce.number().int().min(1).max(86400).optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .refine((data) => Object.keys(data).length > 0, {
+      message: 'No valid plan fields provided for update',
+    }),
+});
+
 export const updatePlan = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const Plan = require('../models/Plan').default;
-  const plan = await Plan.findByIdAndUpdate(id, req.body, { returnDocument: 'after', runValidators: true });
+  const id = String(req.params.id || '').trim();
+  if (!id) {
+    throw new AppError('Plan id is required', 400);
+  }
+
+  const validation = updatePlanSchema.safeParse({ body: req.body });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((issue: any) => issue.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const payload: any = validation.data.body;
+  if (Array.isArray(payload.featuresList)) {
+    payload.featuresList = Array.from(new Set(payload.featuresList.map((item: string) => item.trim()).filter(Boolean)));
+  }
+
+  const plan = await Plan.findByIdAndUpdate(id, payload, { new: true, runValidators: true });
 
   if (!plan) {
     throw new AppError('Plan not found', 404);

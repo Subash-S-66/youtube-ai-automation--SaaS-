@@ -404,6 +404,7 @@ export const getMe = asyncHandler(async (req: Request, res: Response) => {
         displayPlan: limitCheck.displayPlan,
         isBetaMode: limitCheck.isBetaMode,
         planFeatures: limitCheck.features || {},
+        planLimits: limitCheck.planLimits || {},
         remainingUploads: limitCheck.remainingUploads,
         uploadsUsedToday,
         uploadsOnHold,
@@ -445,6 +446,10 @@ export const login = asyncHandler(
       throw new AppError('Invalid credentials', 401);
     }
 
+    if (user.role === 'helper') {
+      throw new AppError('Helper accounts must sign in from staff login', 403);
+    }
+
     const token = generateToken(user.id);
     setTokenCookie(req, res, token);
 
@@ -462,7 +467,7 @@ export const login = asyncHandler(
   }
 );
 
-// @desc    Authenticate an admin user
+// @desc    Authenticate a staff user
 // @route   POST /api/auth/admin-login
 // @access  Public
 // @desc    Logout user
@@ -482,12 +487,12 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 });
 
-// @desc    Authenticate an admin user
+// @desc    Authenticate a staff user
 export const adminLogin = asyncHandler(
   async (req: Request<unknown, unknown, AdminLoginInput>, res: Response) => {
     const { username, password } = req.body;
 
-    const user = await User.findOne({ email: username, role: 'admin' });
+    const user = await User.findOne({ email: username, role: { $in: ['admin', 'helper'] } });
 
     if (!user || !user.password) {
       throw new AppError('Invalid credentials', 401);
@@ -502,9 +507,11 @@ export const adminLogin = asyncHandler(
     const token = generateToken(user.id);
     setTokenCookie(req, res, token);
 
+    const roleLabel = user.role === 'helper' ? 'Helper' : 'Admin';
+
     res.json({
       success: true,
-      message: 'Admin logged in successfully',
+      message: `${roleLabel} logged in successfully`,
       data: {
         _id: user.id,
         email: user.email,

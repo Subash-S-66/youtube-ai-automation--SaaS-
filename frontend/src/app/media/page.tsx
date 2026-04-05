@@ -1,5 +1,6 @@
 'use client';
 import NextImage from 'next/image';
+import Link from 'next/link';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { m } from 'framer-motion';
 import { Upload, Trash2, Video, Image as ImageIcon, Film, RefreshCw, AlertCircle, Eye } from 'lucide-react';
@@ -9,11 +10,22 @@ import { mediaService } from '../../services/mediaService';
 import { cn } from '../../lib/utils';
 import { getMediaUrl } from '../../lib/mediaUrl';
 
+interface MediaPolicy {
+  plan: string;
+  maxMediaItems: number;
+  maxVideoItems: number;
+  maxImageItems: number;
+  maxThumbnailItems: number;
+  maxClipLengthSeconds: number;
+  maxTotalVideoDurationSeconds: number;
+}
+
 export default function MediaLibraryPage() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [media, setMedia] = useState<any[]>([]);
   const [sequenceItems, setSequenceItems] = useState<any[]>([]);
+  const [mediaPolicy, setMediaPolicy] = useState<MediaPolicy | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -50,13 +62,24 @@ export default function MediaLibraryPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [userData, mediaData, sequenceData] = await Promise.all([
-        authService.getMe(),
-        mediaService.getMedia(),
-        mediaService.getSequence()
-      ]);
+      const userData = await authService.getMe();
       setUser(userData.data);
+
+      const canUseCustomMedia = Boolean(userData?.data?.planFeatures?.custom_media);
+      if (!canUseCustomMedia) {
+        setMedia([]);
+        setSequenceItems([]);
+        setMediaPolicy(null);
+        return;
+      }
+
+      const [mediaData, sequenceData] = await Promise.all([
+        mediaService.getMedia(),
+        mediaService.getSequence(),
+      ]);
+
       setMedia(mediaData.data || []);
+      setMediaPolicy(mediaData.policy || null);
       setSequenceItems(sequenceData.data || []);
     } catch (err) {
       console.error("Error loading media data:", err);
@@ -243,9 +266,11 @@ export default function MediaLibraryPage() {
   }, []);
 
   const totalVideoDuration = videos.reduce((acc, curr) => acc + (curr.duration || 0), 0);
-  const maxVideoDuration = 70;
-  const maxImages = 20;
-  const maxThumbnails = 10;
+  const maxVideoDuration = mediaPolicy?.maxTotalVideoDurationSeconds ?? 70;
+  const maxImages = mediaPolicy?.maxImageItems ?? 20;
+  const maxThumbnails = mediaPolicy?.maxThumbnailItems ?? 10;
+  const maxVideos = mediaPolicy?.maxVideoItems ?? 10;
+  const maxMediaItems = mediaPolicy?.maxMediaItems ?? 0;
 
 
   const handleMixedReorder = useCallback(async (newOrder: any[]) => {
@@ -452,6 +477,30 @@ export default function MediaLibraryPage() {
     );
   }
 
+  if (user && !user?.planFeatures?.custom_media) {
+    return (
+      <DashboardLayout user={user}>
+        <div className="max-w-2xl mx-auto py-10">
+          <div className="rounded-2xl border border-[#1A2235] bg-[#111827] p-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-amber-400 mt-0.5" />
+              <div>
+                <h2 className="text-xl font-bold text-white">Custom Media Is Not Enabled</h2>
+                <p className="text-sm text-slate-400 mt-2">Your current plan does not include the custom media library. Upgrade your plan to upload videos, images, and thumbnails.</p>
+                <Link
+                  href="/pricing"
+                  className="inline-flex mt-4 px-4 py-2 rounded-lg bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white text-sm font-semibold"
+                >
+                  View Plans
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout user={user}>
       <div className="max-w-6xl w-full mx-auto py-8 px-4 sm:px-6 overflow-x-hidden">
@@ -463,6 +512,18 @@ export default function MediaLibraryPage() {
           </div>
 
           <div className="flex flex-wrap gap-6 text-sm">
+            <div className="text-right">
+              <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Media Items</span>
+              <span className={cn("font-mono font-bold", maxMediaItems > 0 && media.length > maxMediaItems * 0.8 ? "text-yellow-400" : "text-slate-200")}>
+                 {media.length} <span className="text-slate-500 font-normal">/ {maxMediaItems || 'N/A'}</span>
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Video Clips</span>
+              <span className={cn("font-mono font-bold", videos.length > maxVideos * 0.8 ? "text-yellow-400" : "text-[#00D4FF]")}>
+                 {videos.length} <span className="text-slate-500 font-normal">/ {maxVideos}</span>
+              </span>
+            </div>
             <div className="text-right">
               <span className="text-slate-500 block text-xs uppercase tracking-wider font-bold">Total Video</span>
               <span className={cn("font-mono font-bold", totalVideoDuration > maxVideoDuration * 0.8 ? "text-yellow-400" : "text-[#00D4FF]")}>

@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { getUploadLimits } from '../services/uploadLimitService';
 
 // @desc    Upload new media
 // @route   POST /api/media/upload
@@ -15,6 +16,49 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+
+interface MediaPolicy {
+  plan: string;
+  maxMediaItems: number;
+  maxVideoItems: number;
+  maxImageItems: number;
+  maxThumbnailItems: number;
+  maxClipLengthSeconds: number;
+  maxTotalVideoDurationSeconds: number;
+}
+
+const resolvePolicyNumber = (value: unknown, fallback: number, min = 0, max = 100000): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.floor(parsed)));
+};
+
+const buildMediaPolicy = (limitCheck: any): MediaPolicy => {
+  const limits = (limitCheck?.planLimits && typeof limitCheck.planLimits === 'object')
+    ? (limitCheck.planLimits as Record<string, unknown>)
+    : {};
+
+  return {
+    plan: String(limitCheck?.plan || 'free').toLowerCase(),
+    maxMediaItems: resolvePolicyNumber(limits.max_media_items, 10, 1, 5000),
+    maxVideoItems: resolvePolicyNumber(limits.max_video_items, 10, 1, 5000),
+    maxImageItems: resolvePolicyNumber(limits.max_image_items, 20, 1, 5000),
+    maxThumbnailItems: resolvePolicyNumber(limits.max_thumbnail_items, 10, 1, 5000),
+    maxClipLengthSeconds: resolvePolicyNumber(limits.max_clip_length_seconds, 70, 1, 7200),
+    maxTotalVideoDurationSeconds: resolvePolicyNumber(limits.max_total_video_duration_seconds, 70, 1, 86400),
+  };
+};
+
+const requireCustomMediaPolicy = async (userId: string): Promise<MediaPolicy> => {
+  const limitCheck = await getUploadLimits(userId);
+  const canUseCustomMedia = Boolean(limitCheck?.features?.custom_media);
+  if (!canUseCustomMedia) {
+    throw new AppError('Custom media is not enabled for your current subscription plan.', 403);
+  }
+  return buildMediaPolicy(limitCheck);
+};
 
 async function detectFileType(filePath: string) {
   const mod = await import('file-type');
@@ -41,6 +85,13 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
   if (!req.file) {
     throw new AppError('No file uploaded', 400);
   }
+
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const mediaPolicy = await requireCustomMediaPolicy(userId);
 
   // Validate file type properly
   try {
@@ -73,48 +124,77 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
   }
 
   // Enforce limits
+  const currentTotalMediaCount = await Media.countDocuments({ userId });
+  if (currentTotalMediaCount >= mediaPolicy.maxMediaItems) {
+    fs.unlinkSync(file.path);
+    throw new AppError(
+      `You have reached your media library limit (${mediaPolicy.maxMediaItems}) for plan ${mediaPolicy.plan}.`,
+      400
+    );
+  }
+
   if (type === 'image') {
-    const currentImagesCount = await Media.countDocuments({ userId: req.user?.id, type: 'image' });
-    if (currentImagesCount >= 20) {
+    const currentImagesCount = await Media.countDocuments({ userId, type: 'image' });
+    if (currentImagesCount >= mediaPolicy.maxImageItems) {
       fs.unlinkSync(file.path);
-      throw new AppError('You have reached the maximum limit of 20 uploaded images.', 400);
+      throw new AppError(
+        `You have reached your image limit (${mediaPolicy.maxImageItems}) for plan ${mediaPolicy.plan}.`,
+        400
+      );
     }
   } else if (type === 'thumbnail') {
-    const currentThumbnailCount = await Media.countDocuments({ userId: req.user?.id, type: 'thumbnail' });
-    if (currentThumbnailCount >= 10) { // Limit thumbnails to 10 to prevent storage abuse
+    const currentThumbnailCount = await Media.countDocuments({ userId, type: 'thumbnail' });
+    if (currentThumbnailCount >= mediaPolicy.maxThumbnailItems) {
       fs.unlinkSync(file.path);
-      throw new AppError('You have reached the maximum limit of 10 uploaded thumbnails. Delete some to add more.', 400);
+      throw new AppError(
+        `You have reached your thumbnail limit (${mediaPolicy.maxThumbnailItems}) for plan ${mediaPolicy.plan}.`,
+        400
+      );
     }
   }
 
   let duration = 0;
   if (type === 'video') {
+      const currentVideosCount = await Media.countDocuments({ userId, type: 'video' });
+      if (currentVideosCount >= mediaPolicy.maxVideoItems) {
+        fs.unlinkSync(file.path);
+        throw new AppError(
+          `You have reached your video clip limit (${mediaPolicy.maxVideoItems}) for plan ${mediaPolicy.plan}.`,
+          400
+        );
+      }
+
       const probedDuration = await probeVideoDuration(file.path);
       if (probedDuration > 0) {
         duration = probedDuration;
-        // Validate probed duration does not itself exceed the max
-        if (duration > 70) {
+        if (duration > mediaPolicy.maxClipLengthSeconds) {
           fs.unlinkSync(file.path);
-          throw new AppError(`Video duration (${duration}s) exceeds the maximum allowed of 70 seconds.`, 400);
+          throw new AppError(
+            `Video duration (${duration}s) exceeds your per-clip limit (${mediaPolicy.maxClipLengthSeconds}s) for plan ${mediaPolicy.plan}.`,
+            400
+          );
         }
       } else {
-        // ffprobe unavailable — fall back to client-reported value with a cap
+        // ffprobe unavailable - fall back to client-reported value with policy cap
         const clientDuration = Number(req.body.duration) || 0;
-        duration = Math.min(clientDuration, 70);
+        duration = Math.min(clientDuration, mediaPolicy.maxClipLengthSeconds);
         console.warn(`[mediaController] ffprobe unavailable, trusting client duration: ${duration}s`);
       }
 
-      const currentVideos = await Media.find({ userId: req.user?.id, type: 'video' });
+      const currentVideos = await Media.find({ userId, type: 'video' });
       const currentTotalDuration = currentVideos.reduce((acc, curr) => acc + (curr.duration || 0), 0);
 
-      if (currentTotalDuration + duration > 70) {
+      if (currentTotalDuration + duration > mediaPolicy.maxTotalVideoDurationSeconds) {
          fs.unlinkSync(file.path);
-         throw new AppError(`Cannot upload. Maximum total video duration allowed is 70 seconds. You currently have ${currentTotalDuration}s used.`, 400);
+         throw new AppError(
+           `Cannot upload. Maximum total video duration is ${mediaPolicy.maxTotalVideoDurationSeconds}s for plan ${mediaPolicy.plan}. You currently have ${currentTotalDuration}s used.`,
+           400
+         );
       }
   }
 
   const mediaPayload: any = {
-    userId: req.user?.id,
+    userId,
     type,
     filename: file.filename,
     originalName: file.originalname,
@@ -139,7 +219,13 @@ export const uploadMedia = asyncHandler(async (req: Request, res: Response) => {
 // @route   GET /api/media
 // @access  Private
 export const getMedia = asyncHandler(async (req: Request, res: Response) => {
-  const media = await Media.find({ userId: req.user?.id }).sort({ sortOrder: 1, createdAt: -1 });
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+
+  const mediaPolicy = await requireCustomMediaPolicy(userId);
+  const media = await Media.find({ userId }).sort({ sortOrder: 1, createdAt: -1 });
   const missingOrder = media.filter(m => m.sortOrder === undefined || m.sortOrder === null);
   if (missingOrder.length > 0) {
     const bulk = Media.collection.initializeUnorderedBulkOp();
@@ -157,6 +243,7 @@ export const getMedia = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     data: media,
+    policy: mediaPolicy,
   });
 });
 
@@ -164,7 +251,13 @@ export const getMedia = asyncHandler(async (req: Request, res: Response) => {
 // @route   GET /api/media/sequence
 // @access  Private
 export const getSequence = asyncHandler(async (req: Request, res: Response) => {
-  const items = await MediaSequence.find({ userId: req.user?.id })
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+  await requireCustomMediaPolicy(userId);
+
+  const items = await MediaSequence.find({ userId })
     .sort({ sortOrder: 1, createdAt: 1 })
     .populate('mediaId');
 
@@ -183,12 +276,18 @@ export const getSequence = asyncHandler(async (req: Request, res: Response) => {
 // @route   POST /api/media/sequence
 // @access  Private
 export const addToSequence = asyncHandler(async (req: Request, res: Response) => {
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+  await requireCustomMediaPolicy(userId);
+
   const { mediaId } = req.body || {};
   if (!mediaId) {
     throw new AppError('mediaId is required', 400);
   }
 
-  const media = await Media.findOne({ _id: mediaId, userId: req.user?.id });
+  const media = await Media.findOne({ _id: mediaId, userId });
   if (!media) {
     throw new AppError('Media not found', 404);
   }
@@ -197,7 +296,7 @@ export const addToSequence = asyncHandler(async (req: Request, res: Response) =>
   }
 
   const created = await MediaSequence.create({
-    userId: req.user?.id,
+    userId,
     mediaId: media._id,
     type: media.type,
     sortOrder: Date.now(),
@@ -221,12 +320,17 @@ export const addToSequence = asyncHandler(async (req: Request, res: Response) =>
 // @route   POST /api/media/sequence/reorder
 // @access  Private
 export const reorderSequence = asyncHandler(async (req: Request, res: Response) => {
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+  await requireCustomMediaPolicy(userId);
+
   const { orderedIds } = req.body || {};
   if (!Array.isArray(orderedIds)) {
     throw new AppError('orderedIds are required', 400);
   }
 
-  const userId = req.user?.id;
   const items = await MediaSequence.find({ userId, _id: { $in: orderedIds } }).select('_id');
   if (items.length !== orderedIds.length) {
     throw new AppError('Some sequence items were not found', 404);
@@ -247,12 +351,18 @@ export const reorderSequence = asyncHandler(async (req: Request, res: Response) 
 // @route   DELETE /api/media/sequence/:id
 // @access  Private
 export const deleteSequenceItem = asyncHandler(async (req: Request, res: Response) => {
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+  await requireCustomMediaPolicy(userId);
+
   const seqId = req.params.id;
   if (!seqId) {
     throw new AppError('Sequence item ID is required', 400);
   }
 
-  const deleted = await MediaSequence.findOneAndDelete({ _id: seqId, userId: req.user?.id });
+  const deleted = await MediaSequence.findOneAndDelete({ _id: seqId, userId });
   if (!deleted) {
     throw new AppError('Sequence item not found', 404);
   }
@@ -264,6 +374,12 @@ export const deleteSequenceItem = asyncHandler(async (req: Request, res: Respons
 // @route   PATCH /api/media/:id
 // @access  Private
 export const updateMedia = asyncHandler(async (req: Request, res: Response) => {
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+  await requireCustomMediaPolicy(userId);
+
   const mediaId = req.params.id;
   if (!mediaId) {
     throw new AppError('Media ID is required', 400);
@@ -300,7 +416,7 @@ export const updateMedia = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const updated = await Media.findOneAndUpdate(
-    { _id: mediaId, userId: req.user?.id },
+    { _id: mediaId, userId },
     { $set: update },
     { returnDocument: 'after' }
   );
@@ -319,6 +435,12 @@ export const updateMedia = asyncHandler(async (req: Request, res: Response) => {
 // @route   POST /api/media/reorder
 // @access  Private
 export const reorderMedia = asyncHandler(async (req: Request, res: Response) => {
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+  await requireCustomMediaPolicy(userId);
+
   const { type, orderedIds } = req.body || {};
   if (!type || !Array.isArray(orderedIds)) {
     throw new AppError('type and orderedIds are required', 400);
@@ -329,7 +451,6 @@ export const reorderMedia = asyncHandler(async (req: Request, res: Response) => 
     throw new AppError('Invalid media type', 400);
   }
 
-  const userId = req.user?.id;
   const mediaDocs = await Media.find({ userId, type, _id: { $in: orderedIds } }).select('_id');
   if (mediaDocs.length !== orderedIds.length) {
     throw new AppError('Some media items were not found', 404);
@@ -350,12 +471,17 @@ export const reorderMedia = asyncHandler(async (req: Request, res: Response) => 
 // @route   POST /api/media/reorder-mixed
 // @access  Private
 export const reorderMixedMedia = asyncHandler(async (req: Request, res: Response) => {
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+  await requireCustomMediaPolicy(userId);
+
   const { orderedIds } = req.body || {};
   if (!Array.isArray(orderedIds)) {
     throw new AppError('orderedIds are required', 400);
   }
 
-  const userId = req.user?.id;
   const mediaDocs = await Media.find({
     userId,
     _id: { $in: orderedIds },
@@ -527,12 +653,18 @@ export const getSecureMediaFile = asyncHandler(async (req: Request, res: Respons
 });
 
 export const deleteMedia = asyncHandler(async (req: Request, res: Response) => {
+  const userId = String(req.user?.id || '').trim();
+  if (!userId) {
+    throw new AppError('Not authorized', 401);
+  }
+  await requireCustomMediaPolicy(userId);
+
   const mediaId = req.params.id;
   if (!mediaId) {
     throw new AppError('Media ID is required', 400);
   }
 
-  const media = await Media.findOne({ _id: mediaId, userId: req.user?.id });
+  const media = await Media.findOne({ _id: mediaId, userId });
 
   if (!media) {
     throw new AppError('Media not found', 404);
@@ -547,7 +679,7 @@ export const deleteMedia = asyncHandler(async (req: Request, res: Response) => {
   }
 
   await media.deleteOne();
-  await MediaSequence.deleteMany({ userId: req.user?.id, mediaId: media._id });
+  await MediaSequence.deleteMany({ userId, mediaId: media._id });
 
   res.status(200).json({
     success: true,

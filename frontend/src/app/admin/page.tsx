@@ -32,6 +32,8 @@ interface UserSummary {
   subscriptionExpiresAt?: string;
 }
 
+type AdminSection = 'overview' | 'communication' | 'system' | 'plans';
+
 export default function AdminDashboard() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -63,15 +65,56 @@ export default function AdminDashboard() {
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
   const [betaMode, setBetaMode] = useState(false);
   const [pipelineRunner, setPipelineRunner] = useState<'local' | 'azure' | 'remote'>('local');
+  const [pipelineConcurrencyByPlan, setPipelineConcurrencyByPlan] = useState({ free: 2, basic: 5, pro: 10, premium: 20 });
   const [pipelineRetriesByPlan, setPipelineRetriesByPlan] = useState({ free: 2, basic: 3, pro: 3, premium: 5 });
   const [pipelineRunnerFallbackOrder, setPipelineRunnerFallbackOrder] = useState<Array<'local' | 'azure' | 'remote'>>(['azure', 'remote', 'local']);
+  const [jobHistoryLimitByPlan, setJobHistoryLimitByPlan] = useState({ free: 10, basic: 50, pro: 100, premium: 200 });
+  const [jobHistoryMinAgeDays, setJobHistoryMinAgeDays] = useState(7);
+  const [queueWaitTimeoutMinutes, setQueueWaitTimeoutMinutes] = useState(100);
+  const [processingHardTimeoutMinutes, setProcessingHardTimeoutMinutes] = useState(100);
   const [updatingConfig, setUpdatingConfig] = useState(false);
   const [planValueMap, setPlanValueMap] = useState({ free: 0, basic: 1, pro: 2, premium: 4 });
   const [savingProration, setSavingProration] = useState(false);
   const [savingPipelineRunner, setSavingPipelineRunner] = useState(false);
+  const [savingConcurrencyPolicy, setSavingConcurrencyPolicy] = useState(false);
   const [savingRetryPolicy, setSavingRetryPolicy] = useState(false);
+  const [savingHistoryRetentionPolicy, setSavingHistoryRetentionPolicy] = useState(false);
+  const [savingCleanupPolicy, setSavingCleanupPolicy] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlans, setSavingPlans] = useState(false);
+  const [activeSection, setActiveSection] = useState<AdminSection>('overview');
+
+  const sectionTabs: Array<{
+    id: AdminSection;
+    label: string;
+    description: string;
+    icon: typeof CheckCircle;
+  }> = [
+    {
+      id: 'overview',
+      label: 'Overview',
+      description: 'Stats and quick links',
+      icon: CheckCircle,
+    },
+    {
+      id: 'communication',
+      label: 'Broadcast',
+      description: 'Notifications and banner',
+      icon: Bell,
+    },
+    {
+      id: 'system',
+      label: 'System',
+      description: 'Config and runtime policy',
+      icon: Settings,
+    },
+    {
+      id: 'plans',
+      label: 'Plans',
+      description: 'Plan features and limits',
+      icon: CreditCard,
+    },
+  ];
 
   const openPicker = (ref: RefObject<HTMLInputElement | null>) => {
     if (!ref.current) return;
@@ -87,8 +130,13 @@ export default function AdminDashboard() {
     betaMode,
     planValueMap,
     pipelineRunner,
+    pipelineConcurrencyByPlan,
     pipelineRetriesByPlan,
     pipelineRunnerFallbackOrder,
+    jobHistoryLimitByPlan,
+    jobHistoryMinAgeDays,
+    queueWaitTimeoutMinutes,
+    processingHardTimeoutMinutes,
   });
 
   const handleFallbackOrderChange = (index: number, value: 'local' | 'azure' | 'remote') => {
@@ -108,6 +156,36 @@ export default function AdminDashboard() {
     const parsed = Number(value);
     const safeValue = Number.isFinite(parsed) ? Math.max(0, Math.min(10, Math.floor(parsed))) : 0;
     setPipelineRetriesByPlan((prev) => ({ ...prev, [plan]: safeValue }));
+  };
+
+  const handleConcurrencyLimitChange = (plan: 'free' | 'basic' | 'pro' | 'premium', value: string) => {
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed) ? Math.max(1, Math.min(100, Math.floor(parsed))) : 1;
+    setPipelineConcurrencyByPlan((prev) => ({ ...prev, [plan]: safeValue }));
+  };
+
+  const handleHistoryLimitChange = (plan: 'free' | 'basic' | 'pro' | 'premium', value: string) => {
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed) ? Math.max(1, Math.min(5000, Math.floor(parsed))) : 1;
+    setJobHistoryLimitByPlan((prev) => ({ ...prev, [plan]: safeValue }));
+  };
+
+  const handleHistoryMinAgeDaysChange = (value: string) => {
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed) ? Math.max(1, Math.min(3650, Math.floor(parsed))) : 7;
+    setJobHistoryMinAgeDays(safeValue);
+  };
+
+  const handleQueueWaitTimeoutMinutesChange = (value: string) => {
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed) ? Math.max(5, Math.min(1440, Math.floor(parsed))) : 100;
+    setQueueWaitTimeoutMinutes(safeValue);
+  };
+
+  const handleProcessingHardTimeoutMinutesChange = (value: string) => {
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed) ? Math.max(10, Math.min(1440, Math.floor(parsed))) : 100;
+    setProcessingHardTimeoutMinutes(safeValue);
   };
 
   const [modalConfig, setModalConfig] = useState<{
@@ -307,6 +385,32 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleSaveConcurrencyPolicy = async () => {
+    setSavingConcurrencyPolicy(true);
+    try {
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      setModalConfig({
+        isOpen: true,
+        title: 'Queue Limits Updated',
+        description: 'Per-plan queue/worker limits saved successfully.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update queue limits.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingConcurrencyPolicy(false);
+    }
+  };
+
   const handleSaveRetryPolicy = async () => {
     setSavingRetryPolicy(true);
     try {
@@ -330,6 +434,58 @@ export default function AdminDashboard() {
       });
     } finally {
       setSavingRetryPolicy(false);
+    }
+  };
+
+  const handleSaveHistoryRetentionPolicy = async () => {
+    setSavingHistoryRetentionPolicy(true);
+    try {
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      setModalConfig({
+        isOpen: true,
+        title: 'History Retention Updated',
+        description: 'History limits and minimum age policy saved successfully.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update history retention policy.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingHistoryRetentionPolicy(false);
+    }
+  };
+
+  const handleSaveCleanupPolicy = async () => {
+    setSavingCleanupPolicy(true);
+    try {
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      setModalConfig({
+        isOpen: true,
+        title: 'Stuck Job Policy Updated',
+        description: 'Queue wait and processing hard-timeout limits were saved successfully.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update stuck job cleanup policy.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingCleanupPolicy(false);
     }
   };
 
@@ -386,6 +542,12 @@ export default function AdminDashboard() {
     limits: {
       max_channels: Number(plan.limits?.max_channels),
       daily_upload_limit: Number(plan.limits?.daily_upload_limit),
+      max_media_items: Number(plan.limits?.max_media_items),
+      max_video_items: Number(plan.limits?.max_video_items),
+      max_image_items: Number(plan.limits?.max_image_items),
+      max_thumbnail_items: Number(plan.limits?.max_thumbnail_items),
+      max_clip_length_seconds: Number(plan.limits?.max_clip_length_seconds),
+      max_total_video_duration_seconds: Number(plan.limits?.max_total_video_duration_seconds),
     },
     features: {
       voice_selection: !!plan.features?.voice_selection,
@@ -521,6 +683,14 @@ const handleDeleteUser = () => {
             if (configRes.value.data.pipelineRunner) {
               setPipelineRunner(configRes.value.data.pipelineRunner as 'local' | 'azure' | 'remote');
             }
+            if (configRes.value.data.pipelineConcurrencyByPlan) {
+              setPipelineConcurrencyByPlan({
+                free: Number(configRes.value.data.pipelineConcurrencyByPlan.free ?? 2),
+                basic: Number(configRes.value.data.pipelineConcurrencyByPlan.basic ?? 5),
+                pro: Number(configRes.value.data.pipelineConcurrencyByPlan.pro ?? 10),
+                premium: Number(configRes.value.data.pipelineConcurrencyByPlan.premium ?? 20),
+              });
+            }
             if (configRes.value.data.pipelineRetriesByPlan) {
               setPipelineRetriesByPlan({
                 free: Number(configRes.value.data.pipelineRetriesByPlan.free ?? 2),
@@ -536,6 +706,23 @@ const handleDeleteUser = () => {
               if (normalizedOrder.length > 0) {
                 setPipelineRunnerFallbackOrder(normalizedOrder.slice(0, 3));
               }
+            }
+            if (configRes.value.data.jobHistoryLimitByPlan) {
+              setJobHistoryLimitByPlan({
+                free: Number(configRes.value.data.jobHistoryLimitByPlan.free ?? 10),
+                basic: Number(configRes.value.data.jobHistoryLimitByPlan.basic ?? 50),
+                pro: Number(configRes.value.data.jobHistoryLimitByPlan.pro ?? 100),
+                premium: Number(configRes.value.data.jobHistoryLimitByPlan.premium ?? 200),
+              });
+            }
+            if (typeof configRes.value.data.jobHistoryMinAgeDays === 'number') {
+              setJobHistoryMinAgeDays(Math.max(1, Math.min(3650, Math.floor(Number(configRes.value.data.jobHistoryMinAgeDays || 7)))));
+            }
+            if (typeof configRes.value.data.queueWaitTimeoutMinutes === 'number') {
+              setQueueWaitTimeoutMinutes(Math.max(5, Math.min(1440, Math.floor(Number(configRes.value.data.queueWaitTimeoutMinutes || 100)))));
+            }
+            if (typeof configRes.value.data.processingHardTimeoutMinutes === 'number') {
+              setProcessingHardTimeoutMinutes(Math.max(10, Math.min(1440, Math.floor(Number(configRes.value.data.processingHardTimeoutMinutes || 100)))));
             }
             if (configRes.value.data.planValueMap) {
               setPlanValueMap({
@@ -602,11 +789,45 @@ const handleDeleteUser = () => {
             </Link>
           </div>
 
+          <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 shadow-lg">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+              {sectionTabs.map((section) => {
+                const Icon = section.icon;
+                const active = activeSection === section.id;
+                return (
+                  <button
+                    key={section.id}
+                    type="button"
+                    onClick={() => setActiveSection(section.id)}
+                    className={cn(
+                      "w-full rounded-xl border px-3 py-3 text-left transition-colors",
+                      active
+                        ? "border-[#7C5CFF]/60 bg-[#7C5CFF]/15"
+                        : "border-[#1A2235] bg-[#0B0F1A] hover:border-[#32507B]"
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Icon className={cn("h-4 w-4", active ? "text-[#7C5CFF]" : "text-[#00D4FF]")} />
+                      <p className="text-sm font-semibold text-white">{section.label}</p>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">{section.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Control Tools */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-6">
+          {activeSection !== 'overview' && (
+            <>
+              <div
+                className={cn(
+                  'grid gap-6',
+                  activeSection === 'communication' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'
+                )}
+              >
               {/* Notification Sender */}
-              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
+              <div className={cn('bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl', activeSection !== 'communication' && 'hidden')}>
                 <div className="flex items-center mb-6">
                   <Bell className="h-5 w-5 text-[#7C5CFF] mr-2" />
                   <h2 className="text-xl font-bold text-white">Send Notification</h2>
@@ -651,7 +872,7 @@ const handleDeleteUser = () => {
               </div>
 
               {/* Global Banner */}
-              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
+              <div className={cn('bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl', activeSection !== 'communication' && 'hidden')}>
                 <div className="flex items-center mb-6">
                   <MonitorPlay className="h-5 w-5 text-[#00D4FF] mr-2" />
                   <h2 className="text-xl font-bold text-white">Global Banner</h2>
@@ -721,7 +942,7 @@ const handleDeleteUser = () => {
               </div>
 
               {/* System Config (Beta Mode) */}
-              <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
+              <div className={cn('bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl', activeSection !== 'system' && 'hidden')}>
                 <div className="flex items-center mb-6">
                   <Settings className="h-5 w-5 text-slate-300 mr-2" />
                   <h2 className="text-xl font-bold text-white">System Config</h2>
@@ -795,6 +1016,132 @@ const handleDeleteUser = () => {
                 </div>
 
                 <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                  <p className="text-sm font-semibold text-white mb-2">Queue And Worker Limits (Per Plan)</p>
+                  <p className="text-xs text-slate-400 mb-3">Controls how many pipeline jobs a user can run or queue at one time (also used for channel hold cap).</p>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    {(['free', 'basic', 'pro', 'premium'] as const).map((plan) => (
+                      <div key={`concurrency-${plan}`}>
+                        <label className="text-xs text-slate-400 block mb-1 capitalize">{plan} Limit</label>
+                        <input
+                          id={`pipeline-concurrency-${plan}`}
+                          aria-label={`${plan} queue limit`}
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={(pipelineConcurrencyByPlan as any)[plan]}
+                          onChange={(e) => handleConcurrencyLimitChange(plan, e.target.value)}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveConcurrencyPolicy}
+                    disabled={savingConcurrencyPolicy}
+                    className="mt-3 w-full py-2 bg-[#f59e0b] hover:bg-[#d97706] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingConcurrencyPolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Queue And Worker Limits'}
+                  </button>
+                </div>
+
+                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                  <p className="text-sm font-semibold text-white mb-2">History Retention Policy</p>
+                  <p className="text-xs text-slate-400 mb-3">
+                    Records are deleted only when both conditions are true: the user has more records than the plan cap, and records are older than minimum age.
+                    If total history is below the cap, nothing is deleted even when records are very old.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    {(['free', 'basic', 'pro', 'premium'] as const).map((plan) => (
+                      <div key={`history-limit-${plan}`}>
+                        <label className="text-xs text-slate-400 block mb-1 capitalize">{plan} History Cap</label>
+                        <input
+                          id={`history-limit-${plan}`}
+                          aria-label={`${plan} history cap`}
+                          type="number"
+                          min="1"
+                          max="5000"
+                          value={(jobHistoryLimitByPlan as any)[plan]}
+                          onChange={(e) => handleHistoryLimitChange(plan, e.target.value)}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-3">
+                    <label className="text-xs text-slate-400 block mb-1">Minimum Age Before Deletion (Days)</label>
+                    <input
+                      id="history-min-age-days"
+                      aria-label="Minimum history age days"
+                      type="number"
+                      min="1"
+                      max="3650"
+                      value={jobHistoryMinAgeDays}
+                      onChange={(e) => handleHistoryMinAgeDaysChange(e.target.value)}
+                      className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">Example: 7 means only records older than 7 days are eligible, and only if total history exceeds the plan cap.</p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveHistoryRetentionPolicy}
+                    disabled={savingHistoryRetentionPolicy}
+                    className="mt-3 w-full py-2 bg-[#38bdf8] hover:bg-[#0ea5e9] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingHistoryRetentionPolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save History Retention Policy'}
+                  </button>
+                </div>
+
+                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                  <p className="text-sm font-semibold text-white mb-2">Stuck Job Cleanup Policy</p>
+                  <p className="text-xs text-slate-400 mb-3">Controls when stale queue/processing jobs are auto-terminated during recovery and periodic cleanup.</p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Queue Wait Timeout (Minutes)</label>
+                      <input
+                        id="queue-wait-timeout-minutes"
+                        aria-label="Queue wait timeout minutes"
+                        type="number"
+                        min="5"
+                        max="1440"
+                        value={queueWaitTimeoutMinutes}
+                        onChange={(e) => handleQueueWaitTimeoutMinutesChange(e.target.value)}
+                        className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Processing Hard Timeout (Minutes)</label>
+                      <input
+                        id="processing-hard-timeout-minutes"
+                        aria-label="Processing hard timeout minutes"
+                        type="number"
+                        min="10"
+                        max="1440"
+                        value={processingHardTimeoutMinutes}
+                        onChange={(e) => handleProcessingHardTimeoutMinutesChange(e.target.value)}
+                        className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveCleanupPolicy}
+                    disabled={savingCleanupPolicy}
+                    className="mt-3 w-full py-2 bg-[#eab308] hover:bg-[#ca8a04] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingCleanupPolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Stuck Job Cleanup Policy'}
+                  </button>
+                </div>
+
+                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
                   <p className="text-sm font-semibold text-white mb-2">Retry & Failover Policy</p>
                   <p className="text-xs text-slate-400 mb-3">Configure retry counts per plan and runner failover order. Retry count excludes the first attempt.</p>
 
@@ -848,7 +1195,7 @@ const handleDeleteUser = () => {
             </div>
 
             {/* Dynamic Plans Control */}
-            <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl">
+            <div className={cn('bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl', activeSection !== 'plans' && 'hidden')}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center">
                   <Settings className="h-5 w-5 text-[#7C5CFF] mr-2" />
@@ -908,6 +1255,72 @@ const handleDeleteUser = () => {
                       </div>
                     </div>
 
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Max Media Items</label>
+                        <input
+                          aria-label={`Max media items for ${plan.name}`}
+                          type="number"
+                          value={plan.limits?.max_media_items ?? 0}
+                          onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_media_items: Number(e.target.value) }})}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Max Video Clips</label>
+                        <input
+                          aria-label={`Max video items for ${plan.name}`}
+                          type="number"
+                          value={plan.limits?.max_video_items ?? 0}
+                          onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_video_items: Number(e.target.value) }})}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Max Images</label>
+                        <input
+                          aria-label={`Max image items for ${plan.name}`}
+                          type="number"
+                          value={plan.limits?.max_image_items ?? 0}
+                          onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_image_items: Number(e.target.value) }})}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Max Thumbnails</label>
+                        <input
+                          aria-label={`Max thumbnail items for ${plan.name}`}
+                          type="number"
+                          value={plan.limits?.max_thumbnail_items ?? 0}
+                          onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_thumbnail_items: Number(e.target.value) }})}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Max Clip Length (seconds)</label>
+                        <input
+                          aria-label={`Max clip length seconds for ${plan.name}`}
+                          type="number"
+                          value={plan.limits?.max_clip_length_seconds ?? 0}
+                          onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_clip_length_seconds: Number(e.target.value) }})}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Max Total Video Duration (seconds)</label>
+                        <input
+                          aria-label={`Max total video duration seconds for ${plan.name}`}
+                          type="number"
+                          value={plan.limits?.max_total_video_duration_seconds ?? 0}
+                          onChange={(e) => handlePlanChange(plan._id, { limits: { ...plan.limits, max_total_video_duration_seconds: Number(e.target.value) }})}
+                          className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <label className="flex items-center cursor-pointer">
                         <input aria-label={`Toggle voice_selection feature for ${plan.name}`} type="checkbox" checked={plan.features?.voice_selection} onChange={(e) => handlePlanChange(plan._id, { features: { ...plan.features, voice_selection: e.target.checked }})} className="mr-2" />
@@ -955,8 +1368,11 @@ const handleDeleteUser = () => {
               </button>
             </div>
 
-          </div>
+            </>
+          )}
 
+          {activeSection === 'overview' && (
+            <>
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
@@ -972,6 +1388,31 @@ const handleDeleteUser = () => {
               <div><p className="text-slate-400 text-sm font-medium">Success Rate</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.jobs?.successRate || '0%')}</p></div>
             </div>
           </div>
+
+          <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-5 shadow-lg">
+            <h2 className="text-lg font-semibold text-white">How To Use This Panel</h2>
+            <p className="mt-1 text-sm text-slate-400">Use the section tabs above to manage each area without scrolling through every tool at once.</p>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <button type="button" onClick={() => setActiveSection('communication')} className="text-left rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+                <p className="font-semibold text-white">Broadcast Center</p>
+                <p className="text-slate-400 text-xs mt-1">Send notifications and publish global banners.</p>
+              </button>
+              <button type="button" onClick={() => setActiveSection('system')} className="text-left rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+                <p className="font-semibold text-white">System Policies</p>
+                <p className="text-slate-400 text-xs mt-1">Tune beta mode, queue limits, runner, and retry behavior.</p>
+              </button>
+              <button type="button" onClick={() => setActiveSection('plans')} className="text-left rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+                <p className="font-semibold text-white">Plan Controls</p>
+                <p className="text-slate-400 text-xs mt-1">Edit plan pricing, features, and usage limits.</p>
+              </button>
+              <Link href="/admin/users" className="rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+                <p className="font-semibold text-white">Users Directory</p>
+                <p className="text-slate-400 text-xs mt-1">Manage individual users, history, and subscriptions.</p>
+              </Link>
+            </div>
+          </div>
+            </>
+          )}
 
         </div>
       </div>

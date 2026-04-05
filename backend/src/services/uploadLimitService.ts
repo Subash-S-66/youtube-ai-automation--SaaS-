@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import User from '../models/User';
 import { PlanType } from '../config/plans';
 import SystemConfig from '../models/SystemConfig';
@@ -11,6 +12,16 @@ interface UploadLimitCheckResult {
   plan: string;
   displayPlan?: string;
   isBetaMode?: boolean;
+  planLimits?: {
+    max_channels?: number;
+    daily_upload_limit?: number;
+    max_media_items?: number;
+    max_video_items?: number;
+    max_image_items?: number;
+    max_thumbnail_items?: number;
+    max_clip_length_seconds?: number;
+    max_total_video_duration_seconds?: number;
+  };
   features?: {
     voice_selection?: boolean;
     scheduling?: boolean;
@@ -23,21 +34,141 @@ interface UploadLimitCheckResult {
   };
 }
 
-const resolveConsumedCountForJob = (job: {
-  holdConsumed?: boolean;
-  videoCount?: number;
-  processedVideos?: number;
-}): number => {
-  if (!job?.holdConsumed) {
+const IST_OFFSET_MINUTES = 5 * 60 + 30;
+
+const normalizeRequestedCount = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return Math.max(1, Math.floor(parsed));
+};
+
+export const getCurrentUsageDayStartUtc = (referenceDate: Date = new Date()): Date => {
+  const shiftedToIst = new Date(referenceDate.getTime() + IST_OFFSET_MINUTES * 60 * 1000);
+  const shiftedDayStartUtcMs = Date.UTC(
+    shiftedToIst.getUTCFullYear(),
+    shiftedToIst.getUTCMonth(),
+    shiftedToIst.getUTCDate()
+  );
+  return new Date(shiftedDayStartUtcMs - IST_OFFSET_MINUTES * 60 * 1000);
+};
+
+const getChannelLimitWindowStart = (hours: number): Date => {
+  const mode = String(process.env.CHANNEL_UPLOAD_LIMIT_MODE || 'ist-day').trim().toLowerCase();
+  if (mode === 'rolling-24h') {
+    const lookbackHours = Number.isFinite(Number(hours)) ? Math.max(1, Math.floor(Number(hours))) : 24;
+    return new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
+  }
+  return getCurrentUsageDayStartUtc();
+};
+
+const resolveActiveJobChannelId = (job: Record<string, any>): string => {
+  const candidates = [
+    job.channelId,
+    job.pipelineConfig?.channelId,
+    job.youtubeAccountId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const normalized = candidate.trim();
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+
+  return '';
+};
+
+const getActiveHoldSummary = async (userId: string): Promise<{ totalOnHold: number; perChannel: Map<string, number> }> => {
+  const perChannel = new Map<string, number>();
+  let totalOnHold = 0;
+
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return { totalOnHold, perChannel };
+  }
+
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  const activeJobs = await Job.find({
+    userId: userObjectId,
+    status: { $in: ['pending', 'processing'] },
+  })
+    .select('videoCount channelId pipelineConfig youtubeAccountId')
+    .lean();
+
+  for (const activeJob of activeJobs) {
+    const requestedCount = normalizeRequestedCount((activeJob as any).videoCount);
+    totalOnHold += requestedCount;
+
+    const channelId = resolveActiveJobChannelId(activeJob as Record<string, any>);
+    if (!channelId) {
+      continue;
+    }
+    perChannel.set(channelId, (perChannel.get(channelId) || 0) + requestedCount);
+  }
+
+  return { totalOnHold, perChannel };
+};
+
+export const reconcileUserHoldCounters = async (userId: string): Promise<number> => {
+  const [summary, user] = await Promise.all([
+    getActiveHoldSummary(userId),
+    User.findById(userId)
+      .select('uploadsOnHold youtubeChannels.channelId youtubeChannels.videosOnHold')
+      .lean(),
+  ]);
+
+  if (!user) {
     return 0;
   }
 
-  const requestedCount = Math.max(1, Math.floor(Number(job.videoCount || 1)));
-  const processedCountRaw = Number(job.processedVideos);
-  if (Number.isFinite(processedCountRaw) && processedCountRaw > 0) {
-    return Math.max(1, Math.min(requestedCount, Math.floor(processedCountRaw)));
+  const updates: Promise<any>[] = [];
+  const currentUploadsOnHold = Math.max(0, Math.floor(Number((user as any).uploadsOnHold || 0)));
+  if (currentUploadsOnHold !== summary.totalOnHold) {
+    updates.push(
+      User.updateOne(
+        { _id: userId },
+        {
+          $set: {
+            uploadsOnHold: summary.totalOnHold,
+          },
+        }
+      )
+    );
   }
-  return requestedCount;
+
+  const channels = Array.isArray((user as any).youtubeChannels) ? (user as any).youtubeChannels : [];
+  for (const channel of channels) {
+    const channelId = String(channel?.channelId || '').trim();
+    if (!channelId) {
+      continue;
+    }
+
+    const expectedHold = summary.perChannel.get(channelId) || 0;
+    const currentHold = Math.max(0, Math.floor(Number(channel?.videosOnHold || 0)));
+    if (currentHold === expectedHold) {
+      continue;
+    }
+
+    updates.push(
+      User.updateOne(
+        { _id: userId, 'youtubeChannels.channelId': channelId },
+        {
+          $set: {
+            'youtubeChannels.$.videosOnHold': expectedHold,
+          },
+        }
+      )
+    );
+  }
+
+  if (updates.length > 0) {
+    await Promise.all(updates);
+  }
+
+  return summary.totalOnHold;
 };
 
 export const getConsumedUploadsLast24hForChannel = async (
@@ -50,13 +181,17 @@ export const getConsumedUploadsLast24hForChannel = async (
     return 0;
   }
 
-  const lookbackHours = Number.isFinite(Number(hours)) ? Math.max(1, Math.floor(Number(hours))) : 24;
-  const since = new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
+  if (!mongoose.Types.ObjectId.isValid(userId)) {
+    return 0;
+  }
+
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  const since = getChannelLimitWindowStart(hours);
 
   const aggregation = await Job.aggregate<{ totalConsumed: number }>([
     {
       $match: {
-        userId: userId,
+        userId: userObjectId,
         channelId: normalizedChannelId,
         status: { $in: ['success', 'failed'] },
         holdConsumed: true,
@@ -145,22 +280,21 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
   // Always use the most recent config in case multiple records exist.
   const systemConfig = await SystemConfig.findOne().sort({ updatedAt: -1 });
 
-  const now = new Date();
-  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const startOfUsageDay = getCurrentUsageDayStartUtc();
 
   // Atomic Lazy Reset
   const updatedUser = await User.findOneAndUpdate(
     {
       _id: userId,
       $or: [
-        { lastUploadReset: { $lt: startOfUTCDay } },
+        { lastUploadReset: { $lt: startOfUsageDay } },
         { lastUploadReset: { $exists: false } }
       ]
     },
     {
       $set: {
         uploadsUsedToday: 0,
-        lastUploadReset: startOfUTCDay
+        lastUploadReset: startOfUsageDay
       }
     },
     { returnDocument: 'after' } // Returns the document AFTER update
@@ -174,8 +308,14 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
 
   const finalUser = await checkAndDowngradeExpiredPlan(user);
 
-  let uploadsUsedToday = finalUser.uploadsUsedToday || 0;
-  let uploadsOnHold = finalUser.uploadsOnHold || 0;
+  const uploadsUsedToday = Math.max(0, Math.floor(Number(finalUser.uploadsUsedToday || 0)));
+  let uploadsOnHold = Math.max(0, Math.floor(Number(finalUser.uploadsOnHold || 0)));
+
+  try {
+    uploadsOnHold = await reconcileUserHoldCounters(userId);
+  } catch (error) {
+    console.warn('[UploadLimitService] Failed to reconcile hold counters:', error);
+  }
 
   const actualPlanName = finalUser.plan as string;
   const betaForFreeUsers = !!systemConfig?.betaMode && actualPlanName === 'free';
@@ -195,27 +335,28 @@ export const getUploadLimits = async (userId: string): Promise<UploadLimitCheckR
     // Keep display label explicit so UI can show real plan with beta override.
     displayPlan: betaForFreeUsers ? 'free (beta basic)' : actualPlanName,
     isBetaMode: betaForFreeUsers,
+    planLimits: planObj?.limits || {},
     features: planObj?.features || {},
   };
 };
 
 export const reserveCredits = async (userId: string, count: number = 1): Promise<boolean> => {
-  const now = new Date();
-  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const reservationCount = normalizeRequestedCount(count);
+  const startOfUsageDay = getCurrentUsageDayStartUtc();
 
   // 1. Force a lazy reset check first so that we don't accidentally check limits against yesterday's values
   await User.findOneAndUpdate(
     {
       _id: userId,
       $or: [
-        { lastUploadReset: { $lt: startOfUTCDay } },
+        { lastUploadReset: { $lt: startOfUsageDay } },
         { lastUploadReset: { $exists: false } }
       ]
     },
     {
       $set: {
         uploadsUsedToday: 0,
-        lastUploadReset: startOfUTCDay
+        lastUploadReset: startOfUsageDay
       }
     }
   );
@@ -229,11 +370,11 @@ export const reserveCredits = async (userId: string, count: number = 1): Promise
     {
       _id: userId,
       $expr: {
-        $lte: [{ $add: ["$uploadsUsedToday", "$uploadsOnHold", count] }, maxLimit]
+        $lte: [{ $add: ["$uploadsUsedToday", "$uploadsOnHold", reservationCount] }, maxLimit]
       }
     },
     {
-      $inc: { uploadsOnHold: count }
+      $inc: { uploadsOnHold: reservationCount }
     },
     { returnDocument: 'after' }
   );
@@ -242,46 +383,87 @@ export const reserveCredits = async (userId: string, count: number = 1): Promise
 };
 
 export const consumeReservedCredits = async (userId: string, count: number = 1): Promise<boolean> => {
-  const result = await User.findOneAndUpdate(
-    { _id: userId, uploadsOnHold: { $gte: count } },
+  const consumeCount = normalizeRequestedCount(count);
+
+  const strictResult = await User.findOneAndUpdate(
+    { _id: userId, uploadsOnHold: { $gte: consumeCount } },
     {
       $inc: {
-        uploadsUsedToday: count,
-        uploadsOnHold: -count
+        uploadsUsedToday: consumeCount,
+        uploadsOnHold: -consumeCount
       }
     },
     { returnDocument: 'after' }
   );
-  return !!result;
+
+  if (strictResult) {
+    return true;
+  }
+
+  const user = await User.findById(userId).select('uploadsOnHold').lean();
+  const availableOnHold = Math.max(0, Math.floor(Number((user as any)?.uploadsOnHold || 0)));
+  if (availableOnHold <= 0) {
+    return false;
+  }
+
+  const fallbackResult = await User.findOneAndUpdate(
+    { _id: userId, uploadsOnHold: { $gte: availableOnHold } },
+    {
+      $inc: {
+        uploadsUsedToday: availableOnHold,
+        uploadsOnHold: -availableOnHold,
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  return !!fallbackResult;
 };
 
 export const releaseReservedCredits = async (userId: string, count: number = 1): Promise<boolean> => {
-  const result = await User.findOneAndUpdate(
-    { _id: userId, uploadsOnHold: { $gte: count } },
+  const releaseCount = normalizeRequestedCount(count);
+
+  const strictResult = await User.findOneAndUpdate(
+    { _id: userId, uploadsOnHold: { $gte: releaseCount } },
     {
       $inc: {
-        uploadsOnHold: -count
+        uploadsOnHold: -releaseCount
       }
     },
     { returnDocument: 'after' }
   );
-  return !!result;
+
+  if (strictResult) {
+    return true;
+  }
+
+  const fallbackResult = await User.findOneAndUpdate(
+    { _id: userId, uploadsOnHold: { $gt: 0 } },
+    {
+      $set: {
+        uploadsOnHold: 0,
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  return !!fallbackResult;
 };
 
 export const incrementUploadCount = async (userId: string, count: number = 1): Promise<void> => {
-  const now = new Date();
-  const startOfUTCDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const incrementCount = normalizeRequestedCount(count);
+  const startOfUsageDay = getCurrentUsageDayStartUtc();
 
   // Atomically lazy-reset AND increment if out of date, or just increment if up to date
   const result = await User.findOneAndUpdate(
     {
       _id: userId,
-      lastUploadReset: { $lt: startOfUTCDay }
+      lastUploadReset: { $lt: startOfUsageDay }
     },
     {
       $set: {
-        uploadsUsedToday: count,
-        lastUploadReset: startOfUTCDay
+        uploadsUsedToday: incrementCount,
+        lastUploadReset: startOfUsageDay
       }
     }
   );
@@ -290,7 +472,7 @@ export const incrementUploadCount = async (userId: string, count: number = 1): P
     // Already up to date, just increment
     await User.updateOne(
       { _id: userId },
-      { $inc: { uploadsUsedToday: count } }
+      { $inc: { uploadsUsedToday: incrementCount } }
     );
   }
 };

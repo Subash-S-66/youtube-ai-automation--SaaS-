@@ -23,8 +23,8 @@ export default function AdminLogin() {
     try {
       const data = await authService.adminLogin({ username, password });
       if (data.success && data.data.token) {
-
-        router.push('/admin');
+        const role = String(data?.data?.role || '').toLowerCase();
+        router.push(role === 'helper' ? '/admin/tickets' : '/admin');
       }
     } catch (err: any) {
       setError(err.response?.data?.message || 'Login failed. Please check your credentials.');

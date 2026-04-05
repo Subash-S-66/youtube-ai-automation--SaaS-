@@ -84,6 +84,8 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
   ];
   if (displayUser?.role === 'admin') {
     navLinks.push({ name: 'Admin Panel', icon: Shield, href: '/admin' });
+  } else if (displayUser?.role === 'helper') {
+    navLinks.push({ name: 'Support Inbox', icon: MessageSquare, href: '/admin/tickets' });
   }
 
   return (

@@ -4,6 +4,7 @@ import { adminMiddleware } from '../middleware/adminMiddleware';
 import {
   getAdminStats,
   getAllUsers,
+  createAdminUser,
   getUserDetails,
   updateUserPlan,
   createNotification,
@@ -26,6 +27,7 @@ router.use(adminMiddleware);
 
 router.get('/stats', getAdminStats);
 router.get('/users', getAllUsers);
+router.post('/users/create-admin', createAdminUser);
 router.get('/users/:id', getUserDetails);
 router.put('/users/:id/plan', updateUserPlan);
 router.delete('/users/:id', deleteUserByAdmin);

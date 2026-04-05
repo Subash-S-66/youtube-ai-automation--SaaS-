@@ -2,10 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import DashboardLayout from '../../../components/layout/DashboardLayout';
 import { authService } from '../../../services/authService';
 import { supportService } from '../../../services/supportService';
-import { Mail, CheckCircle, Clock, Reply, AlertCircle, X, Send, Loader2 } from 'lucide-react';
+import { Mail, Search, Send, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import io, { Socket } from 'socket.io-client';
 
@@ -17,10 +16,15 @@ export default function AdminTicketsPage() {
   const [tickets, setTickets] = useState<any[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
+  const [ticketSearch, setTicketSearch] = useState('');
+  const [ticketStatus, setTicketStatus] = useState<'all' | 'open' | 'closed'>('all');
 
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
+  const ticketSearchRef = useRef('');
+  const ticketStatusRef = useRef<'all' | 'open' | 'closed'>('all');
+  const canCloseTickets = user?.role === 'admin';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -29,14 +33,25 @@ export default function AdminTicketsPage() {
   }, [messages, selectedTicket]);
 
   useEffect(() => {
+    ticketSearchRef.current = ticketSearch;
+    ticketStatusRef.current = ticketStatus;
+  }, [ticketSearch, ticketStatus]);
+
+  useEffect(() => {
     const init = async () => {
       try {
         const userData = await authService.getMe();
-        if (userData.data.role !== 'admin') {
+        const role = String(userData?.data?.user?.role || '').toLowerCase();
+        if (role !== 'admin' && role !== 'helper') {
           router.push('/dashboard');
           return;
         }
-        setUser(userData.data);
+        setUser({
+          ...userData.data.user,
+          plan: userData.data.plan,
+          displayPlan: userData.data.displayPlan,
+          isBetaMode: userData.data.isBetaMode,
+        });
         await fetchTickets();
         connectAdminSocket();
       } catch (err) {
@@ -50,12 +65,17 @@ export default function AdminTicketsPage() {
 
   const fetchTickets = async () => {
     try {
-      const res = await supportService.getAdminTickets();
+      const res = await supportService.getAdminTickets(ticketSearchRef.current, ticketStatusRef.current);
       setTickets(res.data);
     } catch (err) {
       console.error('Failed to fetch tickets', err);
     }
   };
+
+  useEffect(() => {
+    if (!user || (user.role !== 'admin' && user.role !== 'helper')) return;
+    fetchTickets();
+  }, [ticketSearch, ticketStatus]);
 
   const connectAdminSocket = () => {
     if (socket) return;
@@ -121,6 +141,7 @@ export default function AdminTicketsPage() {
   };
 
   const handleCloseTicket = async () => {
+    if (!canCloseTickets) return;
     if (!selectedTicket || selectedTicket.status === 'closed') return;
     if (!window.confirm('Are you sure you want to close this ticket?')) return;
 
@@ -135,24 +156,42 @@ export default function AdminTicketsPage() {
 
   if (loading) {
     return (
-      <DashboardLayout user={user}>
-        <div className="flex items-center space-x-3 text-slate-400">
-          <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-[#7C5CFF]"></div>
-          <span>Loading admin panel…</span>
-        </div>
-      </DashboardLayout>
+      <div className="flex items-center space-x-3 text-slate-400">
+        <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-[#7C5CFF]"></div>
+        <span>Loading support inbox...</span>
+      </div>
     );
   }
 
   return (
-    <DashboardLayout user={user}>
-      <div className="max-w-6xl mx-auto flex h-[calc(100vh-120px)] space-x-6">
+    <div className="max-w-6xl mx-auto flex h-[calc(100vh-120px)] space-x-6">
 
         {/* Left Sidebar: Ticket List */}
         <div className="w-1/3 bg-[#111827] border border-[#1A2235] rounded-xl flex flex-col overflow-hidden">
           <div className="p-4 border-b border-[#1A2235] bg-[#0B0F1A]">
             <h2 className="text-lg font-semibold text-white">Support Tickets</h2>
-            <p className="text-xs text-slate-400 mt-1">Live chat & management</p>
+            <p className="text-xs text-slate-400 mt-1">Live chat inbox for support replies</p>
+            <div className="mt-3 space-y-2">
+              <div className="relative">
+                <Search className="h-3.5 w-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={ticketSearch}
+                  onChange={(e) => setTicketSearch(e.target.value)}
+                  placeholder="Search by email, status, message"
+                  className="w-full bg-[#111827] border border-[#1A2235] rounded-lg pl-8 pr-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[#7C5CFF]"
+                />
+              </div>
+              <select
+                value={ticketStatus}
+                onChange={(e) => setTicketStatus(e.target.value as 'all' | 'open' | 'closed')}
+                className="w-full bg-[#111827] border border-[#1A2235] rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-[#7C5CFF]"
+              >
+                <option value="all">All statuses</option>
+                <option value="open">Open only</option>
+                <option value="closed">Closed only</option>
+              </select>
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
@@ -206,7 +245,7 @@ export default function AdminTicketsPage() {
                    <h3 className="text-white font-medium">{selectedTicket.userId?.email || 'Unknown User'}</h3>
                    <p className="text-xs text-slate-400 mt-1">Plan: <span className="uppercase text-slate-300">{selectedTicket.userId?.plan || 'Free'}</span></p>
                  </div>
-                 {selectedTicket.status === 'open' && (
+                 {selectedTicket.status === 'open' && canCloseTickets && (
                    <button
                      onClick={handleCloseTicket}
                      className="px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded border border-red-500/20 text-xs transition-colors"
@@ -270,7 +309,7 @@ export default function AdminTicketsPage() {
                 </div>
               ) : (
                 <div className="p-4 bg-[#0B0F1A] border-t border-[#1A2235] shrink-0 text-center text-sm text-slate-500">
-                  This ticket is closed. It will disappear from the user's dashboard after 24 hours.
+                  This ticket is closed. Only admins can close tickets; both admins and helpers can reply while open.
                 </div>
               )}
             </>
@@ -278,6 +317,5 @@ export default function AdminTicketsPage() {
         </div>
 
       </div>
-    </DashboardLayout>
   );
 }

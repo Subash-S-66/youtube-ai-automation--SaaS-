@@ -7,7 +7,7 @@ import { m, AnimatePresence } from 'framer-motion';
 
 
 import React from 'react';
-import { History, ChevronDown, ChevronUp, Terminal, RefreshCw } from 'lucide-react';
+import { History, ChevronDown, ChevronUp, Terminal, RefreshCw, Search } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { pipelineService } from '../../services/pipelineService';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -34,6 +34,7 @@ interface HistoryJob {
 interface JobsResult {
   data: HistoryJob[];
   pagination?: {
+    total?: number;
     pages?: number;
   };
 }
@@ -51,6 +52,8 @@ export default function HistoryPage() {
 
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+  const [search, setSearch] = useState('');
   const jobsRef = useRef<HistoryJob[]>([]);
 
   const runtimeStages = new Set([
@@ -97,7 +100,7 @@ export default function HistoryPage() {
       try {
         const [userData, jobsData] = await Promise.all([
           includeUser ? authService.getMe() : Promise.resolve(null),
-          pipelineService.getJobs(page, 10, { includeTotal: !silent })
+          pipelineService.getJobs(page, 10, { includeTotal: !silent, search })
         ]) as [UserResult | null, JobsResult];
         if (!active) return;
         if (includeUser && userData) {
@@ -106,6 +109,7 @@ export default function HistoryPage() {
         setJobs(jobsData.data);
         jobsRef.current = jobsData.data;
         setTotalPages(jobsData.pagination?.pages || 1);
+        setTotalRecords(Number(jobsData.pagination?.total || jobsData.data?.length || 0));
       } catch (err) {
         if (!silent) {
           authService.handleAuthError(err);
@@ -131,7 +135,7 @@ export default function HistoryPage() {
       active = false;
       clearInterval(interval);
     };
-  }, [page]);
+  }, [page, search]);
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
@@ -140,10 +144,31 @@ export default function HistoryPage() {
       setJobs(jobsData.data);
       jobsRef.current = jobsData.data;
       setTotalPages(jobsData.pagination?.pages || 1);
+      setTotalRecords(Number(jobsData.pagination?.total || jobsData.data?.length || 0));
     } finally {
       setRefreshing(false);
     }
   };
+
+  const buildVisiblePages = () => {
+    const maxButtons = 5;
+    if (totalPages <= maxButtons) {
+      return Array.from({ length: totalPages }, (_, index) => index + 1);
+    }
+
+    const half = Math.floor(maxButtons / 2);
+    let start = Math.max(1, page - half);
+    let end = start + maxButtons - 1;
+
+    if (end > totalPages) {
+      end = totalPages;
+      start = end - maxButtons + 1;
+    }
+
+    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  };
+
+  const visiblePages = buildVisiblePages();
 
   const toggleJob = (id: string) => {
     setExpandedJobId(prev => prev === id ? null : id);
@@ -244,6 +269,19 @@ export default function HistoryPage() {
             )}
           </div>
           <div className="w-full sm:w-auto flex items-center gap-2">
+            <div className="relative flex-1 sm:flex-none sm:w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search status/error"
+                className="w-full rounded-lg border border-[#1A2235] bg-[#0B0F1A] pl-8 pr-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-[#7C5CFF]"
+              />
+            </div>
             <button
               onClick={handleManualRefresh}
               disabled={refreshing}
@@ -253,7 +291,7 @@ export default function HistoryPage() {
               Refresh
             </button>
             <span className="text-xs sm:text-sm font-medium text-slate-400 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235]">
-              Total Records: {jobs.length}
+              Total Records: {totalRecords}
             </span>
           </div>
         </div>
@@ -444,6 +482,24 @@ export default function HistoryPage() {
           <span className="text-sm text-slate-400 text-center">
             Page {page} of {totalPages}
           </span>
+          <div className="flex items-center justify-center gap-1 flex-wrap">
+            {visiblePages.map((pageNumber) => (
+              <button
+                key={`history-page-${pageNumber}`}
+                type="button"
+                onClick={() => setPage(pageNumber)}
+                disabled={loading}
+                className={cn(
+                  'min-w-8 px-2 py-1 rounded-md text-xs border transition-colors',
+                  pageNumber === page
+                    ? 'bg-[#7C5CFF]/20 text-[#7C5CFF] border-[#7C5CFF]/40'
+                    : 'bg-[#0B0F1A] text-slate-300 border-[#1A2235] hover:border-[#32507B]'
+                )}
+              >
+                {pageNumber}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             disabled={page === totalPages || loading}

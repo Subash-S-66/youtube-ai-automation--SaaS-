@@ -33,7 +33,13 @@ if (process.env.SENTRY_DSN) {
   });
 }
 import { PipelineJobPayload } from '../queues/pipelineQueue';
-import { consumeReservedCredits, getConsumedUploadsLast24hForChannel, releaseReservedCredits } from '../services/uploadLimitService';
+import {
+  consumeReservedCredits,
+  getConsumedUploadsLast24hForChannel,
+  getCurrentUsageDayStartUtc,
+  releaseReservedCredits,
+} from '../services/uploadLimitService';
+import { applyUserJobHistoryRetention } from '../services/jobHistoryRetentionPolicyService';
 import { notifyUser } from '../services/notificationService';
 import { decrementChannelVideosOnHold, resolveJobChannelId } from '../services/channelHoldService';
 import { buildRunnerSequence, pickRunnerForAttempt, sanitizePipelineRunnerFallbackOrder } from '../services/pipelineRetryPolicyService';
@@ -567,19 +573,19 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
     console.log(`[PipelineWorker] Acquired lock for Job ${jobId} (User: ${userId})`);
 
     try {
-      // 1. Check channel-scoped 24h rolling upload limit (10 uploads per channel)
+      // 1. Check channel-scoped daily upload limit (10 uploads per IST day)
       if (settings.channelId) {
-        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        const uploadsLast24h = await getConsumedUploadsLast24hForChannel(userId, settings.channelId);
+        const currentIstDayStart = getCurrentUsageDayStartUtc();
+        const uploadsInDailyWindow = await getConsumedUploadsLast24hForChannel(userId, settings.channelId);
 
         const requestedUploads = getRequestedUploadCount(settings.videoCount);
-        const limitExceeded = (uploadsLast24h + requestedUploads) > 10;
+        const limitExceeded = (uploadsInDailyWindow + requestedUploads) > 10;
         const dbJob = await JobModel.findById(jobId);
         const acceptedWarning = Boolean((dbJob as any)?.acceptedYouTubeLimitWarning);
 
         if (limitExceeded && !acceptedWarning) {
           isSkipped = true;
-          await appendLogSafe(jobId, `\nJob rejected due to YouTube 24-hour upload limit.\n`, 'failed');
+          await appendLogSafe(jobId, `\nJob rejected due to YouTube daily upload limit (IST day window).\n`, 'failed');
           const limitRejectedJob = await JobModel.findOneAndUpdate(
             { _id: jobId, status: { $in: ['pending', 'processing'] }, holdConsumed: false, holdReleased: false },
             {
@@ -588,13 +594,13 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
                 holdConsumed: false,
                 holdReleased: true,
                 processedVideos: 0,
-                errorMessage: 'Skipped due to YouTube 24-hour upload limit',
+                errorMessage: 'Skipped due to YouTube daily upload limit (IST day window)',
                 errorStage: 'UPLOAD',
                 completedAt: new Date(),
                 result: {
                   success: false,
                   stage: 'UPLOAD',
-                  message: 'Skipped due to YouTube 24-hour upload limit',
+                  message: 'Skipped due to YouTube daily upload limit (IST day window)',
                   skippedAt: new Date().toISOString(),
                 },
                 progress: {
@@ -617,7 +623,7 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
             const ch = u.youtubeChannels.find(c => c.channelId === settings.channelId);
             if (ch) {
               const lastWarning = ch.lastLimitWarningSentAt;
-              if (!lastWarning || lastWarning.getTime() < oneDayAgo.getTime()) {
+              if (!lastWarning || lastWarning.getTime() < currentIstDayStart.getTime()) {
                 await User.findOneAndUpdate(
                   { _id: userId, 'youtubeChannels.channelId': settings.channelId },
                   { $set: { 'youtubeChannels.$.lastLimitWarningSentAt': new Date() } }
@@ -1652,6 +1658,10 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
             console.error(`Failed to decrement channel holds for user ${userId}:`, err);
           });
         }
+
+        await applyUserJobHistoryRetention(userId).catch((err) => {
+          console.warn(`[PipelineWorker] Failed to apply job history retention for user ${userId}:`, err);
+        });
       }
     }
   },
