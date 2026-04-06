@@ -16,6 +16,7 @@ from youtube_ai_automation.execution_runner import (
     send_result_webhook,
     validate_env,
     validate_mode_inputs,
+    validate_runtime_dependencies,
     _build_safe_output,
 )
 from youtube_ai_automation.main import _setup_logging
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> dict:
 
         validate_env(ctx)
         validate_mode_inputs(ctx)
+        validate_runtime_dependencies(ctx)
 
         payload = resolve_payload(args)
         count = resolve_count(args)

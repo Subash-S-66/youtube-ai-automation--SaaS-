@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -207,6 +208,16 @@ def validate_mode_inputs(ctx: JobContext) -> None:
         raise FileNotFoundError(
             f"RUN_MODE=prepared requires prepared payload file at '{prepared_path}'."
         )
+
+
+def validate_runtime_dependencies(ctx: JobContext) -> None:
+    if ctx.mode != "full":
+        return
+    missing = [binary for binary in ("ffmpeg", "ffprobe") if shutil.which(binary) is None]
+    if missing:
+        missing_text = ", ".join(missing)
+        _log(ctx, "env", f"Missing required media binaries: {missing_text}", "error")
+        raise FileNotFoundError(f"Missing required media binaries: {missing_text}")
 
 
 def execute_pipeline(

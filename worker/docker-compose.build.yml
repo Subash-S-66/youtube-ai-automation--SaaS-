@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: worker/Dockerfile
-    image: clipforge-worker:latest
+    image: ${WORKER_IMAGE:-clipforge-worker:queue-worker-local}
     env_file:
       - .env
     restart: unless-stopped

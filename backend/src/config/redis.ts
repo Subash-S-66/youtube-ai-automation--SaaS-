@@ -10,8 +10,13 @@ const parseMs = (raw: unknown, fallback: number): number => {
 };
 
 const REDIS_CONNECT_TIMEOUT_MS = parseMs(process.env.REDIS_CONNECT_TIMEOUT_MS, 8000);
-const REDIS_COMMAND_TIMEOUT_MS = parseMs(process.env.REDIS_COMMAND_TIMEOUT_MS, 5000);
+const REDIS_COMMAND_TIMEOUT_MS = parseMs(process.env.REDIS_COMMAND_TIMEOUT_MS, 15000);
 const REDIS_MAX_RETRY_DELAY_MS = parseMs(process.env.REDIS_MAX_RETRY_DELAY_MS, 2000);
+const REDIS_COMMAND_TIMEOUT_LOG_THROTTLE_MS = parseMs(
+  process.env.REDIS_COMMAND_TIMEOUT_LOG_THROTTLE_MS,
+  30000
+);
+let lastRedisCommandTimeoutLogAt = 0;
 
 export const redisEnabled = redisUrl.length > 0;
 
@@ -40,6 +45,18 @@ if (connection) {
     console.warn('[Redis] Connection closed');
   });
   connection.on('error', (err) => {
+    const message = String((err as any)?.message || '').toLowerCase();
+    if (message.includes('command timed out')) {
+      const now = Date.now();
+      if (now - lastRedisCommandTimeoutLogAt >= REDIS_COMMAND_TIMEOUT_LOG_THROTTLE_MS) {
+        lastRedisCommandTimeoutLogAt = now;
+        console.warn(
+          `[Redis] Command timed out after ${REDIS_COMMAND_TIMEOUT_MS}ms. ` +
+          'Consider increasing REDIS_COMMAND_TIMEOUT_MS if transient network latency is expected.'
+        );
+      }
+      return;
+    }
     console.error('Redis error:', err);
   });
 } else {

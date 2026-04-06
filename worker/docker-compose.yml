@@ -1,6 +1,6 @@
 services:
   clipforge-worker:
-    image: ${WORKER_IMAGE:-clipforge-worker:latest}
+    image: ${WORKER_IMAGE:-clipforge-worker:queue-worker-v1}
     env_file:
       - .env
     restart: unless-stopped

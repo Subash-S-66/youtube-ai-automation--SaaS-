@@ -582,9 +582,23 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
   const dedicatedWorkersByRunner = heartbeatSummary.byRunnerSource.dedicated;
   const embeddedWorkersByRunner = heartbeatSummary.byRunnerSource.embedded;
 
-  const localConnected = dedicatedWorkersByRunner.local > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.local > 0);
-  const azureConnected = dedicatedWorkersByRunner.azure > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.azure > 0);
-  const remoteConnected = dedicatedWorkersByRunner.remote > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.remote > 0);
+  // Treat embedded API workers as connectivity evidence per runner when that
+  // specific runner has no dedicated workers alive.
+  const embeddedOnlyFallbackByRunner = {
+    local: dedicatedWorkersByRunner.local === 0 && embeddedWorkersByRunner.local > 0,
+    azure: dedicatedWorkersByRunner.azure === 0 && embeddedWorkersByRunner.azure > 0,
+    remote: dedicatedWorkersByRunner.remote === 0 && embeddedWorkersByRunner.remote > 0,
+  };
+
+  const localConnected = dedicatedWorkersByRunner.local > 0 || ((includeEmbeddedWorkersInConnectivity || embeddedOnlyFallbackByRunner.local) && embeddedWorkersByRunner.local > 0);
+  const azureConnected = dedicatedWorkersByRunner.azure > 0 || ((includeEmbeddedWorkersInConnectivity || embeddedOnlyFallbackByRunner.azure) && embeddedWorkersByRunner.azure > 0);
+  const remoteConnected = dedicatedWorkersByRunner.remote > 0 || ((includeEmbeddedWorkersInConnectivity || embeddedOnlyFallbackByRunner.remote) && embeddedWorkersByRunner.remote > 0);
+
+  const includeEmbeddedWorkersInConnectivityEffective =
+    includeEmbeddedWorkersInConnectivity ||
+    embeddedOnlyFallbackByRunner.local ||
+    embeddedOnlyFallbackByRunner.azure ||
+    embeddedOnlyFallbackByRunner.remote;
 
   const localConfigured = localRuntime.available;
   const azureConfigured = effectiveMissingAzureEnv.length === 0;
@@ -600,7 +614,12 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
       workerHeartbeats: heartbeatSummary,
       dedicatedWorkerHeartbeats: heartbeatSummary.bySource.dedicated,
       embeddedWorkerHeartbeats: heartbeatSummary.bySource.embedded,
-      includeEmbeddedWorkersInConnectivity,
+      includeEmbeddedWorkersInConnectivity: includeEmbeddedWorkersInConnectivityEffective,
+      embeddedOnlyFallbackConnectivity:
+        embeddedOnlyFallbackByRunner.local ||
+        embeddedOnlyFallbackByRunner.azure ||
+        embeddedOnlyFallbackByRunner.remote,
+      embeddedOnlyFallbackByRunner,
       runners: {
         local: {
           connected: localConnected,

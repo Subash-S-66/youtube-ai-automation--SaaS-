@@ -223,10 +223,16 @@ def run_orchestrated_pipeline(
             warnings.append(f"upload_error:{str(exc)[:180]}")
             logger.warn("upload", f"upload failed: {str(exc)[:160]}")
 
+    mode_full = str(mode).lower() == "full"
+    composition_failed = mode_full and not bool(composition_result.video_path)
+    if composition_failed:
+        warnings.append("composition_missing_video_output")
+        logger.error("composition", "full mode completed without a rendered video output")
+
     elapsed = round(time.time() - start, 2)
     result = {
         "jobId": job_id,
-        "status": "COMPLETED",
+        "status": "FAILED" if composition_failed else "COMPLETED",
         "content": {
             "script": "\n".join(script_result.lines),
             "captions": [{"text": line} for line in script_result.lines],
@@ -255,7 +261,7 @@ def run_orchestrated_pipeline(
 
     print(f"PIPELINE_OUTPUT_JSON:{json.dumps(result, ensure_ascii=False)}")
     try:
-        send_pipeline_complete({"jobId": job_id, "status": "COMPLETED", "result": result})
+        send_pipeline_complete({"jobId": job_id, "status": result.get("status", "FAILED"), "result": result})
     except Exception as exc:
         logger.warn("webhook", f"pipeline-complete webhook failed: {str(exc)[:180]}")
     return PipelineResult(payload=result)

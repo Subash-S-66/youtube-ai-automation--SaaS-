@@ -3,6 +3,7 @@ param(
     [string]$RegistryName = $env:AZURE_ACR_NAME,
     [string]$JobName = $env:AZURE_JOB_NAME,
     [string]$ImageRepository = "clipforge-pipeline-worker",
+    [string]$ImageTag = $env:AZURE_IMAGE_TAG,
     [string]$EnvironmentResourceId = $env:AZURE_ENVIRONMENT_RESOURCE_ID,
     [int]$Parallelism = 2,
     [int]$ReplicaCompletionCount = 1,
@@ -27,12 +28,30 @@ if ([string]::IsNullOrWhiteSpace($EnvironmentResourceId)) {
     $EnvironmentResourceId = "/subscriptions/f508189d-6f3f-42e0-9ddd-2e3d5455e9e6/resourceGroups/ISL-centralindia/providers/Microsoft.App/managedEnvironments/isl-collage-env"
 }
 
-$tag = (Get-Date -Format "yyyyMMdd-HHmmss")
+if ($ImageRepository.Contains(":")) {
+    throw "ImageRepository must not include a tag. Pass only repository name and use -ImageTag for the versioned tag."
+}
+
+$defaultImageTag = (Get-Date -Format "yyyyMMdd-HHmmss")
+$rawImageTag = if ([string]::IsNullOrWhiteSpace($ImageTag)) {
+    $defaultImageTag
+} else {
+    $ImageTag.Trim().ToLowerInvariant()
+}
+
+$normalizedImageTag = ($rawImageTag -replace "[^a-z0-9._-]", "-").Trim("-")
+if ([string]::IsNullOrWhiteSpace($normalizedImageTag)) {
+    $normalizedImageTag = $defaultImageTag
+}
+if ($normalizedImageTag -eq "latest") {
+    throw "Image tag 'latest' is not allowed. Use a pinned tag such as 20260406-1200 or a commit sha."
+}
+
 $normalizedImageRepository = ($ImageRepository.Trim().ToLowerInvariant() -replace "[^a-z0-9._/-]", "-")
 if ([string]::IsNullOrWhiteSpace($normalizedImageRepository)) {
     $normalizedImageRepository = "clipforge-pipeline-worker"
 }
-$ImageName = "${normalizedImageRepository}:$tag"
+$ImageName = "${normalizedImageRepository}:$normalizedImageTag"
 $ErrorActionPreference = "Stop"
 
 function Invoke-ExternalCommand {
@@ -374,3 +393,4 @@ if ($jobExists) {
 
 Write-Host "Azure job ready: $JobName"
 Write-Host "Image: $fullImage"
+Write-Host "Tag: $normalizedImageTag"

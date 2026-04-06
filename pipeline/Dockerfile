@@ -4,8 +4,10 @@ FROM python:3.10-slim
 # Set the working directory
 WORKDIR /app
 
-# Install system dependencies if required by the pipeline (e.g. ffmpeg)
-# RUN apt-get update && apt-get install -y ffmpeg
+# Install required media tooling for composition and duration probing.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ffmpeg \
+	&& rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install python dependencies
 COPY requirements.txt .

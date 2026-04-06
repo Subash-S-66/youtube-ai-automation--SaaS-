@@ -1274,11 +1274,29 @@ const handleDeleteUser = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       {(['local', 'azure', 'remote'] as const).map((runner) => {
                         const runnerStatus = runtimeStatus?.runners?.[runner];
+                        const isConnected = Boolean(runnerStatus?.connected);
+                        const isConfigured = Boolean(runnerStatus?.configured);
                         const isReady = Boolean(runnerStatus?.ready);
-                        const dotClass = isReady ? 'bg-green-500' : 'bg-red-500';
-                        const statusLabel = isReady ? 'Connected' : 'Not Connected';
+                        const dotClass = isReady
+                          ? 'bg-green-500'
+                          : isConnected
+                            ? 'bg-amber-400'
+                            : 'bg-red-500';
+                        const statusLabel = isReady
+                          ? 'Connected'
+                          : isConnected
+                            ? 'Config Error'
+                            : isConfigured
+                              ? 'Worker Offline'
+                              : 'Not Ready';
+                        const statusTextClass = isReady
+                          ? 'text-green-400'
+                          : isConnected
+                            ? 'text-amber-300'
+                            : 'text-red-400';
                         const workerCount = runnerStatus?.activeWorkers ?? 0;
                         const embeddedWorkerCount = runnerStatus?.embeddedWorkers ?? 0;
+                        const totalWorkerCount = workerCount + embeddedWorkerCount;
                         const missingEnv = runnerStatus?.missingEnv || [];
 
                         return (
@@ -1287,12 +1305,14 @@ const handleDeleteUser = () => {
                               <p className="text-[11px] text-slate-300 font-semibold">{runnerLabelMap[runner]}</p>
                               <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} />
                             </div>
-                            <p className={`mt-1 text-[11px] font-semibold ${isReady ? 'text-green-400' : 'text-red-400'}`}>
+                            <p className={`mt-1 text-[11px] font-semibold ${statusTextClass}`}>
                               {statusLabel}
                             </p>
-                            <p className="text-[10px] text-slate-500">Workers: {workerCount}</p>
+                            <p className="text-[10px] text-slate-500">Workers: {totalWorkerCount}</p>
                             {embeddedWorkerCount > 0 ? (
-                              <p className="text-[10px] text-amber-300">Embedded(API): {embeddedWorkerCount}</p>
+                              <p className="text-[10px] text-amber-300">
+                                Dedicated: {workerCount} | Embedded(API): {embeddedWorkerCount}
+                              </p>
                             ) : null}
                             {missingEnv.length > 0 ? (
                               <p className="mt-1 text-[10px] text-amber-300">Missing: {missingEnv.join(', ')}</p>

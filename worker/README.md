@@ -39,6 +39,7 @@ cp worker/.env.example worker/.env
 ### Mode A: VM with worker folder only
 
 1. Set `WORKER_IMAGE` in `worker/.env` to your registry image.
+	Do not use `:latest`; pin a versioned tag (for example `:20260406-1200`).
 2. Pull and run:
 
 ```bash
