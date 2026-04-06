@@ -87,6 +87,82 @@ const getQueueTimeoutError = (queueWaitTimeoutMinutes: number): string =>
 const getProcessingHardTimeoutError = (processingHardTimeoutMinutes: number): string =>
   `Job timed out after running more than ${processingHardTimeoutMinutes} minutes.`;
 
+const PIPELINE_QUEUE_CLEANUP_STATES: Array<'waiting' | 'delayed' | 'prioritized' | 'paused'> = [
+  'waiting',
+  'delayed',
+  'prioritized',
+  'paused',
+];
+
+const getDbJobIdFromQueueEntry = (queueEntry: any): string => {
+  const entryJobId = queueEntry?.data?.jobId;
+  if (typeof entryJobId === 'string' && entryJobId.trim()) {
+    return entryJobId.trim();
+  }
+  if (entryJobId != null) {
+    return String(entryJobId).trim();
+  }
+  return '';
+};
+
+const removeQueuedPipelineEntriesForDbJob = async (dbJobId: string): Promise<number> => {
+  if (!dbJobId || !pipelineQueue || typeof (pipelineQueue as any).getJobs !== 'function') {
+    return 0;
+  }
+
+  const candidates: any[] = [];
+  try {
+    const queuedEntries = await (pipelineQueue as any).getJobs(PIPELINE_QUEUE_CLEANUP_STATES);
+    if (Array.isArray(queuedEntries)) {
+      candidates.push(...queuedEntries);
+    }
+  } catch (error) {
+    console.warn(`[StuckJobCleanup] Failed to scan queue states while cleaning job ${dbJobId}:`, error);
+  }
+
+  if (typeof (pipelineQueue as any).getJob === 'function') {
+    try {
+      const directEntry = await (pipelineQueue as any).getJob(dbJobId);
+      if (directEntry) {
+        candidates.push(directEntry);
+      }
+    } catch (error) {
+      console.warn(`[StuckJobCleanup] Failed to fetch direct queue entry for job ${dbJobId}:`, error);
+    }
+  }
+
+  const matchingEntries = new Map<string, any>();
+  for (const entry of candidates) {
+    const queueId = String(entry?.id || '').trim();
+    if (!queueId) {
+      continue;
+    }
+    const mappedDbJobId = getDbJobIdFromQueueEntry(entry);
+    if (mappedDbJobId === dbJobId || queueId === dbJobId) {
+      matchingEntries.set(queueId, entry);
+    }
+  }
+
+  let removedCount = 0;
+  for (const entry of matchingEntries.values()) {
+    try {
+      await entry.remove();
+      removedCount += 1;
+    } catch (error) {
+      console.warn(`[StuckJobCleanup] Failed to remove queue entry ${String(entry?.id || 'unknown')} for job ${dbJobId}:`, error);
+    }
+  }
+
+  return removedCount;
+};
+
+const cleanupQueueEntriesAfterFailure = async (dbJobId: string, reason: string): Promise<void> => {
+  const removedCount = await removeQueuedPipelineEntriesForDbJob(dbJobId);
+  if (removedCount > 0) {
+    console.log(`[StuckJobCleanup] Removed ${removedCount} BullMQ queued entries for job ${dbJobId} (${reason}).`);
+  }
+};
+
 export const safelyFailJob = async (
   job: any,
   errorMessage: string,
@@ -250,7 +326,10 @@ export const recoverCrashedJobs = async () => {
         console.log(
           `[CrashRecovery] Marking stale job ${job._id} as failed. Runtime=${runTime}ms allowed=${allowedTime}ms`
         );
-        await safelyFailJob(job, 'Server crash during processing', ['processing']);
+        const markedFailed = await safelyFailJob(job, 'Server crash during processing', ['processing']);
+        if (markedFailed) {
+          await cleanupQueueEntriesAfterFailure(job._id.toString(), 'startup-processing-timeout');
+        }
       }
     }
 
@@ -278,6 +357,7 @@ export const recoverCrashedJobs = async () => {
       });
       if (markedFailed) {
         startupQueueTimeoutCount += 1;
+        await cleanupQueueEntriesAfterFailure(job._id.toString(), 'startup-queue-timeout');
       }
     }
 
@@ -317,13 +397,16 @@ export const startStuckJobCleanupInterval = () => {
 
           if (runTime > allowedTime || hardTimeoutExceeded) {
             console.log(`[StuckJobCleanup] Job ${job._id} timed out. Run time: ${runTime}ms, Allowed: ${allowedTime}ms`);
-            await safelyFailJob(
+            const markedFailed = await safelyFailJob(
               job,
               hardTimeoutExceeded
                 ? processingHardTimeoutError
                 : 'Job timed out (dynamic timeout exceeded)',
               ['processing']
             );
+            if (markedFailed) {
+              await cleanupQueueEntriesAfterFailure(job._id.toString(), 'interval-processing-timeout');
+            }
           }
         } else if (job.status === 'processing' && !job.startedAt) {
           const staleSince =
@@ -336,7 +419,10 @@ export const startStuckJobCleanupInterval = () => {
               console.log(
                 `[StuckJobCleanup] Job ${job._id} has no startedAt and exceeded ${cleanupPolicy.processingHardTimeoutMinutes} minutes in processing.`
               );
-              await safelyFailJob(job, processingHardTimeoutError, ['processing']);
+              const markedFailed = await safelyFailJob(job, processingHardTimeoutError, ['processing']);
+              if (markedFailed) {
+                await cleanupQueueEntriesAfterFailure(job._id.toString(), 'interval-processing-no-startedAt-timeout');
+              }
             }
           }
         } else if (job.status === 'pending') {
@@ -349,9 +435,12 @@ export const startStuckJobCleanupInterval = () => {
 
           if (queueWait > cleanupPolicy.queueWaitTimeoutMs) {
             console.log(`[StuckJobCleanup] Job ${job._id} stuck in queue too long. Wait time: ${queueWait}ms`);
-            await safelyFailJob(job, queueTimeoutError, ['pending'], {
+            const markedFailed = await safelyFailJob(job, queueTimeoutError, ['pending'], {
               queueWaitTimeoutMinutes: cleanupPolicy.queueWaitTimeoutMinutes,
             });
+            if (markedFailed) {
+              await cleanupQueueEntriesAfterFailure(job._id.toString(), 'interval-queue-timeout');
+            }
           }
         }
       }

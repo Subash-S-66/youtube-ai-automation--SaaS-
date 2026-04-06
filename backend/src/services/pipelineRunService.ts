@@ -628,7 +628,7 @@ export const enqueuePipelineJob = async ({
     }
   }
   const jobAttempts = getPipelineAttemptsForPlan(finalLimitCheck.plan, retryConfig as any);
-  const queueJobId = `${userId}-${promptId}-${Date.now()}`;
+  const queueJobId = job._id.toString();
 
   try {
     await withTimeout(

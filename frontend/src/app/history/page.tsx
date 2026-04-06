@@ -14,6 +14,7 @@ import DashboardLayout from '../../components/layout/DashboardLayout';
 import { cn } from '../../lib/utils';
 
 const POLL_INTERVAL_MS = 15000;
+const PAGE_SIZE = 10;
 
 interface HistoryJob {
   _id: string;
@@ -23,6 +24,8 @@ interface HistoryJob {
   errorMessage?: string;
   error?: string;
   logs?: string;
+  videoUrl?: string;
+  youtubeVideoId?: string;
   progress?: {
     progress?: number;
     stage?: string;
@@ -36,6 +39,7 @@ interface JobsResult {
   pagination?: {
     total?: number;
     pages?: number;
+    nextCursor?: string | null;
   };
 }
 
@@ -47,13 +51,15 @@ export default function HistoryPage() {
   const [user, setUser] = useState<Record<string, unknown> | null>(null);
   const [jobs, setJobs] = useState<HistoryJob[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
   const [totalRecords, setTotalRecords] = useState(0);
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const jobsRef = useRef<HistoryJob[]>([]);
 
   const runtimeStages = new Set([
@@ -87,88 +93,143 @@ export default function HistoryPage() {
   };
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchInput.trim());
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [searchInput]);
+
+  useEffect(() => {
     let active = true;
 
-    const fetchData = async (opts?: { silent?: boolean; includeUser?: boolean }) => {
+    const fetchFirstPage = async (opts?: { includeUser?: boolean; silent?: boolean }) => {
+      const includeUser = !!opts?.includeUser;
       const silent = !!opts?.silent;
-      const includeUser = opts?.includeUser !== false;
-      if (!silent) {
-        setLoading(true);
-      } else {
+
+      if (silent) {
         setRefreshing(true);
+      } else {
+        setListLoading(true);
       }
+
       try {
         const [userData, jobsData] = await Promise.all([
           includeUser ? authService.getMe() : Promise.resolve(null),
-          pipelineService.getJobs(page, 10, { includeTotal: !silent, search })
+          pipelineService.getJobs(1, PAGE_SIZE, { includeTotal: true, search: debouncedSearch }),
         ]) as [UserResult | null, JobsResult];
+
         if (!active) return;
+
         if (includeUser && userData) {
           setUser(userData.data);
         }
-        setJobs(jobsData.data);
-        jobsRef.current = jobsData.data;
-        setTotalPages(jobsData.pagination?.pages || 1);
-        setTotalRecords(Number(jobsData.pagination?.total || jobsData.data?.length || 0));
+
+        const fetchedJobs: HistoryJob[] = Array.isArray(jobsData.data) ? jobsData.data : [];
+        setJobs(fetchedJobs);
+        jobsRef.current = fetchedJobs;
+
+        const cursorValue = jobsData.pagination?.nextCursor;
+        setNextCursor(typeof cursorValue === 'string' && cursorValue.trim() ? cursorValue : null);
+        setTotalRecords(Number(jobsData.pagination?.total || fetchedJobs.length || 0));
       } catch (err) {
         if (!silent) {
           authService.handleAuthError(err);
         }
       } finally {
         if (!active) return;
-        if (!silent) {
-          setLoading(false);
+        setLoading(false);
+        if (silent) {
+          setRefreshing(false);
         } else {
+          setListLoading(false);
+        }
+      }
+    };
+
+    const refreshActiveHead = async () => {
+      setRefreshing(true);
+      try {
+        const jobsData = await pipelineService.getJobs(1, PAGE_SIZE, { includeTotal: false, search: debouncedSearch });
+        if (!active) return;
+        const latestJobs: HistoryJob[] = Array.isArray(jobsData.data) ? jobsData.data : [];
+
+        setJobs((prev: HistoryJob[]) => {
+          const seen = new Set(latestJobs.map((item: HistoryJob) => item._id));
+          const merged = [...latestJobs, ...prev.filter((item: HistoryJob) => !seen.has(item._id))];
+          jobsRef.current = merged;
+          return merged;
+        });
+      } catch {
+        // Polling should be best-effort and silent.
+      } finally {
+        if (active) {
           setRefreshing(false);
         }
       }
     };
 
-    fetchData({ includeUser: true });
-    const interval = setInterval(() => {
+    void fetchFirstPage({ includeUser: !user, silent: false });
+
+    const interval = window.setInterval(() => {
       if (document.hidden) return;
       if (!jobsRef.current.some(isActiveJob)) return;
-      fetchData({ silent: true, includeUser: false });
+      void refreshActiveHead();
     }, POLL_INTERVAL_MS);
 
     return () => {
       active = false;
-      clearInterval(interval);
+      window.clearInterval(interval);
     };
-  }, [page, search]);
+  }, [debouncedSearch]);
 
   const handleManualRefresh = async () => {
+    setListLoading(true);
     setRefreshing(true);
     try {
-      const jobsData = await pipelineService.getJobs(page, 10, { includeTotal: true });
-      setJobs(jobsData.data);
-      jobsRef.current = jobsData.data;
-      setTotalPages(jobsData.pagination?.pages || 1);
-      setTotalRecords(Number(jobsData.pagination?.total || jobsData.data?.length || 0));
+      const jobsData = await pipelineService.getJobs(1, PAGE_SIZE, { includeTotal: true, search: debouncedSearch });
+      const fetchedJobs: HistoryJob[] = Array.isArray(jobsData.data) ? jobsData.data : [];
+      setJobs(fetchedJobs);
+      jobsRef.current = fetchedJobs;
+      const cursorValue = jobsData.pagination?.nextCursor;
+      setNextCursor(typeof cursorValue === 'string' && cursorValue.trim() ? cursorValue : null);
+      setTotalRecords(Number(jobsData.pagination?.total || fetchedJobs.length || 0));
     } finally {
+      setListLoading(false);
       setRefreshing(false);
     }
   };
 
-  const buildVisiblePages = () => {
-    const maxButtons = 5;
-    if (totalPages <= maxButtons) {
-      return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const handleLoadMore = async () => {
+    if (!nextCursor || loadingMore || listLoading) {
+      return;
     }
 
-    const half = Math.floor(maxButtons / 2);
-    let start = Math.max(1, page - half);
-    let end = start + maxButtons - 1;
+    setLoadingMore(true);
+    try {
+      const jobsData = await pipelineService.getJobs(1, PAGE_SIZE, {
+        cursor: nextCursor,
+        includeTotal: false,
+        search: debouncedSearch,
+      });
+      const moreJobs: HistoryJob[] = Array.isArray(jobsData.data) ? jobsData.data : [];
 
-    if (end > totalPages) {
-      end = totalPages;
-      start = end - maxButtons + 1;
+      setJobs((prev: HistoryJob[]) => {
+        const seen = new Set(prev.map((item: HistoryJob) => item._id));
+        const appendJobs = moreJobs.filter((item: HistoryJob) => !seen.has(item._id));
+        const merged = [...prev, ...appendJobs];
+        jobsRef.current = merged;
+        return merged;
+      });
+
+      const cursorValue = jobsData.pagination?.nextCursor;
+      setNextCursor(typeof cursorValue === 'string' && cursorValue.trim() ? cursorValue : null);
+    } finally {
+      setLoadingMore(false);
     }
-
-    return Array.from({ length: end - start + 1 }, (_, index) => start + index);
   };
-
-  const visiblePages = buildVisiblePages();
 
   const toggleJob = (id: string) => {
     setExpandedJobId(prev => prev === id ? null : id);
@@ -179,10 +240,34 @@ export default function HistoryPage() {
     return haystack.includes('queue timeout') || haystack.includes('waiting in queue for more than 2 hours');
   };
 
+  const hasYouTubeUploadProof = (job: HistoryJob) => {
+    const videoId = String(job?.youtubeVideoId || '').trim();
+    const videoUrl = String(job?.videoUrl || '').trim();
+    return Boolean(videoId || /^https?:\/\//i.test(videoUrl));
+  };
+
+  const resolveRawProgressValue = (job: HistoryJob) => {
+    if (typeof job.progress === 'number' && Number.isFinite(job.progress)) {
+      return Math.max(0, Math.min(100, Math.round(job.progress)));
+    }
+    const value = typeof job.progress === 'object' ? job.progress?.progress : undefined;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.max(0, Math.min(100, Math.round(value)));
+    }
+    return null;
+  };
+
   const getDisplayStatus = (job: HistoryJob) => {
     const normalizedStatus = String(job?.status || '').toLowerCase();
     if (normalizedStatus === 'failed' && isQueueTimeoutJob(job)) {
       return 'timeout';
+    }
+    if (normalizedStatus === 'success' || normalizedStatus === 'completed') {
+      const progressValue = resolveRawProgressValue(job);
+      const hasFullProgress = progressValue !== null && progressValue >= 100;
+      if (!hasFullProgress || !hasYouTubeUploadProof(job)) {
+        return 'processing';
+      }
     }
     if (['queued', 'pending', 'processing', 'running'].includes(normalizedStatus) && isRuntimeInFlight(job)) {
       return 'processing';
@@ -273,21 +358,18 @@ export default function HistoryPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" />
               <input
                 type="text"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(1);
-                }}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="Search status/error"
                 className="w-full rounded-lg border border-[#1A2235] bg-[#0B0F1A] pl-8 pr-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-[#7C5CFF]"
               />
             </div>
             <button
               onClick={handleManualRefresh}
-              disabled={refreshing}
+              disabled={refreshing || listLoading}
               className="inline-flex items-center justify-center gap-1 text-sm font-medium text-slate-300 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235] hover:bg-[#1A2235] disabled:opacity-60 transition-colors"
             >
-              <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
+              <RefreshCw className={cn('h-3.5 w-3.5', (refreshing || listLoading) && 'animate-spin')} />
               Refresh
             </button>
             <span className="text-xs sm:text-sm font-medium text-slate-400 bg-[#1A2235]/50 px-3 py-1 rounded-lg border border-[#1A2235]">
@@ -470,45 +552,20 @@ export default function HistoryPage() {
         </div>
       </div>
 
-      {totalPages > 1 && (
-        <div className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-[#111827] border border-[#1A2235] rounded-xl mt-6 shadow-xl">
-          <button
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page === 1 || loading}
-            className="w-full sm:w-auto px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
-          >
-            Previous
-          </button>
-          <span className="text-sm text-slate-400 text-center">
-            Page {page} of {totalPages}
-          </span>
-          <div className="flex items-center justify-center gap-1 flex-wrap">
-            {visiblePages.map((pageNumber) => (
-              <button
-                key={`history-page-${pageNumber}`}
-                type="button"
-                onClick={() => setPage(pageNumber)}
-                disabled={loading}
-                className={cn(
-                  'min-w-8 px-2 py-1 rounded-md text-xs border transition-colors',
-                  pageNumber === page
-                    ? 'bg-[#7C5CFF]/20 text-[#7C5CFF] border-[#7C5CFF]/40'
-                    : 'bg-[#0B0F1A] text-slate-300 border-[#1A2235] hover:border-[#32507B]'
-                )}
-              >
-                {pageNumber}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages || loading}
-            className="w-full sm:w-auto px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors"
-          >
-            Next
-          </button>
-        </div>
-      )}
+      <div className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-[#111827] border border-[#1A2235] rounded-xl mt-6 shadow-xl">
+        <span className="text-sm text-slate-400 text-center sm:text-left">
+          Loaded {jobs.length} of {Math.max(totalRecords, jobs.length)} records
+        </span>
+        <button
+          type="button"
+          onClick={handleLoadMore}
+          disabled={!nextCursor || loadingMore || listLoading || loading}
+          className="w-full sm:w-auto px-4 py-2 bg-[#1A2235] text-slate-300 rounded-lg text-sm disabled:opacity-50 hover:bg-[#2a3550] transition-colors inline-flex items-center justify-center gap-2"
+        >
+          {loadingMore ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
+          {nextCursor ? 'Load More' : 'No More Records'}
+        </button>
+      </div>
 
     </DashboardLayout>
   );

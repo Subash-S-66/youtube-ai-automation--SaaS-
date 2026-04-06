@@ -123,6 +123,8 @@ interface JobRecord {
   completedAt?: string;
   errorMessage?: string;
   error?: string;
+  videoUrl?: string;
+  youtubeVideoId?: string;
   progress?: {
     progress?: number;
     stage?: string;
@@ -623,8 +625,38 @@ function Dashboard() {
       return Number.isFinite(progressValue) && progressValue >= 0 && progressValue < 100 && runtimeStages.has(stage);
     };
 
+    const resolveRawProgressValue = (job: JobRecord) => {
+      if (typeof job.progress === 'number' && Number.isFinite(job.progress)) {
+        return Math.max(0, Math.min(100, Math.round(job.progress)));
+      }
+      const value = typeof job.progress === 'object' ? job.progress?.progress : undefined;
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.max(0, Math.min(100, Math.round(value)));
+      }
+      return null;
+    };
+
+    const hasYouTubeUploadProof = (job: JobRecord) => {
+      const videoId = String(job?.youtubeVideoId || '').trim();
+      const videoUrl = String(job?.videoUrl || '').trim();
+      return Boolean(videoId || /^https?:\/\//i.test(videoUrl));
+    };
+
+    const isStrictlySuccessful = (job: JobRecord) => {
+      const normalized = String(job.status || '').toLowerCase();
+      if (normalized !== 'success' && normalized !== 'completed') {
+        return false;
+      }
+      const progressValue = resolveRawProgressValue(job);
+      const hasFullProgress = progressValue !== null && progressValue >= 100;
+      return hasFullProgress && hasYouTubeUploadProof(job);
+    };
+
     const getEffectiveStatus = (job: JobRecord) => {
       const normalized = String(job.status || '').toLowerCase();
+      if ((normalized === 'success' || normalized === 'completed') && !isStrictlySuccessful(job)) {
+        return 'processing';
+      }
       if (activeStatuses.has(normalized) && isRuntimeInFlight(job)) {
         return 'processing';
       }

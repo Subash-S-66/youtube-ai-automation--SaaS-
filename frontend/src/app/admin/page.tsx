@@ -169,7 +169,7 @@ export default function AdminDashboard() {
     {
       id: 'plans',
       label: 'Plans',
-      description: 'Plan features and limits',
+      description: 'Plan features, limits, users, and help tickets',
       icon: CreditCard,
     },
   ];
@@ -965,7 +965,7 @@ const handleDeleteUser = () => {
               className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
             >
               <MessageSquare className="h-4 w-4 text-[#00D4FF]" />
-              Support Tickets
+              Help Tickets
             </Link>
           </div>
 
@@ -1738,6 +1738,10 @@ const handleDeleteUser = () => {
               <Link href="/admin/users" className="rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
                 <p className="font-semibold text-white">Users Directory</p>
                 <p className="text-slate-400 text-xs mt-1">Manage individual users, history, and subscriptions.</p>
+              </Link>
+              <Link href="/admin/tickets" className="rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+                <p className="font-semibold text-white">Help Tickets</p>
+                <p className="text-slate-400 text-xs mt-1">Review support conversations, status, and responses.</p>
               </Link>
             </div>
           </div>

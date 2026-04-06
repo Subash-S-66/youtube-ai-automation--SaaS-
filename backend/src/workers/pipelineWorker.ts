@@ -1507,7 +1507,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
              finalStatusMarker = 'FAILED';
          }
 
-         if (finalStatusMarker === 'SUCCESS' && !uploadConfirmedByData && !finalLogs.includes('PIPELINE_STATUS:SUCCESS')) {
+         if (finalStatusMarker === 'SUCCESS' && requiresUpload && !uploadConfirmedByData) {
            finalStatusMarker = 'PENDING_WEBHOOK';
            await appendLogSafe(
              jobId,

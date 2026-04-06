@@ -223,7 +223,8 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
              },
              result: {
                ...(job.result || {}),
-               success: true,
+               success: false,
+               uploadConfirmed: false,
                videoUrl: resolvedVideoUrl || '',
                youtubeVideoId: resolvedYoutubeVideoId || '',
              },
@@ -246,10 +247,19 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
            errorMessage: '',
            errorStage: undefined as any,
             processedVideos: successSettlement.consumeCount,
+            ...(resolvedVideoUrl ? { videoUrl: resolvedVideoUrl } : {}),
+            ...(resolvedYoutubeVideoId ? { youtubeVideoId: resolvedYoutubeVideoId } : {}),
+            progress: {
+              progress: 100,
+              stage: 'completed',
+              message: 'Job completed successfully',
+              timestamp: new Date().toISOString(),
+            },
            result: {
              success: true,
-             videoUrl: job.videoUrl || '',
-             youtubeVideoId: job.youtubeVideoId || '',
+             uploadConfirmed: true,
+             videoUrl: resolvedVideoUrl || '',
+             youtubeVideoId: resolvedYoutubeVideoId || '',
            }
          }
        },
