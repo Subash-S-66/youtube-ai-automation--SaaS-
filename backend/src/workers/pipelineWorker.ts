@@ -1204,6 +1204,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "GEMINI_AUDIO_SAMPLE_RATE", value: process.env.GEMINI_AUDIO_SAMPLE_RATE || "24000" },
         { name: "ALLOW_SILENT_AUDIO_FALLBACK", value: "false" },
         { name: "WEBHOOK_SECRET", value: process.env.WEBHOOK_SECRET || "" },
+        { name: "WEBHOOK_URL", value: process.env.WEBHOOK_URL || "" },
         { name: "BACKEND_URL", value: process.env.BACKEND_URL || "" },
       ];
 
@@ -1472,8 +1473,26 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
          // Fetch the latest logs to evaluate specific backend markers
          // since Python webhook may have updated them asynchronously
-         const finalDbJob = await JobModel.findById(jobId);
-         const finalLogs = finalDbJob?.logs || '';
+         const finalDbJob = await JobModel.findById(jobId).select('logs videoUrl youtubeVideoId result processedVideos');
+         const finalLogs = String(finalDbJob?.logs || '');
+         const resolvedVideoUrl = String(
+           (finalDbJob as any)?.videoUrl ||
+           (finalDbJob as any)?.result?.videoUrl ||
+           (finalDbJob as any)?.result?.result?.videoUrl ||
+           (finalDbJob as any)?.result?.youtube?.videoUrl ||
+           ''
+         ).trim();
+         const resolvedYoutubeVideoId = String(
+           (finalDbJob as any)?.youtubeVideoId ||
+           (finalDbJob as any)?.result?.youtubeVideoId ||
+           (finalDbJob as any)?.result?.result?.youtubeVideoId ||
+           (finalDbJob as any)?.result?.youtube?.youtubeVideoId ||
+           ''
+         ).trim();
+         const uploadConfirmedByData = !requiresUpload || Boolean(
+           resolvedYoutubeVideoId ||
+           (resolvedVideoUrl && /^https?:\/\//i.test(resolvedVideoUrl))
+         );
 
          if (
              finalLogs.includes('PIPELINE_STATUS:YOUTUBE_REJECTED') ||
@@ -1486,6 +1505,15 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
              finalStatusMarker = 'SUCCESS';
          } else if (finalLogs.includes('PIPELINE_STATUS:FAILED')) {
              finalStatusMarker = 'FAILED';
+         }
+
+         if (finalStatusMarker === 'SUCCESS' && !uploadConfirmedByData && !finalLogs.includes('PIPELINE_STATUS:SUCCESS')) {
+           finalStatusMarker = 'PENDING_WEBHOOK';
+           await appendLogSafe(
+             jobId,
+             '[Azure] Execution succeeded but upload confirmation is missing. Awaiting webhook confirmation.\n',
+             'processing'
+           );
          }
 
          // The webhook handles consumption now, but as a fallback, we check here too.
@@ -1518,6 +1546,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          }
 
          if (finalStatusMarker === 'SUCCESS') {
+            const requestedUploads = getRequestedUploadCount(settings.videoCount);
             const updatedJob = await JobModel.findOneAndUpdate(
                 { _id: jobId, status: 'processing', holdConsumed: false, holdReleased: false },
                 {
@@ -1525,15 +1554,29 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                         status: 'success',
                         completedAt: new Date(),
                         holdConsumed: true,
+                        processedVideos: requestedUploads,
+                        ...(resolvedVideoUrl ? { videoUrl: resolvedVideoUrl } : {}),
+                        ...(resolvedYoutubeVideoId ? { youtubeVideoId: resolvedYoutubeVideoId } : {}),
                         errorMessage: '',
                         errorStage: undefined as any,
+                        progress: {
+                          progress: 100,
+                          stage: 'completed',
+                          message: 'Job completed successfully',
+                          timestamp: new Date().toISOString(),
+                        },
+                        result: {
+                          success: true,
+                          ...(resolvedVideoUrl ? { videoUrl: resolvedVideoUrl } : {}),
+                          ...(resolvedYoutubeVideoId ? { youtubeVideoId: resolvedYoutubeVideoId } : {}),
+                        },
                     }
                 },
                 { returnDocument: 'after' }
             );
 
             if (updatedJob) {
-               await consumeReservedCredits(userId, settings.videoCount || 1).catch(console.error);
+               await consumeReservedCredits(userId, requestedUploads).catch(console.error);
             }
 
             // Handle Story Mode increment

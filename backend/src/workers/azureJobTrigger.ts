@@ -88,15 +88,66 @@ export async function triggerAzureJob(
     // Trigger Job
     const triggerUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/jobs/${jobName}/start?api-version=${apiVersion}`;
 
-    const payload = {
-      template: {
-        containers: [
-          {
-            name: containerName,
-            env: envVars
-          }
-        ]
+    const jobDetailsUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/jobs/${jobName}?api-version=${apiVersion}`;
+    const jobDetailsRes = await axios.get(jobDetailsUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const existingContainer = (jobDetailsRes.data?.properties?.template?.containers || []).find(
+      (container: any) => String(container?.name || '') === containerName
+    ) || (jobDetailsRes.data?.properties?.template?.containers || [])[0];
+
+    const image = String(existingContainer?.image || '').trim();
+    if (!image) {
+      throw new Error(`Azure job '${jobName}' container image not found for container '${containerName}'.`);
+    }
+
+    const existingEnv: Array<{ name: string; value?: string; secretRef?: string }> = Array.isArray(existingContainer?.env)
+      ? existingContainer.env
+      : [];
+
+    const overrideMap = new Map(
+      envVars
+        .filter((entry) => String(entry?.name || '').trim())
+        .map((entry) => [String(entry.name).trim(), String(entry.value ?? '')])
+    );
+
+    const mergedEnv: Array<{ name: string; value?: string; secretRef?: string }> = [];
+    const seenNames = new Set<string>();
+
+    for (const entry of existingEnv) {
+      const name = String(entry?.name || '').trim();
+      if (!name) continue;
+      if (overrideMap.has(name)) {
+        mergedEnv.push({ name, value: String(overrideMap.get(name) ?? '') });
+      } else if (typeof entry?.secretRef === 'string' && entry.secretRef.trim()) {
+        mergedEnv.push({ name, secretRef: entry.secretRef.trim() });
+      } else {
+        mergedEnv.push({ name, value: String(entry?.value ?? '') });
       }
+      seenNames.add(name);
+    }
+
+    for (const [name, value] of overrideMap.entries()) {
+      if (!seenNames.has(name)) {
+        mergedEnv.push({ name, value });
+      }
+    }
+
+    // StartJobExecutionTemplate expects top-level "containers".
+    // Include image/resources from the current job template and merge env defaults with per-execution overrides.
+    const payload = {
+      containers: [
+        {
+          name: String(existingContainer?.name || containerName),
+          image,
+          ...(existingContainer?.resources ? { resources: existingContainer.resources } : {}),
+          env: mergedEnv,
+        },
+      ],
     };
 
     const triggerRes = await axios.post(triggerUrl, payload, {
