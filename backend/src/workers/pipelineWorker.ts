@@ -359,6 +359,7 @@ const resolvePipelineRunner = async (
   attemptsMade: number
 ): Promise<{
   runner: PipelineRunner;
+  targetRunner: PipelineRunner;
   primary: PipelineRunner;
   sequence: PipelineRunner[];
   availability: Record<PipelineRunner, boolean>;
@@ -417,9 +418,17 @@ const resolvePipelineRunner = async (
 
   let resolvedRunner = selectedRunner;
   if (!availability[selectedRunner]) {
-    const fallback = sequence.find((runner) => availability[runner as PipelineRunner]);
+    const selectedIndex = Math.max(0, sequence.indexOf(selectedRunner));
+    let fallback: PipelineRunner | null = null;
+    for (let offset = 1; offset < sequence.length; offset += 1) {
+      const candidate = sequence[(selectedIndex + offset) % sequence.length] as PipelineRunner;
+      if (availability[candidate]) {
+        fallback = candidate;
+        break;
+      }
+    }
     if (fallback) {
-      resolvedRunner = fallback as PipelineRunner;
+      resolvedRunner = fallback;
       console.warn(
         `[PipelineWorker] Selected runner "${selectedRunner}" is unavailable. Falling back to "${resolvedRunner}".`
       );
@@ -431,6 +440,7 @@ const resolvePipelineRunner = async (
 
   return {
     runner: resolvedRunner,
+    targetRunner: selectedRunner,
     primary: derivedPrimary,
     sequence,
     availability,
@@ -1190,6 +1200,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           event: 'runner_selection',
           attemptsMade: job.attemptsMade || 0,
           selectedRunner: pipelineRunner,
+          targetRunner: runnerSelection.targetRunner,
           primaryRunner: runnerSelection.primary,
           runnerSequence: runnerSelection.sequence,
           cycleAcrossRunners: runnerSelection.cycleAcrossRunners,
