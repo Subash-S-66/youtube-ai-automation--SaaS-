@@ -12,6 +12,7 @@ import { ensureDefaultPlans } from './config/plans';
 import { recoverCrashedJobs, startStuckJobCleanupInterval } from './workers/stuckJobCleanup';
 import { connection as redisConnection } from './config/redis';
 import SystemConfig from './models/SystemConfig';
+import JobModel from './models/Job';
 import mongoose from 'mongoose';
 
 const parseBooleanEnv = (value: string | undefined, fallback: boolean): boolean => {
@@ -150,6 +151,47 @@ const countPipelineWorkerHeartbeats = async (): Promise<number> => {
   }
 };
 
+const countPendingPipelineJobs = async (): Promise<number> => {
+  try {
+    return await JobModel.countDocuments({ status: 'pending' });
+  } catch (error) {
+    console.warn('[Bootstrap] Failed to count pending jobs for worker watchdog:', error);
+    return 0;
+  }
+};
+
+const startPipelineWorkerWatchdog = (runtimeConfig: {
+  workerProfile: 'local' | 'vm' | 'cloud';
+  workerConcurrency: number | null;
+}): void => {
+  const WATCHDOG_INTERVAL_MS = 60 * 1000;
+
+  setInterval(async () => {
+    try {
+      if (embeddedWorkerStarted) {
+        return;
+      }
+
+      const heartbeatCount = await countPipelineWorkerHeartbeats();
+      if (heartbeatCount > 0) {
+        return;
+      }
+
+      const pendingJobs = await countPendingPipelineJobs();
+      if (pendingJobs <= 0) {
+        return;
+      }
+
+      console.warn(
+        `[Bootstrap] Detected ${pendingJobs} pending pipeline jobs and no worker heartbeat. Auto-starting embedded worker safeguard.`
+      );
+      startEmbeddedWorker('watchdog:pending-jobs-without-worker-heartbeat', runtimeConfig);
+    } catch (error) {
+      console.warn('[Bootstrap] Worker watchdog check failed:', error);
+    }
+  }, WATCHDOG_INTERVAL_MS);
+};
+
 // Initialize Firebase Admin
 initializeFirebaseAdmin();
 
@@ -168,6 +210,7 @@ connectDB().then(async () => {
       autoStartEmbeddedWorkerWhenMissing = runtimeConfig.autoStartEmbeddedWorkerWhenMissing;
       workerProfileConfigured = runtimeConfig.workerProfile;
       workerConcurrencyConfigured = runtimeConfig.workerConcurrency;
+      startPipelineWorkerWatchdog(runtimeConfig);
 
       if (runEmbeddedWorkerConfigured) {
         startEmbeddedWorker('SystemConfig.runEmbeddedWorker=true', runtimeConfig);
