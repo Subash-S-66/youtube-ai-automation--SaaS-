@@ -138,7 +138,7 @@ export default function ClipForgeVideoToolPage() {
               Compare ClipForge
             </Link>
             <Link
-              href="/pricing"
+              href="/price"
               aria-label="View ClipForge pricing plans"
               className="rounded-full border border-[#32507A] px-5 py-2.5 text-[#9DDCFF] transition hover:border-[#00D4FF]"
             >

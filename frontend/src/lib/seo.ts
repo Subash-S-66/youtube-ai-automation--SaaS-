@@ -28,7 +28,7 @@ export const indexedPageLinks: IndexedPageLink[] = [
   { href: '/clipforge-ai-video-tool', label: 'ClipForge AI video tool' },
   { href: '/clipforge-review', label: 'ClipForge review' },
   { href: '/how-to-use-clipforge', label: 'How to use ClipForge' },
-  { href: '/pricing', label: 'ClipForge pricing' },
+  { href: '/price', label: 'ClipForge pricing' },
   { href: '/clipforge-vs-competitors', label: 'ClipForge vs competitors' },
 ];
 

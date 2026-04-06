@@ -11,6 +11,7 @@ const NOINDEX_PREFIXES = [
   '/media',
   '/payments',
   '/subscription',
+  '/pricing',
   '/reset-password',
   '/verify-email',
   '/forgot-password',
@@ -126,5 +127,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icons/).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|icons/|sitemap.xml|robots.txt).*)',
+  ],
 };

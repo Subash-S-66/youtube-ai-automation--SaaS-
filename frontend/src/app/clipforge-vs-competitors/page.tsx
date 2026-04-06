@@ -64,7 +64,7 @@ export default function ClipForgeVsCompetitorsPage() {
           </p>
 
           <div className="mt-8 overflow-x-auto rounded-xl border border-[#32507A] bg-[#0F1A2D]">
-            <table className="w-full min-w-[720px] border-collapse text-left text-sm text-[#BED4F3] md:text-base">
+            <table className="w-full min-w-180 border-collapse text-left text-sm text-[#BED4F3] md:text-base">
               <caption className="sr-only">ClipForge competitor comparison table</caption>
               <thead className="bg-[#13203A] text-white">
                 <tr>
@@ -116,7 +116,7 @@ export default function ClipForgeVsCompetitorsPage() {
               Read ClipForge Review
             </Link>
             <Link
-              href="/pricing"
+              href="/price"
               aria-label="View ClipForge pricing plans"
               className="rounded-full border border-[#32507A] px-5 py-2.5 text-[#9DDCFF] transition hover:border-[#00D4FF]"
             >

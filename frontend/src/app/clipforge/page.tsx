@@ -82,7 +82,7 @@ export default function ClipForgePage() {
     category: 'AI Video Automation Software',
     offers: {
       '@type': 'Offer',
-      url: getAbsoluteUrl('/pricing'),
+      url: getAbsoluteUrl('/price'),
       priceCurrency: 'USD',
       price: '10',
       availability: 'https://schema.org/InStock',
@@ -224,7 +224,7 @@ export default function ClipForgePage() {
               Compare ClipForge
             </Link>
             <Link
-              href="/pricing"
+              href="/price"
               aria-label="Review ClipForge pricing plans"
               className="rounded-full border border-[#32507A] px-5 py-2.5 text-[#9DDCFF] transition hover:border-[#00D4FF]"
             >

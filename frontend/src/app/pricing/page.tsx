@@ -4,19 +4,18 @@ import SiteNavigation from '../../components/layout/SiteNavigation';
 import PricingClient from './PricingClient';
 import { buildBreadcrumbListSchema, buildPageMetadata } from '../../lib/seo';
 
-export const metadata: Metadata = buildPageMetadata({
-  title: 'ClipForge Pricing | Plans for AI Video Automation',
-  description:
-    'Compare ClipForge plans for creators and teams. Choose the right ClipForge app tier for output volume, channels, and automation depth.',
-  keywords: [
-    'clipforge pricing',
-    'clipforge plans',
-    'clipforge app pricing',
-    'clipforge ai subscription',
-    'clipforge video tool pricing',
-  ],
-  path: '/pricing',
-});
+export const metadata: Metadata = {
+  ...buildPageMetadata({
+    title: 'ClipForge Billing | Manage Your Subscription',
+    description: 'Manage your ClipForge subscription, plan upgrades, and billing settings.',
+    keywords: ['clipforge billing', 'clipforge subscription', 'clipforge plan management'],
+    path: '/pricing',
+  }),
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
 
 export default function PricingPage() {
   const breadcrumbSchema = buildBreadcrumbListSchema([

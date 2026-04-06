@@ -19,7 +19,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: '/clipforge-ai-video-tool', changeFrequency: 'weekly', priority: 0.9 },
     { path: '/clipforge-review', changeFrequency: 'weekly', priority: 0.9 },
     { path: '/how-to-use-clipforge', changeFrequency: 'weekly', priority: 0.9 },
-    { path: '/pricing', changeFrequency: 'monthly', priority: 0.8 },
+    { path: '/price', changeFrequency: 'monthly', priority: 0.8 },
     { path: '/clipforge-vs-competitors', changeFrequency: 'weekly', priority: 0.8 },
   ];
 
