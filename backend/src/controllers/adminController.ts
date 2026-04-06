@@ -27,6 +27,7 @@ import {
 } from '../services/jobHistoryRetentionPolicyService';
 import { getUploadLimits } from '../services/uploadLimitService';
 import { connection } from '../config/redis';
+import { resolveLocalPythonRuntime } from '../workers/localPipelineTrigger';
 
 // Stripe disabled. Using Razorpay for payments.
 
@@ -396,6 +397,7 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
 
   const missingAzureEnv = getMissingAzureRunnerEnv();
   const missingRemoteEnv = getMissingRemoteRunnerEnv();
+  const localRuntime = resolveLocalPythonRuntime();
   const includeEmbeddedWorkersInConnectivity = typeof config?.includeEmbeddedWorkersInRuntimeStatus === 'boolean'
     ? config.includeEmbeddedWorkersInRuntimeStatus
     : parseBooleanEnv(process.env.INCLUDE_EMBEDDED_WORKERS_IN_RUNTIME_STATUS, false);
@@ -422,7 +424,7 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
   const azureConnected = dedicatedWorkersByRunner.azure > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.azure > 0);
   const remoteConnected = dedicatedWorkersByRunner.remote > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.remote > 0);
 
-  const localConfigured = true;
+  const localConfigured = localRuntime.available;
   const azureConfigured = missingAzureEnv.length === 0;
   const remoteConfigured = missingRemoteEnv.length === 0;
 
@@ -444,7 +446,9 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
           ready: localConnected && localConfigured,
           activeWorkers: dedicatedWorkersByRunner.local,
           embeddedWorkers: embeddedWorkersByRunner.local,
-          missingEnv: [],
+          missingEnv: localRuntime.available
+            ? []
+            : [localRuntime.reason || 'PYTHON_RUNTIME_NOT_FOUND'],
         },
         azure: {
           connected: azureConnected,

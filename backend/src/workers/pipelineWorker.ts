@@ -19,7 +19,7 @@ import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { generateContent } from '../services/contentGenerationService';
 import { encrypt } from '../utils/encryption';
 import { triggerAzureJob, resolveAzureArmApiVersion } from './azureJobTrigger';
-import { triggerLocalPipeline } from './localPipelineTrigger';
+import { isLocalPipelineRuntimeAvailable, resolveLocalPythonRuntime, triggerLocalPipeline } from './localPipelineTrigger';
 import { triggerRemotePipeline } from './remotePipelineTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
@@ -332,7 +332,7 @@ const isRunnerAvailable = (runner: PipelineRunner): boolean => {
   if (runner === 'remote') {
     return Boolean(String(process.env.PIPELINE_SERVICE_URL || '').trim());
   }
-  return true;
+  return isLocalPipelineRuntimeAvailable();
 };
 
 const resolvePipelineRunner = async (
@@ -1157,6 +1157,20 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         })}\n`
       );
 
+      if (!runnerSelection.availability[pipelineRunner]) {
+        const localRuntime = resolveLocalPythonRuntime();
+        const err: any = new Error(
+          `No available pipeline runner. Availability=${JSON.stringify(runnerSelection.availability)}${
+            localRuntime.available
+              ? ''
+              : ` | Local runtime checked: ${localRuntime.candidates.join(', ')}`
+          }`
+        );
+        err.stage = 'RENDER';
+        err.nonRetryable = true;
+        throw err;
+      }
+
       const dispatchLockKey = `pipeline:dispatch:${jobId}:${job.attemptsMade || 0}`;
       const dispatchLock = await (connection as any).set(dispatchLockKey, String(Date.now()), 'NX', 'EX', 24 * 60 * 60);
       if (dispatchLock !== 'OK') {
@@ -1224,7 +1238,19 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         const stopTicker = startRuntimeProgressTicker(job, 56, 88, 8000);
         let result;
         try {
-          result = await triggerLocalPipeline(envVars);
+          try {
+            result = await triggerLocalPipeline(envVars);
+          } catch (localLaunchError: any) {
+            const launchError: any = new Error(
+              localLaunchError?.code === 'ENOENT'
+                ? 'Local pipeline runtime is unavailable: Python executable not found. Configure PIPELINE_PYTHON_CMD or install Python on worker host.'
+                : `Failed to start local pipeline process: ${String(localLaunchError?.message || localLaunchError || 'unknown error')}`
+            );
+            launchError.stage = 'RENDER';
+            launchError.nonRetryable = localLaunchError?.code === 'ENOENT';
+            launchError.stderrTail = String(localLaunchError?.message || localLaunchError || '');
+            throw launchError;
+          }
         } finally {
           stopTicker();
         }
@@ -1684,7 +1710,10 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       const maxAttempts = Math.max(1, Number((job.opts as any)?.attempts || 1));
       const currentAttempt = Math.max(1, Number(job.attemptsMade || 0) + 1);
       const hasRetriesLeft = currentAttempt < maxAttempts;
-      const retryableFailure = normalizedErrorStage !== 'TOKEN' && normalizedErrorStage !== 'UPLOAD';
+      const retryableFailure =
+        normalizedErrorStage !== 'TOKEN' &&
+        normalizedErrorStage !== 'UPLOAD' &&
+        error?.nonRetryable !== true;
 
       await appendLogSafe(jobId, errorMsg);
 
