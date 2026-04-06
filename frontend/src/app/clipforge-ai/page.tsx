@@ -145,7 +145,7 @@ export default function ClipForgeAiPage() {
             <Link
               href="/register"
               aria-label="Try ClipForge AI for free"
-              className="rounded-full bg-[linear-gradient(to_right,#00D4FF,#7C5CFF)] px-5 py-2.5 text-[#0B0F1A]"
+              className="rounded-full bg-[linear-gradient(to_right,#00D4FF,#7C5CFF)] px-5 py-2.5 text-[#F5FAFF] shadow-[0_1px_2px_rgba(11,15,26,0.72)]"
             >
               Try ClipForge AI
             </Link>

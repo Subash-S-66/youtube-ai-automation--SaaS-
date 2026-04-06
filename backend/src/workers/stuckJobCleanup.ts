@@ -13,6 +13,7 @@ import {
   sanitizePipelineRunnerFallbackOrder,
 } from '../services/pipelineRetryPolicyService';
 import { applyUserJobHistoryRetention } from '../services/jobHistoryRetentionPolicyService';
+import { acquireLock, releaseLock } from '../utils/redisLock';
 
 type RecoverableJobStatus = 'processing' | 'pending';
 
@@ -24,6 +25,10 @@ const MAX_QUEUE_WAIT_TIMEOUT_MINUTES = 1440;
 const MIN_PROCESSING_HARD_TIMEOUT_MINUTES = 10;
 const MAX_PROCESSING_HARD_TIMEOUT_MINUTES = 1440;
 const RECOVERY_REQUEUE_GRACE_MS = 5 * 60 * 1000;
+const CRASH_RECOVERY_LOCK_KEY = 'lock:stuck-job-cleanup:recover';
+const CRASH_RECOVERY_LOCK_TTL_SECONDS = 120;
+const STUCK_CLEANUP_INTERVAL_LOCK_KEY = 'lock:stuck-job-cleanup:interval';
+const STUCK_CLEANUP_INTERVAL_LOCK_TTL_SECONDS = 4 * 60;
 
 const getRequestedUploadCount = (value: unknown): number => {
   const parsed = Number(value);
@@ -288,6 +293,12 @@ export const safelyFailJob = async (
 };
 
 export const recoverCrashedJobs = async () => {
+  const acquired = await acquireLock(CRASH_RECOVERY_LOCK_KEY, CRASH_RECOVERY_LOCK_TTL_SECONDS);
+  if (!acquired) {
+    console.log('[CrashRecovery] Skipped (another process is running startup crash recovery).');
+    return;
+  }
+
   try {
     const systemConfig = await SystemConfig.findOne().sort({ updatedAt: -1 });
     const cleanupPolicy = resolveCleanupTimeoutPolicy(systemConfig);
@@ -420,12 +431,21 @@ export const recoverCrashedJobs = async () => {
     }
   } catch (error) {
     console.error('[CrashRecovery] Error recovering crashed jobs:', error);
+  } finally {
+    await releaseLock(CRASH_RECOVERY_LOCK_KEY).catch(() => {
+      // best-effort lock cleanup
+    });
   }
 };
 
 export const startStuckJobCleanupInterval = () => {
   // Run every 5 minutes
   setInterval(async () => {
+    const acquired = await acquireLock(STUCK_CLEANUP_INTERVAL_LOCK_KEY, STUCK_CLEANUP_INTERVAL_LOCK_TTL_SECONDS);
+    if (!acquired) {
+      return;
+    }
+
     try {
       // Fetch dynamic configuration
       let systemConfig = await SystemConfig.findOne().sort({ updatedAt: -1 });
@@ -498,6 +518,10 @@ export const startStuckJobCleanupInterval = () => {
       }
     } catch (error) {
       console.error('[StuckJobCleanup] Error during stuck job cleanup:', error);
+    } finally {
+      await releaseLock(STUCK_CLEANUP_INTERVAL_LOCK_KEY).catch(() => {
+        // best-effort lock cleanup
+      });
     }
   }, 5 * 60 * 1000);
 };

@@ -67,6 +67,14 @@ type CommandCenterCard = {
   accent: string;
 };
 
+type HeroSignalCard = {
+  label: string;
+  value: string;
+  detail: string;
+  icon: LucideIcon;
+  accent: string;
+};
+
 const navLinks = [
   { label: 'Features', href: '#features' },
   { label: 'Pricing', href: '#pricing' },
@@ -282,6 +290,30 @@ const commandCenterCards: CommandCenterCard[] = [
   },
 ];
 
+const heroSignalCards: HeroSignalCard[] = [
+  {
+    label: 'Queue Pulse',
+    value: '18 Ready',
+    detail: 'Across 4 channels',
+    icon: Command,
+    accent: 'text-[#8FE8FF]',
+  },
+  {
+    label: 'Render Flow',
+    value: '06 Active',
+    detail: 'Voice + captions + b-roll',
+    icon: Layers,
+    accent: 'text-[#E7BEFF]',
+  },
+  {
+    label: 'Publish Window',
+    value: '03:20 PM',
+    detail: 'Next scheduled drop',
+    icon: Clock,
+    accent: 'text-[#9BFFC9]',
+  },
+];
+
 const tickerItems = [
   'Gemini Script Engine',
   '5 Native Voices',
@@ -444,14 +476,6 @@ export default function LandingPage() {
             transform: translate3d(0, -10px, 0);
           }
         }
-        @keyframes landingFloatB {
-          0% {
-            transform: translate3d(0, 0, 0);
-          }
-          100% {
-            transform: translate3d(0, 8px, 0);
-          }
-        }
         @keyframes landingPulseGlow {
           0% {
             box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.45);
@@ -505,9 +529,6 @@ export default function LandingPage() {
         }
         .landing-float-a {
           animation: landingFloatA 3.2s ease-in-out infinite alternate;
-        }
-        .landing-float-b {
-          animation: landingFloatB 3.6s ease-in-out infinite alternate;
         }
         .landing-live-pulse {
           animation: landingPulseGlow 1.9s ease-out infinite;
@@ -567,7 +588,7 @@ export default function LandingPage() {
             </Link>
             <Link
               href="/register"
-              className="bg-gradient-primary shadow-glow-primary shadow-glow-primary-hover rounded-full px-5 py-2 text-sm font-bold text-[#0B0F1A]"
+              className="bg-gradient-primary shadow-glow-primary shadow-glow-primary-hover rounded-full px-5 py-2 text-sm font-bold text-[#F5FAFF] drop-shadow-[0_1px_2px_rgba(11,15,26,0.72)]"
             >
               Get Started Free
             </Link>
@@ -582,7 +603,7 @@ export default function LandingPage() {
             </Link>
             <Link
               href="/register"
-              className="bg-gradient-primary rounded-full px-3 py-1.5 text-xs font-bold text-[#0B0F1A] shadow-[0_0_18px_rgba(124,92,255,0.35)]"
+              className="bg-gradient-primary rounded-full px-3 py-1.5 text-xs font-bold text-[#F5FAFF] shadow-[0_0_18px_rgba(124,92,255,0.35)] drop-shadow-[0_1px_2px_rgba(11,15,26,0.72)]"
             >
               Start Free
             </Link>
@@ -685,7 +706,7 @@ export default function LandingPage() {
               >
                 <Link
                   href="/register"
-                  className="bg-gradient-primary shadow-glow-primary shadow-glow-primary-hover w-full rounded-full px-7 py-3 text-center text-base font-bold text-[#0B0F1A] sm:w-auto"
+                  className="bg-gradient-primary shadow-glow-primary shadow-glow-primary-hover w-full rounded-full px-7 py-3 text-center text-base font-bold text-[#F5FAFF] drop-shadow-[0_1px_2px_rgba(11,15,26,0.72)] sm:w-auto"
                 >
                   Start Generating Free
                 </Link>
@@ -782,29 +803,43 @@ export default function LandingPage() {
               <m.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: 0.68 }}
-                className="landing-float-b absolute -left-6 top-[22%] hidden w-44 rounded-xl border border-[#2E466E] bg-[#101A2D]/92 p-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.35)] xl:block"
+                transition={{ duration: 0.4, delay: 0.7 }}
+                className="mt-4 rounded-2xl border border-[#28476F] bg-[#0E1729]/88 p-3 text-left backdrop-blur-xl"
               >
-                <div className="mb-2 flex items-center gap-2 text-[#90E2FF]">
-                  <Command className="h-4 w-4" />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide">Queue</span>
+                <div className="mb-3 flex items-center justify-between gap-2 px-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#C9DCFB]">
+                    Live Ops Snapshot
+                  </p>
+                  <span className="rounded-full border border-[#2D4D77] bg-[#111D33] px-2.5 py-1 text-[10px] font-semibold text-[#A9C8EE]">
+                    Updated every 2s
+                  </span>
                 </div>
-                <p className="text-lg font-black text-white">18 Ready</p>
-                <p className="mt-1 text-[11px] text-slate-300">Across 4 channels</p>
-              </m.div>
-
-              <m.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: 0.78 }}
-                className="landing-float-a absolute -right-5 bottom-[16%] hidden w-44 rounded-xl border border-[#2E466E] bg-[#101A2D]/92 p-3 text-left shadow-[0_10px_30px_rgba(0,0,0,0.35)] xl:block"
-              >
-                <div className="mb-2 flex items-center gap-2 text-[#E0B8FF]">
-                  <Layers className="h-4 w-4" />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide">Render</span>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {heroSignalCards.map((signal, index) => {
+                    const Icon = signal.icon;
+                    return (
+                      <m.div
+                        key={signal.label}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.22, delay: 0.76 + index * 0.08 }}
+                        className="rounded-xl border border-[#2B466F] bg-[#111D31]/90 p-3 shadow-[0_10px_22px_rgba(0,0,0,0.25)]"
+                      >
+                        <div
+                          className={cn(
+                            'mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide',
+                            signal.accent
+                          )}
+                        >
+                          <Icon className="h-3.5 w-3.5" />
+                          <span>{signal.label}</span>
+                        </div>
+                        <p className="text-lg font-black text-white">{signal.value}</p>
+                        <p className="mt-1 text-[11px] text-[#BDD1F2]">{signal.detail}</p>
+                      </m.div>
+                    );
+                  })}
                 </div>
-                <p className="text-lg font-black text-white">06 Active</p>
-                <p className="mt-1 text-[11px] text-slate-300">Voice + captions + b-roll</p>
               </m.div>
             </div>
           </div>
@@ -1004,7 +1039,7 @@ export default function LandingPage() {
                     </span>
                   )}
                   {isPro && (
-                    <span className="bg-gradient-primary absolute right-4 top-4 rounded-full px-2.5 py-1 text-[10px] font-black uppercase text-[#0B0F1A]">
+                    <span className="bg-gradient-primary absolute right-4 top-4 rounded-full px-2.5 py-1 text-[10px] font-black uppercase text-[#F5FAFF] drop-shadow-[0_1px_2px_rgba(11,15,26,0.72)]">
                       Popular
                     </span>
                   )}
@@ -1025,7 +1060,7 @@ export default function LandingPage() {
                     className={cn(
                       'mt-6 block rounded-full px-4 py-2.5 text-center text-sm font-bold',
                       isPro
-                        ? 'bg-gradient-primary text-[#0B0F1A]'
+                        ? 'bg-gradient-primary text-[#F5FAFF] drop-shadow-[0_1px_2px_rgba(11,15,26,0.72)]'
                         : 'border border-[#1A2235] text-slate-100 transition hover:border-[#7C5CFF]'
                     )}
                   >
@@ -1145,7 +1180,7 @@ export default function LandingPage() {
             </p>
             <Link
               href="/register"
-              className="bg-gradient-primary shadow-glow-primary shadow-glow-primary-hover mt-7 inline-flex items-center gap-2 rounded-full px-7 py-3 text-base font-black text-[#0B0F1A]"
+              className="bg-gradient-primary shadow-glow-primary shadow-glow-primary-hover mt-7 inline-flex items-center gap-2 rounded-full px-7 py-3 text-base font-black text-[#F5FAFF] drop-shadow-[0_1px_2px_rgba(11,15,26,0.72)]"
             >
               Create Your Free Account
               <PlayCircle className="h-4 w-4" />

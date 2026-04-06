@@ -819,6 +819,12 @@ const pipelineWorker = new Worker<PipelineJobPayload>(
           completedAt: new Date(),
           errorMessage: '',
           errorStage: undefined as any,
+          progress: {
+            progress: 100,
+            stage: 'completed',
+            message: 'Job already completed earlier',
+            timestamp: new Date().toISOString(),
+          },
         });
         return;
       }
@@ -1776,6 +1782,17 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       if (retryableFailure && hasRetriesLeft) {
         const nextRunnerSelection = await resolvePipelineRunner((job.attemptsMade || 0) + 1);
+        const unavailableRunners = Object.entries(nextRunnerSelection.availability)
+          .filter(([, available]) => !available)
+          .map(([runner]) => runner);
+        const nextRunnerSummary = nextRunnerSelection.targetRunner === nextRunnerSelection.runner
+          ? `${nextRunnerSelection.runner}`
+          : `${nextRunnerSelection.targetRunner} -> ${nextRunnerSelection.runner}`;
+        const retryDetails = [
+          `next runner: ${nextRunnerSummary}`,
+          unavailableRunners.length > 0 ? `unavailable: ${unavailableRunners.join(',')}` : '',
+        ].filter(Boolean).join(' | ');
+
         const retried = await JobModel.findOneAndUpdate(
           { _id: jobId, status: { $in: ['pending', 'processing'] } },
           {
@@ -1785,7 +1802,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
               progress: {
                 progress: 10,
                 stage: 'retrying',
-                message: `Retry ${currentAttempt}/${maxAttempts - 1} scheduled (next runner: ${nextRunnerSelection.runner})`,
+                message: `Retry ${currentAttempt}/${maxAttempts - 1} scheduled (${retryDetails})`,
                 timestamp: new Date().toISOString(),
               },
             },
@@ -1804,7 +1821,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         if (retried) {
           await appendLogSafe(
             jobId,
-            `[Retry] Attempt ${currentAttempt} failed at stage ${normalizedErrorStage}. Retrying (next runner: ${nextRunnerSelection.runner}).\n`,
+            `[Retry] Attempt ${currentAttempt} failed at stage ${normalizedErrorStage}. Retrying (${retryDetails}).\n`,
             'pending'
           );
           await updateProgressSafe(job, 10, 'retrying', `Retry ${currentAttempt}/${maxAttempts - 1} queued`);

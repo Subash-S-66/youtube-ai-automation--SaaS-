@@ -2,8 +2,29 @@ import dotenv from 'dotenv';
 import path from 'path';
 import connectDB from '../config/db';
 import SystemConfig from '../models/SystemConfig';
+import { ensureSystemConfigSingleton } from '../utils/ensureSystemConfig';
+import { recoverCrashedJobs, startStuckJobCleanupInterval } from './stuckJobCleanup';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
+const parseBooleanEnv = (value: unknown, fallback: boolean): boolean => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+  return fallback;
+};
+
+const enableWorkerStuckCleanup = parseBooleanEnv(
+  process.env.WORKER_ENABLE_STUCK_JOB_CLEANUP,
+  true
+);
 
 const normalizeWorkerProfile = (value: unknown): 'local' | 'vm' | 'cloud' => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -29,6 +50,15 @@ const normalizeWorkerConcurrency = (value: unknown): number | null => {
 
 const bootstrapPipelineWorker = async (): Promise<void> => {
   await connectDB();
+  await ensureSystemConfigSingleton();
+
+  if (enableWorkerStuckCleanup) {
+    await recoverCrashedJobs();
+    startStuckJobCleanupInterval();
+    console.log('[WorkerBootstrap] Stuck-job recovery and cleanup interval enabled for dedicated worker process.');
+  } else {
+    console.log('[WorkerBootstrap] Stuck-job cleanup is disabled for dedicated worker process.');
+  }
 
   try {
     const config = await SystemConfig.findOne()

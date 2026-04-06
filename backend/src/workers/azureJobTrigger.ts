@@ -21,6 +21,20 @@ const parseExecutionNameFromLocation = (locationHeader: string): string | null =
   return match?.[1] ? decodeURIComponent(match[1]) : null;
 };
 
+const compactErrorData = (value: unknown): string => {
+  if (value === null || typeof value === 'undefined') {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value.slice(0, 1000);
+  }
+  try {
+    return JSON.stringify(value).slice(0, 1000);
+  } catch {
+    return String(value).slice(0, 1000);
+  }
+};
+
 export async function getAzureToken(): Promise<string | null> {
   const tenantId = process.env.AZURE_TENANT_ID;
   const clientId = process.env.AZURE_CLIENT_ID;
@@ -166,7 +180,27 @@ export async function triggerAzureJob(
 
     return { success: true, accessToken, executionName };
   } catch (error: any) {
-    console.error('Failed to trigger Azure job:', error?.response?.data || error.message);
-    throw new Error('Azure Job API Error');
+    const status = Number(error?.response?.status || 0);
+    const code = String(error?.code || '').trim();
+    const requestId = String(
+      error?.response?.headers?.['x-ms-request-id'] ||
+      error?.response?.headers?.['x-ms-correlation-request-id'] ||
+      ''
+    ).trim();
+    const responseDetail = compactErrorData(error?.response?.data);
+    const detailParts = [
+      status > 0 ? `status=${status}` : '',
+      code ? `code=${code}` : '',
+      requestId ? `requestId=${requestId}` : '',
+      responseDetail ? `detail=${responseDetail}` : '',
+      error?.message ? `message=${String(error.message).slice(0, 500)}` : '',
+    ].filter(Boolean);
+
+    const detailMessage = detailParts.length > 0
+      ? detailParts.join(' | ')
+      : 'unknown error';
+
+    console.error('Failed to trigger Azure job:', detailMessage);
+    throw new Error(`Azure Job API Error: ${detailMessage}`);
   }
 }
