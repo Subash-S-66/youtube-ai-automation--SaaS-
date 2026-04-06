@@ -4,7 +4,14 @@ import { releaseReservedCredits } from '../services/uploadLimitService';
 import { calculateJobTimeout } from '../utils/timeoutHelper';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import { decrementChannelVideosOnHold, resolveJobChannelId } from '../services/channelHoldService';
-import { getPipelineAttemptsForPlan } from '../services/pipelineRetryPolicyService';
+import {
+  buildRunnerSequence,
+  getMinimumAttemptsForRunnerCycles,
+  getPipelineAttemptsForPlan,
+  sanitizePipelineCycleAcrossRunners,
+  sanitizePipelineRetryCycles,
+  sanitizePipelineRunnerFallbackOrder,
+} from '../services/pipelineRetryPolicyService';
 import { applyUserJobHistoryRetention } from '../services/jobHistoryRetentionPolicyService';
 
 type RecoverableJobStatus = 'processing' | 'pending';
@@ -50,6 +57,51 @@ const sanitizeMinutes = (
     return fallback;
   }
   return Math.max(min, Math.min(max, Math.floor(parsed)));
+};
+
+const parseBoolean = (value: unknown, fallback: boolean): boolean => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+  return fallback;
+};
+
+const normalizeRunner = (value: unknown): 'local' | 'azure' | 'remote' | null => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'local' || normalized === 'azure' || normalized === 'remote') {
+    return normalized;
+  }
+  return null;
+};
+
+const resolveQueueAttemptBudgetForPlan = (plan: string, config: any): number => {
+  const baseAttempts = getPipelineAttemptsForPlan(plan, config as any);
+  const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
+  const configPrimary = normalizeRunner(config?.pipelineRunner);
+  const envPrimary = normalizeRunner(process.env.PIPELINE_RUNNER);
+  const pinnedByEnv = parseBoolean(process.env.PIPELINE_RUNNER_PINNED, false);
+  const effectivePinned = typeof config?.pipelineRunnerPinned === 'boolean'
+    ? config.pipelineRunnerPinned
+    : pinnedByEnv;
+  const remoteConfigured = Boolean(String(config?.pipelineServiceUrl || process.env.PIPELINE_SERVICE_URL || '').trim());
+  const autoPrimary: 'local' | 'remote' = remoteConfigured ? 'remote' : 'local';
+  const effectivePrimary: 'local' | 'azure' | 'remote' = effectivePinned
+    ? (envPrimary || configPrimary || autoPrimary)
+    : (configPrimary || envPrimary || autoPrimary);
+  const runnerSequence = buildRunnerSequence(effectivePrimary, fallbackOrder);
+  const retryCycles = sanitizePipelineRetryCycles(config?.pipelineRetryCycles);
+  const cycleAcrossRunners = sanitizePipelineCycleAcrossRunners(config?.pipelineCycleAcrossRunners, true);
+  const minimumCycleAttempts = cycleAcrossRunners
+    ? getMinimumAttemptsForRunnerCycles(runnerSequence.length, retryCycles)
+    : 1;
+  return Math.max(1, Math.max(baseAttempts, minimumCycleAttempts));
 };
 
 type CleanupTimeoutPolicy = {
@@ -293,7 +345,7 @@ export const recoverCrashedJobs = async () => {
                 const jobTimeoutMinutes = 10 + (count - 1) * 5;
                 const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
                 const planName = String(job.pipelineConfig?.plan || 'free').toLowerCase();
-                const jobAttempts = getPipelineAttemptsForPlan(planName, systemConfig as any);
+                const jobAttempts = resolveQueueAttemptBudgetForPlan(planName, systemConfig as any);
 
                 await pipelineQueue.add(
                   'runPipeline',

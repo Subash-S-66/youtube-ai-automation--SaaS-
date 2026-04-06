@@ -7,6 +7,10 @@ export interface PipelineRetriesByPlan {
   premium: number;
 }
 
+export const DEFAULT_PIPELINE_RETRY_CYCLES = 2;
+export const MIN_PIPELINE_RETRY_CYCLES = 1;
+export const MAX_PIPELINE_RETRY_CYCLES = 10;
+
 export const DEFAULT_PIPELINE_RETRIES_BY_PLAN: PipelineRetriesByPlan = {
   free: 2,
   basic: 3,
@@ -15,6 +19,44 @@ export const DEFAULT_PIPELINE_RETRIES_BY_PLAN: PipelineRetriesByPlan = {
 };
 
 export const DEFAULT_PIPELINE_RUNNER_FALLBACK_ORDER: PipelineRunner[] = ['azure', 'remote', 'local'];
+
+const clampRetryCycles = (value: unknown, fallback = DEFAULT_PIPELINE_RETRY_CYCLES): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(MIN_PIPELINE_RETRY_CYCLES, Math.min(MAX_PIPELINE_RETRY_CYCLES, Math.floor(parsed)));
+};
+
+export const sanitizePipelineRetryCycles = (value: unknown): number => {
+  return clampRetryCycles(value, DEFAULT_PIPELINE_RETRY_CYCLES);
+};
+
+export const sanitizePipelineCycleAcrossRunners = (value: unknown, fallback = true): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+  return fallback;
+};
+
+export const getMinimumAttemptsForRunnerCycles = (
+  sequenceLength: number,
+  retryCycles: number
+): number => {
+  const normalizedLength = Math.max(1, Math.floor(Number(sequenceLength) || 1));
+  const normalizedCycles = sanitizePipelineRetryCycles(retryCycles);
+  return Math.max(1, normalizedLength * normalizedCycles);
+};
 
 const clampRetryCount = (value: unknown, fallback: number): number => {
   const parsed = Number(value);

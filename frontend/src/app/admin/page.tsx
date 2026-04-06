@@ -74,6 +74,12 @@ interface PipelineRuntimeStatus {
     mode: 'pinned' | 'dynamic';
     fallbackOrder: PipelineRunnerType[];
   };
+  retryPolicy?: {
+    cycleAcrossRunners: boolean;
+    retryCycles: number;
+    runnerSequence: PipelineRunnerType[];
+    minimumAttemptsPerJob: number;
+  };
   embeddedWorkerConfigured: boolean;
   autoStartEmbeddedWorkerWhenMissing: boolean;
   workerRuntime?: {
@@ -113,6 +119,8 @@ export default function AdminDashboard() {
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
   const [betaMode, setBetaMode] = useState(false);
   const [pipelineRunner, setPipelineRunner] = useState<'local' | 'azure' | 'remote'>('local');
+  const [pipelineServiceUrl, setPipelineServiceUrl] = useState('');
+  const [pipelineServiceSecret, setPipelineServiceSecret] = useState('');
   const [pipelineRunnerPinned, setPipelineRunnerPinned] = useState(false);
   const [runEmbeddedWorker, setRunEmbeddedWorker] = useState(false);
   const [autoStartEmbeddedWorkerWhenMissing, setAutoStartEmbeddedWorkerWhenMissing] = useState(false);
@@ -121,6 +129,8 @@ export default function AdminDashboard() {
   const [pipelineWorkerConcurrency, setPipelineWorkerConcurrency] = useState<number | ''>('');
   const [pipelineConcurrencyByPlan, setPipelineConcurrencyByPlan] = useState({ free: 2, basic: 5, pro: 10, premium: 20 });
   const [pipelineRetriesByPlan, setPipelineRetriesByPlan] = useState({ free: 2, basic: 3, pro: 3, premium: 5 });
+  const [pipelineRetryCycles, setPipelineRetryCycles] = useState(2);
+  const [pipelineCycleAcrossRunners, setPipelineCycleAcrossRunners] = useState(true);
   const [pipelineRunnerFallbackOrder, setPipelineRunnerFallbackOrder] = useState<Array<'local' | 'azure' | 'remote'>>(['azure', 'remote', 'local']);
   const [jobHistoryLimitByPlan, setJobHistoryLimitByPlan] = useState({ free: 10, basic: 50, pro: 100, premium: 200 });
   const [jobHistoryMinAgeDays, setJobHistoryMinAgeDays] = useState(7);
@@ -130,9 +140,12 @@ export default function AdminDashboard() {
   const [planValueMap, setPlanValueMap] = useState({ free: 0, basic: 1, pro: 2, premium: 4 });
   const [savingProration, setSavingProration] = useState(false);
   const [savingPipelineRunner, setSavingPipelineRunner] = useState(false);
+  const [savingRemoteRunnerConfig, setSavingRemoteRunnerConfig] = useState(false);
   const [savingWorkerRuntimePolicy, setSavingWorkerRuntimePolicy] = useState(false);
   const [savingConcurrencyPolicy, setSavingConcurrencyPolicy] = useState(false);
   const [savingRetryPolicy, setSavingRetryPolicy] = useState(false);
+  const [retryingPendingJobs, setRetryingPendingJobs] = useState(false);
+  const [pendingRetryScanLimit, setPendingRetryScanLimit] = useState(100);
   const [savingHistoryRetentionPolicy, setSavingHistoryRetentionPolicy] = useState(false);
   const [savingCleanupPolicy, setSavingCleanupPolicy] = useState(false);
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
@@ -188,6 +201,8 @@ export default function AdminDashboard() {
     betaMode,
     planValueMap,
     pipelineRunner,
+    pipelineServiceUrl,
+    pipelineServiceSecret,
     pipelineRunnerPinned,
     runEmbeddedWorker,
     autoStartEmbeddedWorkerWhenMissing,
@@ -196,6 +211,8 @@ export default function AdminDashboard() {
     pipelineWorkerConcurrency: pipelineWorkerConcurrency === '' ? null : Number(pipelineWorkerConcurrency),
     pipelineConcurrencyByPlan,
     pipelineRetriesByPlan,
+    pipelineRetryCycles,
+    pipelineCycleAcrossRunners,
     pipelineRunnerFallbackOrder,
     jobHistoryLimitByPlan,
     jobHistoryMinAgeDays,
@@ -248,6 +265,12 @@ export default function AdminDashboard() {
     const parsed = Number(value);
     const safeValue = Number.isFinite(parsed) ? Math.max(0, Math.min(10, Math.floor(parsed))) : 0;
     setPipelineRetriesByPlan((prev) => ({ ...prev, [plan]: safeValue }));
+  };
+
+  const handleRetryCyclesChange = (value: string) => {
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed) ? Math.max(1, Math.min(10, Math.floor(parsed))) : 1;
+    setPipelineRetryCycles(safeValue);
   };
 
   const handleConcurrencyLimitChange = (plan: 'free' | 'basic' | 'pro' | 'premium', value: string) => {
@@ -478,6 +501,33 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleSaveRemoteRunnerConfig = async () => {
+    setSavingRemoteRunnerConfig(true);
+    try {
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      await fetchPipelineRuntimeStatus(false);
+      setModalConfig({
+        isOpen: true,
+        title: 'Remote Worker Updated',
+        description: 'Remote worker VM endpoint and secret saved successfully.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to update remote worker settings.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingRemoteRunnerConfig(false);
+    }
+  };
+
   const handleSaveWorkerRuntimePolicy = async () => {
     setSavingWorkerRuntimePolicy(true);
     try {
@@ -554,6 +604,35 @@ export default function AdminDashboard() {
       });
     } finally {
       setSavingRetryPolicy(false);
+    }
+  };
+
+  const handleRetryPendingJobsNow = async () => {
+    setRetryingPendingJobs(true);
+    try {
+      const safeLimit = Math.max(1, Math.min(500, Math.floor(Number(pendingRetryScanLimit) || 100)));
+      const response = await adminService.retryPendingPipelineJobs(safeLimit);
+      await fetchPipelineRuntimeStatus(false);
+      const details = response?.data || {};
+      setModalConfig({
+        isOpen: true,
+        title: 'Pending Job Retry Started',
+        description: `Scanned: ${details.scanned ?? 0}, Requeued: ${details.requeued ?? 0}, Already queued: ${details.alreadyQueued ?? 0}, Failed: ${details.failed ?? 0}.`,
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: any) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: err.response?.data?.message || 'Failed to requeue pending jobs.',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setRetryingPendingJobs(false);
     }
   };
 
@@ -803,6 +882,12 @@ const handleDeleteUser = () => {
             if (configRes.value.data.pipelineRunner) {
               setPipelineRunner(configRes.value.data.pipelineRunner as 'local' | 'azure' | 'remote');
             }
+            if (typeof configRes.value.data.pipelineServiceUrl === 'string') {
+              setPipelineServiceUrl(configRes.value.data.pipelineServiceUrl);
+            }
+            if (typeof configRes.value.data.pipelineServiceSecret === 'string') {
+              setPipelineServiceSecret(configRes.value.data.pipelineServiceSecret);
+            }
             if (typeof configRes.value.data.pipelineRunnerPinned === 'boolean') {
               setPipelineRunnerPinned(configRes.value.data.pipelineRunnerPinned);
             }
@@ -841,6 +926,13 @@ const handleDeleteUser = () => {
                 pro: Number(configRes.value.data.pipelineRetriesByPlan.pro ?? 3),
                 premium: Number(configRes.value.data.pipelineRetriesByPlan.premium ?? 5),
               });
+            }
+            if (typeof configRes.value.data.pipelineRetryCycles === 'number') {
+              const retryCycles = Math.max(1, Math.min(10, Math.floor(Number(configRes.value.data.pipelineRetryCycles || 2))));
+              setPipelineRetryCycles(retryCycles);
+            }
+            if (typeof configRes.value.data.pipelineCycleAcrossRunners === 'boolean') {
+              setPipelineCycleAcrossRunners(configRes.value.data.pipelineCycleAcrossRunners);
             }
             if (Array.isArray(configRes.value.data.pipelineRunnerFallbackOrder) && configRes.value.data.pipelineRunnerFallbackOrder.length > 0) {
               const normalizedOrder = configRes.value.data.pipelineRunnerFallbackOrder
@@ -1252,6 +1344,45 @@ const handleDeleteUser = () => {
                       </button>
                     </div>
                   </div>
+
+                  <div className="mt-3 p-3 rounded-lg border border-[#1A2235] bg-[#111827]">
+                    <p className="text-xs font-semibold text-slate-200 mb-2">Remote Worker VM Endpoint</p>
+                    <p className="text-[11px] text-slate-500 mb-3">Use this to register a new worker VM/service URL directly from admin panel. Example: https://worker.yourdomain.com</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Remote Service URL</label>
+                        <input
+                          id="pipeline-service-url"
+                          aria-label="Remote pipeline service url"
+                          type="text"
+                          placeholder="https://worker.yourdomain.com"
+                          value={pipelineServiceUrl}
+                          onChange={(e) => setPipelineServiceUrl(e.target.value)}
+                          className="w-full bg-[#0B0F1A] text-white px-2 py-2 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Shared Secret (Optional)</label>
+                        <input
+                          id="pipeline-service-secret"
+                          aria-label="Remote pipeline service secret"
+                          type="password"
+                          placeholder="x-webhook-secret"
+                          value={pipelineServiceSecret}
+                          onChange={(e) => setPipelineServiceSecret(e.target.value)}
+                          className="w-full bg-[#0B0F1A] text-white px-2 py-2 rounded border border-[#1A2235]"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSaveRemoteRunnerConfig}
+                      disabled={savingRemoteRunnerConfig}
+                      className="mt-3 w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {savingRemoteRunnerConfig ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Remote Worker VM'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
@@ -1473,7 +1604,13 @@ const handleDeleteUser = () => {
 
                 <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
                   <p className="text-sm font-semibold text-white mb-2">Retry & Failover Policy</p>
-                  <p className="text-xs text-slate-400 mb-3">Configure retry counts per plan and runner failover order. Retry count excludes the first attempt.</p>
+                  <p className="text-xs text-slate-400 mb-3">Configure retry counts per plan and explicit Try #1 / Try #2 / Try #3 order. When cycling is enabled, jobs repeat this sequence instead of sticking on one runner.</p>
+
+                  {runtimeStatus?.retryPolicy ? (
+                    <p className="text-[11px] text-slate-500 mb-3">
+                      Runtime cycle: {runtimeStatus.retryPolicy.cycleAcrossRunners ? 'ON' : 'OFF'} | Cycles: {runtimeStatus.retryPolicy.retryCycles} | Sequence: {runtimeStatus.retryPolicy.runnerSequence.map((runner) => runnerLabelMap[runner]).join(' -> ')} | Minimum attempts/job: {runtimeStatus.retryPolicy.minimumAttemptsPerJob}
+                    </p>
+                  ) : null}
 
                   <div className="grid grid-cols-2 gap-3 mb-4">
                     {(['free', 'basic', 'pro', 'premium'] as const).map((plan) => (
@@ -1493,10 +1630,36 @@ const handleDeleteUser = () => {
                     ))}
                   </div>
 
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                    <label className="flex items-center justify-between rounded-lg border border-[#1A2235] bg-[#111827] px-3 py-2">
+                      <span className="text-xs text-slate-300">Cycle through all runners repeatedly</span>
+                      <input
+                        type="checkbox"
+                        checked={pipelineCycleAcrossRunners}
+                        onChange={(e) => setPipelineCycleAcrossRunners(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-600 bg-[#0B0F1A]"
+                      />
+                    </label>
+
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Full cycles before final failure</label>
+                      <input
+                        id="pipeline-retry-cycles"
+                        aria-label="Pipeline retry cycles"
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={pipelineRetryCycles}
+                        onChange={(e) => handleRetryCyclesChange(e.target.value)}
+                        className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                      />
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[0, 1, 2].map((index) => (
                       <div key={`fallback-runner-${index}`}>
-                        <label className="text-xs text-slate-400 block mb-1">Fallback #{index + 1}</label>
+                        <label className="text-xs text-slate-400 block mb-1">Try #{index + 1}</label>
                         <select
                           id={`pipeline-fallback-${index}`}
                           aria-label={`Pipeline fallback runner ${index + 1}`}
@@ -1510,6 +1673,35 @@ const handleDeleteUser = () => {
                         </select>
                       </div>
                     ))}
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Pending job scan limit</label>
+                      <input
+                        id="pending-retry-scan-limit"
+                        aria-label="Pending retry scan limit"
+                        type="number"
+                        min="1"
+                        max="500"
+                        value={pendingRetryScanLimit}
+                        onChange={(e) => {
+                          const parsed = Number(e.target.value);
+                          const safeValue = Number.isFinite(parsed) ? Math.max(1, Math.min(500, Math.floor(parsed))) : 100;
+                          setPendingRetryScanLimit(safeValue);
+                        }}
+                        className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">Scans pending DB jobs and requeues missing BullMQ entries immediately.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRetryPendingJobsNow}
+                      disabled={retryingPendingJobs}
+                      className="sm:self-end py-2 px-4 bg-[#3b82f6] hover:bg-[#2563eb] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {retryingPendingJobs ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Retry Pending Jobs Now'}
+                    </button>
                   </div>
 
                   <button

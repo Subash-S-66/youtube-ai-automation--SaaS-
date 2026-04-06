@@ -43,7 +43,13 @@ import {
 import { applyUserJobHistoryRetention } from '../services/jobHistoryRetentionPolicyService';
 import { notifyUser } from '../services/notificationService';
 import { decrementChannelVideosOnHold, resolveJobChannelId } from '../services/channelHoldService';
-import { buildRunnerSequence, pickRunnerForAttempt, sanitizePipelineRunnerFallbackOrder } from '../services/pipelineRetryPolicyService';
+import {
+  buildRunnerSequence,
+  pickRunnerForAttempt,
+  sanitizePipelineCycleAcrossRunners,
+  sanitizePipelineRetryCycles,
+  sanitizePipelineRunnerFallbackOrder,
+} from '../services/pipelineRetryPolicyService';
 
 // Load env vars
 
@@ -325,12 +331,26 @@ const getMissingAzureRunnerEnv = (): string[] => {
   return missing;
 };
 
-const isRunnerAvailable = (runner: PipelineRunner): boolean => {
+const normalizePipelineServiceUrl = (value: unknown): string => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.replace(/\/+$/, '');
+};
+
+const getMissingRemoteRunnerEnv = (serviceUrlFromConfig?: unknown): string[] => {
+  const effectiveServiceUrl = normalizePipelineServiceUrl(serviceUrlFromConfig) || normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL);
+  return effectiveServiceUrl ? [] : ['PIPELINE_SERVICE_URL'];
+};
+
+const isRunnerAvailable = (runner: PipelineRunner, options?: { remoteServiceUrl?: string }): boolean => {
   if (runner === 'azure') {
     return getMissingAzureRunnerEnv().length === 0;
   }
   if (runner === 'remote') {
-    return Boolean(String(process.env.PIPELINE_SERVICE_URL || '').trim());
+    const effectiveRemoteServiceUrl = normalizePipelineServiceUrl(options?.remoteServiceUrl) || normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL);
+    return Boolean(effectiveRemoteServiceUrl);
   }
   return isLocalPipelineRuntimeAvailable();
 };
@@ -342,7 +362,13 @@ const resolvePipelineRunner = async (
   primary: PipelineRunner;
   sequence: PipelineRunner[];
   availability: Record<PipelineRunner, boolean>;
+  cycleAcrossRunners: boolean;
+  retryCycles: number;
+  attemptIndex: number;
   missingAzureEnv: string[];
+  missingRemoteEnv: string[];
+  remoteServiceUrl: string;
+  remoteServiceSecret: string;
 }> => {
   let config: any = null;
   const envRunner = (process.env.PIPELINE_RUNNER || '').toLowerCase();
@@ -351,7 +377,9 @@ const resolvePipelineRunner = async (
     : null;
 
   try {
-    config = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned');
+    config = await SystemConfig.findOne()
+      .sort({ updatedAt: -1 })
+      .select('pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineServiceSecret pipelineRetryCycles pipelineCycleAcrossRunners');
   } catch (error) {
     console.warn('Failed to load SystemConfig for pipeline runner. Falling back to env.', error);
   }
@@ -363,7 +391,9 @@ const resolvePipelineRunner = async (
       ? config.pipelineRunner
       : null;
 
-  const autoPrimary: 'local' | 'azure' | 'remote' = process.env.PIPELINE_SERVICE_URL ? 'remote' : 'local';
+  const remoteServiceUrl = normalizePipelineServiceUrl(config?.pipelineServiceUrl) || normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL);
+  const remoteServiceSecret = String(config?.pipelineServiceSecret || process.env.PIPELINE_SERVICE_SECRET || process.env.WEBHOOK_SECRET || '').trim();
+  const autoPrimary: 'local' | 'azure' | 'remote' = remoteServiceUrl ? 'remote' : 'local';
   const effectivePinned = typeof config?.pipelineRunnerPinned === 'boolean'
     ? config.pipelineRunnerPinned
     : pipelineRunnerPinnedFallback;
@@ -374,12 +404,15 @@ const resolvePipelineRunner = async (
 
   const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
   const sequence = buildRunnerSequence(derivedPrimary, fallbackOrder);
-  const selectedRunner = pickRunnerForAttempt(derivedPrimary, sequence, attemptsMade) as PipelineRunner;
+  const cycleAcrossRunners = sanitizePipelineCycleAcrossRunners(config?.pipelineCycleAcrossRunners, true);
+  const retryCycles = sanitizePipelineRetryCycles(config?.pipelineRetryCycles);
+  const attemptIndex = cycleAcrossRunners ? Math.max(0, Math.floor(Number(attemptsMade) || 0)) : 0;
+  const selectedRunner = pickRunnerForAttempt(derivedPrimary, sequence, attemptIndex) as PipelineRunner;
 
   const availability: Record<PipelineRunner, boolean> = {
     local: isRunnerAvailable('local'),
     azure: isRunnerAvailable('azure'),
-    remote: isRunnerAvailable('remote'),
+    remote: isRunnerAvailable('remote', { remoteServiceUrl }),
   };
 
   let resolvedRunner = selectedRunner;
@@ -394,13 +427,20 @@ const resolvePipelineRunner = async (
   }
 
   const missingAzureEnv = availability.azure ? [] : getMissingAzureRunnerEnv();
+  const missingRemoteEnv = availability.remote ? [] : getMissingRemoteRunnerEnv(config?.pipelineServiceUrl);
 
   return {
     runner: resolvedRunner,
     primary: derivedPrimary,
     sequence,
     availability,
+    cycleAcrossRunners,
+    retryCycles,
+    attemptIndex,
     missingAzureEnv,
+    missingRemoteEnv,
+    remoteServiceUrl,
+    remoteServiceSecret,
   };
 };
 
@@ -1152,8 +1192,12 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           selectedRunner: pipelineRunner,
           primaryRunner: runnerSelection.primary,
           runnerSequence: runnerSelection.sequence,
+          cycleAcrossRunners: runnerSelection.cycleAcrossRunners,
+          retryCycles: runnerSelection.retryCycles,
+          attemptIndex: runnerSelection.attemptIndex,
           runnerAvailability: runnerSelection.availability,
           missingAzureEnv: runnerSelection.missingAzureEnv,
+          missingRemoteEnv: runnerSelection.missingRemoteEnv,
         })}\n`
       );
 
@@ -1228,6 +1272,8 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           jobId,
           userId,
           envVars,
+          baseUrlOverride: runnerSelection.remoteServiceUrl,
+          authSecretOverride: runnerSelection.remoteServiceSecret,
         });
         await appendLogSafe(jobId, `\nRemote pipeline accepted: ${remoteResult.message}\n`);
         return;

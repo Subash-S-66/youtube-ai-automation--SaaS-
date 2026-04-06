@@ -58,9 +58,16 @@ export const adminService = {
     return response.data;
   },
 
+  async retryPendingPipelineJobs(limit = 100) {
+    const response = await api.post('/admin/pipeline/retry-pending', { limit });
+    return response.data;
+  },
+
   async updateSystemConfig(data: {
     betaMode: boolean;
     pipelineRunner?: 'local' | 'azure' | 'remote';
+    pipelineServiceUrl?: string;
+    pipelineServiceSecret?: string;
     pipelineRunnerPinned?: boolean;
     runEmbeddedWorker?: boolean;
     autoStartEmbeddedWorkerWhenMissing?: boolean;
@@ -69,6 +76,8 @@ export const adminService = {
     pipelineWorkerConcurrency?: number | null;
     pipelineConcurrencyByPlan?: { free: number; basic: number; pro: number; premium: number };
     pipelineRetriesByPlan?: { free: number; basic: number; pro: number; premium: number };
+    pipelineRetryCycles?: number;
+    pipelineCycleAcrossRunners?: boolean;
     pipelineRunnerFallbackOrder?: Array<'local' | 'azure' | 'remote'>;
     jobHistoryLimitByPlan?: { free: number; basic: number; pro: number; premium: number };
     jobHistoryMinAgeDays?: number;

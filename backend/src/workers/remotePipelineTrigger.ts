@@ -7,13 +7,17 @@ export const triggerRemotePipeline = async (params: {
   jobId: string;
   userId: string;
   envVars: Array<{ name: string; value: string }>;
+  baseUrlOverride?: string;
+  authSecretOverride?: string;
 }): Promise<RemotePipelineResult> => {
-  const baseUrl = (process.env.PIPELINE_SERVICE_URL || '').trim().replace(/\/+$/, '');
+  const baseUrl = String(params.baseUrlOverride || process.env.PIPELINE_SERVICE_URL || '').trim().replace(/\/+$/, '');
   if (!baseUrl) {
     throw new Error('PIPELINE_SERVICE_URL is required for remote pipeline runner.');
   }
 
-  const authSecret = (process.env.PIPELINE_SERVICE_SECRET || process.env.WEBHOOK_SECRET || '').trim();
+  const authSecret = String(
+    params.authSecretOverride || process.env.PIPELINE_SERVICE_SECRET || process.env.WEBHOOK_SECRET || ''
+  ).trim();
   const env: Record<string, string> = {};
   for (const item of params.envVars) {
     env[item.name] = item.value;

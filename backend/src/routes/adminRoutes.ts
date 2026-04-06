@@ -13,6 +13,7 @@ import {
   deleteUserByAdmin,
   getSystemConfig,
   getPipelineRuntimeStatus,
+  retryPendingPipelineJobs,
   updateSystemConfig,
   updateTimeoutConfig,
   triggerWeeklyReports,
@@ -37,6 +38,7 @@ router.post('/banner', setGlobalBanner);
 router.get('/banner', getGlobalBannerConfig);
 router.get('/config', getSystemConfig);
 router.get('/runtime-status', getPipelineRuntimeStatus);
+router.post('/pipeline/retry-pending', retryPendingPipelineJobs);
 router.post('/config', updateSystemConfig);
 router.put('/config/timeout', updateTimeoutConfig);
 router.post('/trigger-reports', triggerWeeklyReports);

@@ -16,6 +16,10 @@ import validator from 'validator';
 import { emailQueue } from '../queues/emailQueue';
 import { pipelineQueue } from '../queues/pipelineQueue';
 import {
+  getPipelineAttemptsForPlan,
+  getMinimumAttemptsForRunnerCycles,
+  sanitizePipelineCycleAcrossRunners,
+  sanitizePipelineRetryCycles,
   sanitizePipelineRetriesByPlan,
   sanitizePipelineRunnerFallbackOrder,
 } from '../services/pipelineRetryPolicyService';
@@ -38,6 +42,8 @@ const DEFAULT_PROCESSING_HARD_TIMEOUT_MINUTES = 100;
 const SUPPORTED_PIPELINE_RUNNERS = ['local', 'azure', 'remote'] as const;
 const SUPPORTED_PIPELINE_WORKER_PROFILES = ['local', 'vm', 'cloud'] as const;
 const SUPPORTED_WORKER_HEARTBEAT_SOURCES = ['dedicated', 'embedded'] as const;
+const DEFAULT_PENDING_RETRY_SCAN_LIMIT = 100;
+const MAX_PENDING_RETRY_SCAN_LIMIT = 500;
 
 type PipelineRunnerType = (typeof SUPPORTED_PIPELINE_RUNNERS)[number];
 type PipelineWorkerProfileType = (typeof SUPPORTED_PIPELINE_WORKER_PROFILES)[number];
@@ -91,6 +97,18 @@ const normalizePipelineWorkerConcurrency = (value: unknown): number | null => {
   return Math.max(1, Math.min(32, Math.floor(parsed)));
 };
 
+const normalizePipelineServiceUrl = (value: unknown): string => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.replace(/\/+$/, '').slice(0, 500);
+};
+
+const normalizePipelineServiceSecret = (value: unknown): string => {
+  return String(value || '').trim().slice(0, 500);
+};
+
 const normalizeWorkerHeartbeatSource = (value: unknown): WorkerHeartbeatSourceType => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'embedded') {
@@ -122,10 +140,93 @@ const getMissingAzureRunnerEnv = (): string[] => {
   return missing;
 };
 
-const getMissingRemoteRunnerEnv = (): string[] => {
-  return String(process.env.PIPELINE_SERVICE_URL || '').trim()
+const getMissingRemoteRunnerEnv = (serviceUrlFromConfig?: unknown): string[] => {
+  const configuredUrl = normalizePipelineServiceUrl(serviceUrlFromConfig);
+  const envUrl = normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL);
+  const effectiveUrl = configuredUrl || envUrl;
+  return effectiveUrl
     ? []
     : ['PIPELINE_SERVICE_URL'];
+};
+
+const clampPendingRetryScanLimit = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_PENDING_RETRY_SCAN_LIMIT;
+  }
+  return Math.max(1, Math.min(MAX_PENDING_RETRY_SCAN_LIMIT, Math.floor(parsed)));
+};
+
+const getRequestedUploadCount = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+  return Math.max(1, Math.floor(parsed));
+};
+
+const resolveQueueAttemptBudgetForPlan = (plan: string, config: any): number => {
+  const baseAttempts = getPipelineAttemptsForPlan(plan, config as any);
+  const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
+  const configPrimary = normalizePipelineRunner(config?.pipelineRunner);
+  const envPrimary = normalizePipelineRunner(process.env.PIPELINE_RUNNER);
+  const envPinnedFallback = parseBooleanEnv(process.env.PIPELINE_RUNNER_PINNED, false);
+  const effectivePinned = typeof config?.pipelineRunnerPinned === 'boolean'
+    ? config.pipelineRunnerPinned
+    : envPinnedFallback;
+  const remoteConfigured = Boolean(
+    normalizePipelineServiceUrl(config?.pipelineServiceUrl) || normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL)
+  );
+  const autoPrimary: PipelineRunnerType = remoteConfigured ? 'remote' : 'local';
+  const effectivePrimary = effectivePinned
+    ? (envPrimary || configPrimary || autoPrimary)
+    : (configPrimary || envPrimary || autoPrimary);
+  const runnerSequence = [effectivePrimary, ...fallbackOrder.filter((runner) => runner !== effectivePrimary)];
+  const retryCycles = sanitizePipelineRetryCycles(config?.pipelineRetryCycles);
+  const cycleAcrossRunners = sanitizePipelineCycleAcrossRunners(config?.pipelineCycleAcrossRunners, true);
+  const minimumCycleAttempts = cycleAcrossRunners
+    ? getMinimumAttemptsForRunnerCycles(runnerSequence.length, retryCycles)
+    : 1;
+  return Math.max(1, Math.max(baseAttempts, minimumCycleAttempts));
+};
+
+const clearDispatchLocksForJob = async (jobId: string): Promise<number> => {
+  const redisClient = connection as any;
+  if (!redisClient || !process.env.REDIS_URL || !jobId) {
+    return 0;
+  }
+
+  try {
+    let cursor = '0';
+    const keysToDelete: string[] = [];
+
+    do {
+      const scanResult = await redisClient.scan(
+        cursor,
+        'MATCH',
+        `pipeline:dispatch:${jobId}:*`,
+        'COUNT',
+        100
+      );
+      cursor = Array.isArray(scanResult) ? String(scanResult[0] ?? '0') : '0';
+      const keys = Array.isArray(scanResult) && Array.isArray(scanResult[1])
+        ? scanResult[1].map((key: unknown) => String(key))
+        : [];
+      if (keys.length > 0) {
+        keysToDelete.push(...keys);
+      }
+    } while (cursor !== '0');
+
+    if (keysToDelete.length === 0) {
+      return 0;
+    }
+
+    await redisClient.del(...keysToDelete);
+    return keysToDelete.length;
+  } catch (error) {
+    console.warn(`[Admin] Failed to clear dispatch locks for job ${jobId}:`, error);
+    return 0;
+  }
 };
 
 const getPipelineWorkerHeartbeatSummary = async (): Promise<{
@@ -338,6 +439,8 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
     config = await SystemConfig.create({
       betaMode: false,
       pipelineRunner: 'local',
+      pipelineServiceUrl: '',
+      pipelineServiceSecret: '',
       pipelineRunnerPinned: false,
       runEmbeddedWorker: false,
       autoStartEmbeddedWorkerWhenMissing: false,
@@ -346,6 +449,8 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
       pipelineWorkerConcurrency: null,
       pipelineConcurrencyByPlan: sanitizePipelineConcurrencyByPlan(undefined),
       pipelineRetriesByPlan: sanitizePipelineRetriesByPlan(undefined),
+      pipelineRetryCycles: sanitizePipelineRetryCycles(undefined),
+      pipelineCycleAcrossRunners: sanitizePipelineCycleAcrossRunners(undefined, true),
       pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder(undefined),
       jobHistoryLimitByPlan: sanitizeJobHistoryLimitByPlan(undefined),
       jobHistoryMinAgeDays: sanitizeJobHistoryMinAgeDays(undefined),
@@ -375,7 +480,7 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
     config = await SystemConfig.findOne()
       .sort({ updatedAt: -1 })
       .select(
-        'pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned runEmbeddedWorker autoStartEmbeddedWorkerWhenMissing includeEmbeddedWorkersInRuntimeStatus pipelineWorkerProfile pipelineWorkerConcurrency'
+        'pipelineRunner pipelineServiceUrl pipelineServiceSecret pipelineRunnerFallbackOrder pipelineRetryCycles pipelineCycleAcrossRunners pipelineRunnerPinned runEmbeddedWorker autoStartEmbeddedWorkerWhenMissing includeEmbeddedWorkersInRuntimeStatus pipelineWorkerProfile pipelineWorkerConcurrency'
       );
   } catch (error) {
     console.warn('[Admin] Failed to load SystemConfig for runtime status:', error);
@@ -388,15 +493,23 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
     ? config.pipelineRunnerPinned
     : envPinnedFallback;
   const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
-  const autoPrimary: PipelineRunnerType = String(process.env.PIPELINE_SERVICE_URL || '').trim()
+  const effectivePipelineServiceUrl = normalizePipelineServiceUrl(config?.pipelineServiceUrl) || normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL);
+  const autoPrimary: PipelineRunnerType = effectivePipelineServiceUrl
     ? 'remote'
     : 'local';
   const effectivePrimary = effectivePinned
     ? (envPrimary || configPrimary || autoPrimary)
     : (configPrimary || envPrimary || autoPrimary);
 
+  const pipelineRetryCycles = sanitizePipelineRetryCycles(config?.pipelineRetryCycles);
+  const pipelineCycleAcrossRunners = sanitizePipelineCycleAcrossRunners(config?.pipelineCycleAcrossRunners, true);
+  const runnerSequence = [effectivePrimary, ...fallbackOrder.filter((runner) => runner !== effectivePrimary)];
+  const minimumAttemptsPerJob = pipelineCycleAcrossRunners
+    ? getMinimumAttemptsForRunnerCycles(runnerSequence.length, pipelineRetryCycles)
+    : 1;
+
   const missingAzureEnv = getMissingAzureRunnerEnv();
-  const missingRemoteEnv = getMissingRemoteRunnerEnv();
+  const missingRemoteEnv = getMissingRemoteRunnerEnv(config?.pipelineServiceUrl);
   const localRuntime = resolveLocalPythonRuntime();
   const includeEmbeddedWorkersInConnectivity = typeof config?.includeEmbeddedWorkersInRuntimeStatus === 'boolean'
     ? config.includeEmbeddedWorkersInRuntimeStatus
@@ -475,6 +588,16 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
         mode: effectivePinned ? 'pinned' : 'dynamic',
         fallbackOrder,
       },
+      retryPolicy: {
+        cycleAcrossRunners: pipelineCycleAcrossRunners,
+        retryCycles: pipelineRetryCycles,
+        runnerSequence,
+        minimumAttemptsPerJob,
+      },
+      remoteRunner: {
+        serviceUrl: effectivePipelineServiceUrl,
+        hasSecret: Boolean(normalizePipelineServiceSecret(config?.pipelineServiceSecret) || String(process.env.PIPELINE_SERVICE_SECRET || '').trim() || String(process.env.WEBHOOK_SECRET || '').trim()),
+      },
       workerRuntime: {
         profile: workerRuntimeProfile,
         concurrency: workerRuntimeConcurrency,
@@ -489,6 +612,8 @@ const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
     pipelineRunner: z.enum(['local', 'azure', 'remote']).optional(),
+    pipelineServiceUrl: z.string().max(500).optional(),
+    pipelineServiceSecret: z.string().max(500).optional(),
     pipelineRunnerPinned: z.boolean().optional(),
     runEmbeddedWorker: z.boolean().optional(),
     autoStartEmbeddedWorkerWhenMissing: z.boolean().optional(),
@@ -511,6 +636,8 @@ const configSchema = z.object({
         premium: z.number().min(0).max(10),
       })
       .optional(),
+    pipelineRetryCycles: z.number().int().min(1).max(10).optional(),
+    pipelineCycleAcrossRunners: z.boolean().optional(),
     pipelineRunnerFallbackOrder: z
       .array(z.enum(['local', 'azure', 'remote']))
       .min(1)
@@ -582,6 +709,8 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
 
   const {
     betaMode,
+    pipelineServiceUrl,
+    pipelineServiceSecret,
     pipelineRunnerPinned,
     runEmbeddedWorker,
     autoStartEmbeddedWorkerWhenMissing,
@@ -591,6 +720,8 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     planValueMap,
     pipelineConcurrencyByPlan,
     pipelineRetriesByPlan,
+    pipelineRetryCycles,
+    pipelineCycleAcrossRunners,
     pipelineRunnerFallbackOrder,
     jobHistoryLimitByPlan,
     jobHistoryMinAgeDays,
@@ -600,6 +731,12 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
   const updatePayload: any = { betaMode };
   if (validation.data.body.pipelineRunner) {
     updatePayload.pipelineRunner = validation.data.body.pipelineRunner;
+  }
+  if (typeof pipelineServiceUrl !== 'undefined') {
+    updatePayload.pipelineServiceUrl = normalizePipelineServiceUrl(pipelineServiceUrl);
+  }
+  if (typeof pipelineServiceSecret !== 'undefined') {
+    updatePayload.pipelineServiceSecret = normalizePipelineServiceSecret(pipelineServiceSecret);
   }
   if (typeof pipelineRunnerPinned === 'boolean') {
     updatePayload.pipelineRunnerPinned = pipelineRunnerPinned;
@@ -624,6 +761,12 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
   }
   if (pipelineRetriesByPlan) {
     updatePayload.pipelineRetriesByPlan = sanitizePipelineRetriesByPlan(pipelineRetriesByPlan);
+  }
+  if (typeof pipelineRetryCycles === 'number') {
+    updatePayload.pipelineRetryCycles = sanitizePipelineRetryCycles(pipelineRetryCycles);
+  }
+  if (typeof pipelineCycleAcrossRunners === 'boolean') {
+    updatePayload.pipelineCycleAcrossRunners = sanitizePipelineCycleAcrossRunners(pipelineCycleAcrossRunners, true);
   }
   if (pipelineRunnerFallbackOrder) {
     updatePayload.pipelineRunnerFallbackOrder = sanitizePipelineRunnerFallbackOrder(pipelineRunnerFallbackOrder);
@@ -655,6 +798,114 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     success: true,
     message: 'System config updated successfully',
     data: config,
+  });
+});
+
+const retryPendingJobsSchema = z.object({
+  body: z.object({
+    limit: z.number().int().min(1).max(MAX_PENDING_RETRY_SCAN_LIMIT).optional(),
+  }).optional(),
+});
+
+export const retryPendingPipelineJobs = asyncHandler(async (req: Request, res: Response) => {
+  const validation = retryPendingJobsSchema.safeParse({ body: req.body || {} });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const limit = clampPendingRetryScanLimit(validation.data.body?.limit);
+  const config = await SystemConfig.findOne()
+    .sort({ updatedAt: -1 })
+    .select(
+      'pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners'
+    )
+    .lean();
+
+  const pendingJobs = await Job.find({ status: 'pending' })
+    .sort({ queuedAt: 1, createdAt: 1 })
+    .limit(limit)
+    .select('_id userId promptId pipelineConfig videoCount');
+
+  let requeued = 0;
+  let alreadyQueued = 0;
+  let skipped = 0;
+  let failed = 0;
+  let clearedDispatchLocks = 0;
+
+  for (const pendingJob of pendingJobs) {
+    const dbJobId = String(pendingJob._id || '').trim();
+    const userId = String((pendingJob as any).userId || '').trim();
+    const promptId = String((pendingJob as any).promptId || '').trim();
+
+    if (!dbJobId || !userId || !promptId) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const existingQueueJob = await pipelineQueue.getJob(dbJobId);
+      if (existingQueueJob) {
+        alreadyQueued += 1;
+        continue;
+      }
+
+      clearedDispatchLocks += await clearDispatchLocksForJob(dbJobId);
+
+      const planName = String((pendingJob as any)?.pipelineConfig?.plan || 'free').trim().toLowerCase();
+      const jobAttempts = resolveQueueAttemptBudgetForPlan(planName, config || {});
+      const requestedCount = getRequestedUploadCount((pendingJob as any)?.videoCount || (pendingJob as any)?.pipelineConfig?.videoCount);
+      const jobTimeoutMinutes = 10 + (requestedCount - 1) * 5;
+      const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
+
+      const planPriorities: Record<string, number> = {
+        premium: 1,
+        pro: 2,
+        basic: 3,
+        free: 4,
+      };
+      const priority = planPriorities[planName] || 4;
+
+      await pipelineQueue.add(
+        'runPipeline',
+        {
+          userId,
+          promptId,
+          jobId: dbJobId,
+          settings: (pendingJob as any).pipelineConfig || {},
+        },
+        {
+          priority,
+          jobId: dbJobId,
+          attempts: jobAttempts,
+          timeout: jobTimeoutMs,
+          backoff: {
+            type: 'exponential',
+            delay: 5000,
+          },
+          removeOnFail: true,
+        }
+      );
+
+      requeued += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn(`[Admin] Failed to requeue pending job ${dbJobId}:`, error);
+    }
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Pending job requeue scan completed.',
+    data: {
+      scanned: pendingJobs.length,
+      requeued,
+      alreadyQueued,
+      skipped,
+      failed,
+      clearedDispatchLocks,
+      limit,
+    },
   });
 });
 

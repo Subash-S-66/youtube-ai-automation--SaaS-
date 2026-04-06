@@ -10,7 +10,14 @@ import { getConsumedUploadsLast24hForChannel, getUploadLimits, releaseReservedCr
 import { buildStandardPrompt } from './promptBuilderService';
 import { generateSubTopics } from './subTopicService';
 import { decrementChannelVideosOnHold } from './channelHoldService';
-import { getPipelineAttemptsForPlan } from './pipelineRetryPolicyService';
+import {
+  buildRunnerSequence,
+  getMinimumAttemptsForRunnerCycles,
+  getPipelineAttemptsForPlan,
+  sanitizePipelineCycleAcrossRunners,
+  sanitizePipelineRetryCycles,
+  sanitizePipelineRunnerFallbackOrder,
+} from './pipelineRetryPolicyService';
 import { getPipelineConcurrencyLimitForPlan } from './pipelineConcurrencyPolicyService';
 
 export interface PipelineInputSettings {
@@ -79,6 +86,28 @@ const parsePositiveInt = (raw: unknown, fallback: number): number => {
     return fallback;
   }
   return Math.floor(parsed);
+};
+
+const parseBoolean = (raw: unknown, fallback: boolean): boolean => {
+  const normalized = String(raw || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+  return fallback;
+};
+
+const normalizeRunner = (raw: unknown): 'local' | 'azure' | 'remote' | null => {
+  const normalized = String(raw || '').trim().toLowerCase();
+  if (normalized === 'local' || normalized === 'azure' || normalized === 'remote') {
+    return normalized;
+  }
+  return null;
 };
 
 const SUBTOPIC_GEN_TIMEOUT_MS = parseTimeoutMs(process.env.SUBTOPIC_GEN_TIMEOUT_MS, 3000);
@@ -365,7 +394,12 @@ export const enqueuePipelineJob = async ({
   let queueConfig: any = null;
   try {
     queueConfig = await withTimeout(
-      SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineConcurrencyByPlan pipelineRetriesByPlan').lean(),
+      SystemConfig.findOne()
+        .sort({ updatedAt: -1 })
+        .select(
+          'pipelineConcurrencyByPlan pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners'
+        )
+        .lean(),
       PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
       'Pipeline queue config lookup'
     );
@@ -618,7 +652,12 @@ export const enqueuePipelineJob = async ({
   if (!retryConfig || !retryConfig.pipelineRetriesByPlan) {
     try {
       retryConfig = await withTimeout(
-        SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRetriesByPlan').lean(),
+        SystemConfig.findOne()
+          .sort({ updatedAt: -1 })
+          .select(
+            'pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners'
+          )
+          .lean(),
         PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
         'Pipeline retry config lookup'
       );
@@ -627,7 +666,28 @@ export const enqueuePipelineJob = async ({
       console.warn('[PipelineRunService] Retry config lookup timed out, using default retry policy:', error);
     }
   }
-  const jobAttempts = getPipelineAttemptsForPlan(finalLimitCheck.plan, retryConfig as any);
+  const baseJobAttempts = getPipelineAttemptsForPlan(finalLimitCheck.plan, retryConfig as any);
+  const configPrimary = normalizeRunner((retryConfig as any)?.pipelineRunner);
+  const envPrimary = normalizeRunner(process.env.PIPELINE_RUNNER);
+  const pinnedByEnv = parseBoolean(process.env.PIPELINE_RUNNER_PINNED, false);
+  const effectivePinned = typeof (retryConfig as any)?.pipelineRunnerPinned === 'boolean'
+    ? (retryConfig as any).pipelineRunnerPinned
+    : pinnedByEnv;
+  const remoteConfigured = Boolean(
+    String((retryConfig as any)?.pipelineServiceUrl || process.env.PIPELINE_SERVICE_URL || '').trim()
+  );
+  const autoPrimary: 'local' | 'remote' = remoteConfigured ? 'remote' : 'local';
+  const derivedPrimary: 'local' | 'azure' | 'remote' = effectivePinned
+    ? (envPrimary || configPrimary || autoPrimary)
+    : (configPrimary || envPrimary || autoPrimary);
+  const fallbackOrder = sanitizePipelineRunnerFallbackOrder((retryConfig as any)?.pipelineRunnerFallbackOrder);
+  const runnerSequence = buildRunnerSequence(derivedPrimary, fallbackOrder);
+  const retryCycles = sanitizePipelineRetryCycles((retryConfig as any)?.pipelineRetryCycles);
+  const cycleAcrossRunners = sanitizePipelineCycleAcrossRunners((retryConfig as any)?.pipelineCycleAcrossRunners, true);
+  const minimumCycleAttempts = cycleAcrossRunners
+    ? getMinimumAttemptsForRunnerCycles(runnerSequence.length, retryCycles)
+    : 1;
+  const jobAttempts = Math.max(1, Math.max(baseJobAttempts, minimumCycleAttempts));
   const queueJobId = job._id.toString();
 
   try {

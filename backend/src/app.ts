@@ -195,7 +195,7 @@ app.get('/health', async (req: Request, res: Response) => {
   try {
     config = await SystemConfig.findOne()
       .sort({ updatedAt: -1 })
-      .select('pipelineRunner pipelineRunnerPinned runEmbeddedWorker autoStartEmbeddedWorkerWhenMissing');
+      .select('pipelineRunner pipelineRunnerPinned runEmbeddedWorker autoStartEmbeddedWorkerWhenMissing pipelineServiceUrl');
   } catch {
     // Keep health endpoint resilient even if config lookup fails.
   }
@@ -214,7 +214,7 @@ app.get('/health', async (req: Request, res: Response) => {
   const autoStartEmbeddedWorkerWhenMissing = typeof config?.autoStartEmbeddedWorkerWhenMissing === 'boolean'
     ? config.autoStartEmbeddedWorkerWhenMissing
     : parseBooleanEnv(process.env.AUTO_START_EMBEDDED_WORKER_WHEN_MISSING, false);
-  const remoteRunnerConfigured = Boolean(String(process.env.PIPELINE_SERVICE_URL || '').trim());
+  const remoteRunnerConfigured = Boolean(String(config?.pipelineServiceUrl || process.env.PIPELINE_SERVICE_URL || '').trim());
   const missingAzureEnv: string[] = [];
   if (!String(process.env.AZURE_JOB_NAME || '').trim()) {
     missingAzureEnv.push('AZURE_JOB_NAME');

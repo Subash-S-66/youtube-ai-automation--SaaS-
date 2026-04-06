@@ -1,5 +1,7 @@
 import SystemConfig from '../models/SystemConfig';
 import {
+  sanitizePipelineCycleAcrossRunners,
+  sanitizePipelineRetryCycles,
   sanitizePipelineRetriesByPlan,
   sanitizePipelineRunnerFallbackOrder,
 } from '../services/pipelineRetryPolicyService';
@@ -35,11 +37,21 @@ const normalizeWorkerConcurrency = (value: unknown): number | null => {
   return Math.max(1, Math.min(32, Math.floor(parsed)));
 };
 
+const normalizeOptionalText = (value: unknown, maxLength = 500): string => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.slice(0, maxLength);
+};
+
 export const ensureSystemConfigSingleton = async (): Promise<void> => {
   const latest = await SystemConfig.findOne().sort({ updatedAt: -1 });
   if (!latest) {
     await SystemConfig.create({
       betaMode: false,
+      pipelineServiceUrl: '',
+      pipelineServiceSecret: '',
       pipelineRunnerPinned: false,
       runEmbeddedWorker: false,
       autoStartEmbeddedWorkerWhenMissing: false,
@@ -48,6 +60,8 @@ export const ensureSystemConfigSingleton = async (): Promise<void> => {
       pipelineWorkerConcurrency: null,
       pipelineConcurrencyByPlan: sanitizePipelineConcurrencyByPlan(undefined),
       pipelineRetriesByPlan: sanitizePipelineRetriesByPlan(undefined),
+      pipelineRetryCycles: sanitizePipelineRetryCycles(undefined),
+      pipelineCycleAcrossRunners: sanitizePipelineCycleAcrossRunners(undefined, true),
       pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder(undefined),
       jobHistoryLimitByPlan: sanitizeJobHistoryLimitByPlan(undefined),
       jobHistoryMinAgeDays: sanitizeJobHistoryMinAgeDays(undefined),
@@ -61,7 +75,11 @@ export const ensureSystemConfigSingleton = async (): Promise<void> => {
       $set: {
         pipelineConcurrencyByPlan: sanitizePipelineConcurrencyByPlan((latest as any).pipelineConcurrencyByPlan),
         pipelineRetriesByPlan: sanitizePipelineRetriesByPlan((latest as any).pipelineRetriesByPlan),
+        pipelineRetryCycles: sanitizePipelineRetryCycles((latest as any).pipelineRetryCycles),
+        pipelineCycleAcrossRunners: sanitizePipelineCycleAcrossRunners((latest as any).pipelineCycleAcrossRunners, true),
         pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder((latest as any).pipelineRunnerFallbackOrder),
+        pipelineServiceUrl: normalizeOptionalText((latest as any).pipelineServiceUrl, 500),
+        pipelineServiceSecret: normalizeOptionalText((latest as any).pipelineServiceSecret, 500),
         pipelineRunnerPinned: parseBooleanConfig((latest as any).pipelineRunnerPinned, false),
         runEmbeddedWorker: parseBooleanConfig((latest as any).runEmbeddedWorker, false),
         autoStartEmbeddedWorkerWhenMissing: parseBooleanConfig((latest as any).autoStartEmbeddedWorkerWhenMissing, false),

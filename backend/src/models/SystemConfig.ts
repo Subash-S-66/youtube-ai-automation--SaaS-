@@ -3,6 +3,8 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface ISystemConfig extends Document {
   betaMode: boolean;
   pipelineRunner?: 'local' | 'azure' | 'remote';
+  pipelineServiceUrl?: string;
+  pipelineServiceSecret?: string;
   pipelineRunnerPinned?: boolean;
   runEmbeddedWorker?: boolean;
   autoStartEmbeddedWorkerWhenMissing?: boolean;
@@ -21,6 +23,8 @@ export interface ISystemConfig extends Document {
     pro: number;
     premium: number;
   };
+  pipelineRetryCycles?: number;
+  pipelineCycleAcrossRunners?: boolean;
   pipelineRunnerFallbackOrder?: Array<'local' | 'azure' | 'remote'>;
   planLimits?: {
     free: number;
@@ -58,6 +62,18 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       type: String,
       enum: ['local', 'azure', 'remote'],
       default: 'local',
+    },
+    pipelineServiceUrl: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 500,
+    },
+    pipelineServiceSecret: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 500,
     },
     pipelineRunnerPinned: {
       type: Boolean,
@@ -97,6 +113,16 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
       basic: { type: Number, default: 3, min: 0, max: 10 },
       pro: { type: Number, default: 3, min: 0, max: 10 },
       premium: { type: Number, default: 5, min: 0, max: 10 },
+    },
+    pipelineRetryCycles: {
+      type: Number,
+      default: 2,
+      min: 1,
+      max: 10,
+    },
+    pipelineCycleAcrossRunners: {
+      type: Boolean,
+      default: true,
     },
     pipelineRunnerFallbackOrder: {
       type: [String],
