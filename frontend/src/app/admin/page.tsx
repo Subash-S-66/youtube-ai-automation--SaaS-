@@ -1207,7 +1207,7 @@ const handleDeleteUser = () => {
                       <span className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></span>
                     </span>
                   </label>
-                  <button type="submit" disabled={bannering || togglingBanner} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-black font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
+                  <button type="submit" disabled={bannering || togglingBanner} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-white font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
                     {bannering ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Update Banner'}
                   </button>
                 </form>
@@ -1338,7 +1338,7 @@ const handleDeleteUser = () => {
                         type="button"
                         onClick={handleSavePipelineRunner}
                         disabled={savingPipelineRunner}
-                        className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {savingPipelineRunner ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Pipeline Runner'}
                       </button>
@@ -1470,7 +1470,7 @@ const handleDeleteUser = () => {
                     type="button"
                     onClick={handleSaveWorkerRuntimePolicy}
                     disabled={savingWorkerRuntimePolicy}
-                    className="mt-3 w-full py-2 bg-[#22c55e] hover:bg-[#16a34a] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-3 w-full py-2 bg-[#22c55e] hover:bg-[#16a34a] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {savingWorkerRuntimePolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Worker Runtime Controls'}
                   </button>
@@ -1502,7 +1502,7 @@ const handleDeleteUser = () => {
                     type="button"
                     onClick={handleSaveConcurrencyPolicy}
                     disabled={savingConcurrencyPolicy}
-                    className="mt-3 w-full py-2 bg-[#f59e0b] hover:bg-[#d97706] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-3 w-full py-2 bg-[#f59e0b] hover:bg-[#d97706] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {savingConcurrencyPolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Queue And Worker Limits'}
                   </button>
@@ -1552,7 +1552,7 @@ const handleDeleteUser = () => {
                     type="button"
                     onClick={handleSaveHistoryRetentionPolicy}
                     disabled={savingHistoryRetentionPolicy}
-                    className="mt-3 w-full py-2 bg-[#38bdf8] hover:bg-[#0ea5e9] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-3 w-full py-2 bg-[#38bdf8] hover:bg-[#0ea5e9] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {savingHistoryRetentionPolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save History Retention Policy'}
                   </button>
@@ -1596,7 +1596,7 @@ const handleDeleteUser = () => {
                     type="button"
                     onClick={handleSaveCleanupPolicy}
                     disabled={savingCleanupPolicy}
-                    className="mt-3 w-full py-2 bg-[#eab308] hover:bg-[#ca8a04] text-black font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-3 w-full py-2 bg-[#eab308] hover:bg-[#ca8a04] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {savingCleanupPolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Stuck Job Cleanup Policy'}
                   </button>

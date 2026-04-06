@@ -893,7 +893,7 @@ export default function MediaLibraryPage() {
                       </div>
                       <button
                         onClick={() => addToSequence(v._id)}
-                        className="absolute top-2 right-2 p-1.5 bg-[#00D4FF]/80 hover:bg-[#00D4FF] text-black rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                        className="absolute top-2 right-2 rounded-lg bg-[#00D4FF]/80 p-1.5 text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 hover:bg-[#00D4FF]"
                         aria-label={`Add video ${v.originalName} to sequence`}
                       >
                         <Upload className="h-3.5 w-3.5" />
@@ -1000,7 +1000,7 @@ export default function MediaLibraryPage() {
                       </div>
                       <button
                         onClick={() => addToSequence(img._id)}
-                        className="absolute top-2 right-2 p-1.5 bg-[#FF4FD8]/80 hover:bg-[#FF4FD8] text-black rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                        className="absolute top-2 right-2 rounded-lg bg-[#FF4FD8]/80 p-1.5 text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 hover:bg-[#FF4FD8]"
                         aria-label={`Add image ${img.originalName} to sequence`}
                       >
                         <Upload className="h-3.5 w-3.5" />

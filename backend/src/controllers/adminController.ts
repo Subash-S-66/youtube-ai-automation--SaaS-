@@ -32,6 +32,7 @@ import {
 import { getUploadLimits } from '../services/uploadLimitService';
 import { connection } from '../config/redis';
 import { resolveLocalPythonRuntime } from '../workers/localPipelineTrigger';
+import { getAzureToken } from '../workers/azureJobTrigger';
 
 // Stripe disabled. Using Razorpay for payments.
 
@@ -115,6 +116,47 @@ const normalizeWorkerHeartbeatSource = (value: unknown): WorkerHeartbeatSourceTy
     return 'embedded';
   }
   return 'dedicated';
+};
+
+const AZURE_RUNTIME_AUTH_CACHE_TTL_MS = 60 * 1000;
+let cachedAzureRuntimeAuth: {
+  expiresAt: number;
+  error: string;
+} | null = null;
+
+const normalizeAzureRuntimeAuthError = (value: unknown): string => {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 280);
+};
+
+const getAzureRuntimeAuthError = async (forceRefresh = false): Promise<string> => {
+  const now = Date.now();
+  if (!forceRefresh && cachedAzureRuntimeAuth && cachedAzureRuntimeAuth.expiresAt > now) {
+    return cachedAzureRuntimeAuth.error;
+  }
+
+  let authError = '';
+  const missingEnv = getMissingAzureRunnerEnv();
+  if (missingEnv.length === 0) {
+    try {
+      await getAzureToken();
+    } catch (error: any) {
+      const description =
+        error?.response?.data?.error_description ||
+        error?.response?.data?.error ||
+        error?.message ||
+        'Azure token request failed';
+      authError = normalizeAzureRuntimeAuthError(description);
+    }
+  }
+
+  cachedAzureRuntimeAuth = {
+    error: authError,
+    expiresAt: now + AZURE_RUNTIME_AUTH_CACHE_TTL_MS,
+  };
+  return authError;
 };
 
 const getMissingAzureRunnerEnv = (): string[] => {
@@ -509,6 +551,13 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
     : 1;
 
   const missingAzureEnv = getMissingAzureRunnerEnv();
+  const effectiveMissingAzureEnv = [...missingAzureEnv];
+  if (effectiveMissingAzureEnv.length === 0) {
+    const azureRuntimeAuthError = await getAzureRuntimeAuthError();
+    if (azureRuntimeAuthError) {
+      effectiveMissingAzureEnv.push(`AZURE_AUTH_INVALID:${azureRuntimeAuthError}`);
+    }
+  }
   const missingRemoteEnv = getMissingRemoteRunnerEnv(config?.pipelineServiceUrl);
   const localRuntime = resolveLocalPythonRuntime();
   const includeEmbeddedWorkersInConnectivity = typeof config?.includeEmbeddedWorkersInRuntimeStatus === 'boolean'
@@ -538,7 +587,7 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
   const remoteConnected = dedicatedWorkersByRunner.remote > 0 || (includeEmbeddedWorkersInConnectivity && embeddedWorkersByRunner.remote > 0);
 
   const localConfigured = localRuntime.available;
-  const azureConfigured = missingAzureEnv.length === 0;
+  const azureConfigured = effectiveMissingAzureEnv.length === 0;
   const remoteConfigured = missingRemoteEnv.length === 0;
 
   res.status(200).json({
@@ -569,7 +618,7 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
           ready: azureConnected && azureConfigured,
           activeWorkers: dedicatedWorkersByRunner.azure,
           embeddedWorkers: embeddedWorkersByRunner.azure,
-          missingEnv: missingAzureEnv,
+          missingEnv: effectiveMissingAzureEnv,
         },
         remote: {
           connected: remoteConnected,

@@ -1141,13 +1141,13 @@ export default function LandingPage() {
                   <button
                     type="button"
                     onClick={() => setOpenFaqIndex(open ? null : index)}
-                    className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left md:py-5"
+                    className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left text-white md:py-5"
                   >
-                    <span className="text-base font-semibold tracking-tight text-[#ECF3FF] md:text-lg">{faq.question}</span>
+                    <span className="text-base font-semibold tracking-tight !text-white md:text-lg">{faq.question}</span>
                     <ChevronDown
                       className={cn(
-                        'h-5 w-5 text-[#9DB5DB] transition-transform duration-300',
-                        open && 'rotate-180 text-[#00D4FF]'
+                        'h-5 w-5 text-white transition-transform duration-300',
+                        open && 'rotate-180 text-white'
                       )}
                     />
                   </button>
@@ -1160,7 +1160,7 @@ export default function LandingPage() {
                         transition={{ duration: 0.2 }}
                         className="overflow-hidden"
                       >
-                        <p className="border-t border-[#2A4469] bg-[#0D162A]/75 px-5 py-4 text-sm leading-relaxed text-[#CBD9F5] md:text-base">
+                        <p className="border-t border-[#2A4469] bg-[#0D162A]/75 px-5 py-4 text-sm leading-relaxed !text-white md:text-base">
                           {faq.answer}
                         </p>
                       </m.div>

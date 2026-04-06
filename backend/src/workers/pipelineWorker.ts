@@ -141,6 +141,64 @@ const workerProfile = normalizeWorkerProfile(process.env.PIPELINE_WORKER_PROFILE
 const workerConcurrency = resolveWorkerConcurrency(workerProfile);
 console.log(`[PipelineWorker] Worker profile=${workerProfile}, concurrency=${workerConcurrency}`);
 
+const AZURE_AUTH_FAILURE_COOLDOWN_MS = clampInt(
+  parsePositiveInt(process.env.AZURE_AUTH_FAILURE_COOLDOWN_MS, 5 * 60 * 1000),
+  60 * 1000,
+  60 * 60 * 1000
+);
+
+let azureAuthFailureCache: {
+  expiresAt: number;
+  reason: string;
+} | null = null;
+
+const normalizeAzureAuthFailureReason = (value: unknown): string => {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 280);
+};
+
+const isAzureCredentialErrorMessage = (value: unknown): boolean => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.includes('unauthorized_client') ||
+    normalized.includes('invalid_client') ||
+    /aadsts\d{6}/.test(normalized) ||
+    (normalized.includes('application with identifier') && normalized.includes('not found in the directory'))
+  );
+};
+
+const getActiveAzureAuthFailureReason = (): string => {
+  if (!azureAuthFailureCache) {
+    return '';
+  }
+  if (azureAuthFailureCache.expiresAt <= Date.now()) {
+    azureAuthFailureCache = null;
+    return '';
+  }
+  return azureAuthFailureCache.reason;
+};
+
+const markAzureAuthFailure = (reason: unknown): void => {
+  const normalizedReason = normalizeAzureAuthFailureReason(reason);
+  if (!normalizedReason) {
+    return;
+  }
+  azureAuthFailureCache = {
+    reason: normalizedReason,
+    expiresAt: Date.now() + AZURE_AUTH_FAILURE_COOLDOWN_MS,
+  };
+  console.warn(`[PipelineWorker] Azure runner temporarily disabled after auth failure: ${normalizedReason}`);
+};
+
+const clearAzureAuthFailure = (): void => {
+  azureAuthFailureCache = null;
+};
+
 const normalizePipelineRunner = (value: unknown): 'local' | 'azure' | 'remote' | null => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'local' || normalized === 'azure' || normalized === 'remote') {
@@ -346,7 +404,10 @@ const getMissingRemoteRunnerEnv = (serviceUrlFromConfig?: unknown): string[] => 
 
 const isRunnerAvailable = (runner: PipelineRunner, options?: { remoteServiceUrl?: string }): boolean => {
   if (runner === 'azure') {
-    return getMissingAzureRunnerEnv().length === 0;
+    if (getMissingAzureRunnerEnv().length > 0) {
+      return false;
+    }
+    return !getActiveAzureAuthFailureReason();
   }
   if (runner === 'remote') {
     const effectiveRemoteServiceUrl = normalizePipelineServiceUrl(options?.remoteServiceUrl) || normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL);
@@ -435,7 +496,15 @@ const resolvePipelineRunner = async (
     }
   }
 
-  const missingAzureEnv = availability.azure ? [] : getMissingAzureRunnerEnv();
+  const cachedAzureAuthFailure = getActiveAzureAuthFailureReason();
+  const missingAzureEnv = availability.azure
+    ? []
+    : Array.from(
+        new Set([
+          ...getMissingAzureRunnerEnv(),
+          ...(cachedAzureAuthFailure ? [`AZURE_AUTH_INVALID:${cachedAzureAuthFailure}`] : []),
+        ])
+      );
   const missingRemoteEnv = availability.remote ? [] : getMissingRemoteRunnerEnv(config?.pipelineServiceUrl);
 
   return {
@@ -1454,7 +1523,26 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       console.log(`Triggering Azure Container App Job: ${AZURE_JOB_NAME}`);
 
-      const { success: triggerSuccess, executionName } = await triggerAzureJob(AZURE_JOB_NAME, envVars);
+      let triggerSuccess = false;
+      let executionName: string | null = null;
+      try {
+        const triggerResult = await triggerAzureJob(AZURE_JOB_NAME, envVars);
+        triggerSuccess = Boolean(triggerResult.success);
+        executionName = triggerResult.executionName;
+        clearAzureAuthFailure();
+      } catch (azureError: any) {
+        const azureErrorMessage = String(azureError?.message || 'Azure authentication failed');
+        if (isAzureCredentialErrorMessage(azureErrorMessage)) {
+          markAzureAuthFailure(azureErrorMessage);
+          const err: any = new Error(
+            `Azure authentication failed. Verify AZURE_TENANT_ID points to the tenant containing AZURE_CLIENT_ID. ${azureErrorMessage}`
+          );
+          err.stage = 'TOKEN';
+          err.nonRetryable = true;
+          throw err;
+        }
+        throw azureError;
+      }
 
       if (triggerSuccess) {
          await appendLogSafe(

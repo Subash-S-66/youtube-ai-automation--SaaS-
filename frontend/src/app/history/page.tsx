@@ -381,7 +381,7 @@ export default function HistoryPage() {
         <div className="overflow-hidden">
           {jobs.length === 0 ? (
             <div className="p-8 sm:p-12 text-center flex flex-col items-center justify-center text-slate-500 text-sm">
-              <Terminal className="h-12 w-12 text-[#1A2235] mb-4" />
+              <Terminal className="mb-4 h-12 w-12 text-white" />
               <p>No jobs executed yet.</p>
               <p className="mt-1">Head over to the Dashboard to generate your first video.</p>
             </div>
