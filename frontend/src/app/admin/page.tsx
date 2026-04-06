@@ -33,8 +33,10 @@ interface UserSummary {
 }
 
 type AdminSection = 'overview' | 'communication' | 'system' | 'plans';
+type SystemPanel = 'core' | 'runtime' | 'policies' | 'recovery';
 type PipelineRunnerType = 'local' | 'azure' | 'remote';
 type WorkerProfileType = 'local' | 'vm' | 'cloud';
+type QueuePreviewState = 'active' | 'waiting' | 'prioritized' | 'delayed';
 
 interface RunnerRuntimeStatus {
   connected: boolean;
@@ -49,6 +51,31 @@ interface PipelineRuntimeStatus {
   redis: {
     enabled: boolean;
     status: string;
+  };
+  queue?: {
+    enabled: boolean;
+    available: boolean;
+    counts: {
+      waiting: number;
+      active: number;
+      prioritized: number;
+      delayed: number;
+      completed: number;
+      failed: number;
+      paused: number;
+    };
+    preview: Array<{
+      queueId: string;
+      mongoJobId: string | null;
+      state: QueuePreviewState;
+      attemptsMade: number;
+      priority: number;
+      enqueuedAt: string | null;
+      startedAt: string | null;
+      ageSeconds: number | null;
+    }>;
+    sampleLimitPerState: number;
+    error?: string;
   };
   workerHeartbeats: {
     total: number;
@@ -151,6 +178,7 @@ export default function AdminDashboard() {
   const [planDrafts, setPlanDrafts] = useState<any[]>([]);
   const [savingPlans, setSavingPlans] = useState(false);
   const [activeSection, setActiveSection] = useState<AdminSection>('overview');
+  const [activeSystemPanel, setActiveSystemPanel] = useState<SystemPanel>('runtime');
   const [runtimeStatus, setRuntimeStatus] = useState<PipelineRuntimeStatus | null>(null);
   const [runtimeStatusLoading, setRuntimeStatusLoading] = useState(false);
   const [runtimeStatusError, setRuntimeStatusError] = useState('');
@@ -186,6 +214,37 @@ export default function AdminDashboard() {
       icon: CreditCard,
     },
   ];
+
+  const systemPanelTabs: Array<{
+    id: SystemPanel;
+    label: string;
+    description: string;
+  }> = [
+    {
+      id: 'core',
+      label: 'Core Settings',
+      description: 'Beta mode and proration',
+    },
+    {
+      id: 'runtime',
+      label: 'Runtime',
+      description: 'Runner, queue and workers',
+    },
+    {
+      id: 'policies',
+      label: 'Limits',
+      description: 'Caps and cleanup rules',
+    },
+    {
+      id: 'recovery',
+      label: 'Recovery',
+      description: 'Retry and failover controls',
+    },
+  ];
+
+  const sectionCardClass = 'w-full rounded-xl border px-3 py-3 text-left transition-colors';
+  const sectionCardActiveClass = 'border-[#7C5CFF]/60 bg-[#7C5CFF]/15';
+  const sectionCardIdleClass = 'border-[#1A2235] bg-[#0B0F1A] hover:border-[#32507B]';
 
   const openPicker = (ref: RefObject<HTMLInputElement | null>) => {
     if (!ref.current) return;
@@ -224,6 +283,31 @@ export default function AdminDashboard() {
     local: 'Local Worker',
     azure: 'Azure Container Apps',
     remote: 'Remote Pipeline Service',
+  };
+
+  const queueStateBadgeClassMap: Record<QueuePreviewState, string> = {
+    active: 'bg-green-500/15 text-green-300 border-green-400/30',
+    waiting: 'bg-sky-500/15 text-sky-300 border-sky-400/30',
+    prioritized: 'bg-purple-500/15 text-purple-300 border-purple-400/30',
+    delayed: 'bg-amber-500/15 text-amber-300 border-amber-400/30',
+  };
+
+  const formatQueueAge = (ageSeconds: number | null | undefined): string => {
+    if (!Number.isFinite(Number(ageSeconds)) || Number(ageSeconds) < 0) {
+      return '--';
+    }
+
+    const value = Number(ageSeconds);
+    if (value < 60) {
+      return `${Math.floor(value)}s`;
+    }
+    if (value < 3600) {
+      return `${Math.floor(value / 60)}m`;
+    }
+    if (value < 86400) {
+      return `${Math.floor(value / 3600)}h`;
+    }
+    return `${Math.floor(value / 86400)}d`;
   };
 
   const fetchPipelineRuntimeStatus = async (silent = true) => {
@@ -1042,27 +1126,42 @@ const handleDeleteUser = () => {
     <>
       <div className="max-w-7xl mx-auto py-8">
         <div className="space-y-8">
-          <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400">Admin Panel</h1>
+          <div className="rounded-2xl border border-[#1A2235] bg-linear-to-br from-[#121B2D] via-[#101827] to-[#0B0F1A] p-6 shadow-xl">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-[#00D4FF]">Admin Workspace</p>
+                <h1 className="mt-2 text-3xl font-extrabold text-white">Control Center</h1>
+                <p className="mt-2 max-w-2xl text-sm text-slate-300">
+                  Manage users, support, billing, queue health, and runner reliability from one place with faster section-based controls.
+                </p>
+              </div>
+              <div className="inline-flex items-center rounded-full border border-[#2C3B58] bg-[#0B0F1A]/70 px-3 py-1 text-xs font-semibold text-slate-300">
+                Active Section: <span className="ml-1 text-white capitalize">{activeSection}</span>
+              </div>
+            </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Link
-              href="/admin/users"
-              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
-            >
-              <Users className="h-4 w-4 text-[#00D4FF]" />
-              Users Directory
-            </Link>
-            <Link
-              href="/admin/tickets"
-              className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:text-white hover:border-[#7C5CFF]/60 transition-colors text-sm font-semibold"
-            >
-              <MessageSquare className="h-4 w-4 text-[#00D4FF]" />
-              Help Tickets
-            </Link>
+            <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="rounded-lg border border-[#20304A] bg-[#0B0F1A]/70 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-slate-500">Total Users</p>
+                <p className="text-lg font-bold text-white">{stats?.totalUsers ?? '--'}</p>
+              </div>
+              <div className="rounded-lg border border-[#20304A] bg-[#0B0F1A]/70 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-slate-500">Active Subs</p>
+                <p className="text-lg font-bold text-white">{stats?.totalActiveSubscriptions ?? '--'}</p>
+              </div>
+              <div className="rounded-lg border border-[#20304A] bg-[#0B0F1A]/70 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-slate-500">Jobs</p>
+                <p className="text-lg font-bold text-white">{stats?.jobs?.total ?? '--'}</p>
+              </div>
+              <div className="rounded-lg border border-[#20304A] bg-[#0B0F1A]/70 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-slate-500">Success Rate</p>
+                <p className="text-lg font-bold text-white">{stats?.jobs?.successRate ?? '--'}</p>
+              </div>
+            </div>
           </div>
 
           <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 shadow-lg">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-2">
               {sectionTabs.map((section) => {
                 const Icon = section.icon;
                 const active = activeSection === section.id;
@@ -1072,10 +1171,8 @@ const handleDeleteUser = () => {
                     type="button"
                     onClick={() => setActiveSection(section.id)}
                     className={cn(
-                      "w-full rounded-xl border px-3 py-3 text-left transition-colors",
-                      active
-                        ? "border-[#7C5CFF]/60 bg-[#7C5CFF]/15"
-                        : "border-[#1A2235] bg-[#0B0F1A] hover:border-[#32507B]"
+                      sectionCardClass,
+                      active ? sectionCardActiveClass : sectionCardIdleClass
                     )}
                   >
                     <div className="flex items-center gap-2">
@@ -1086,6 +1183,28 @@ const handleDeleteUser = () => {
                   </button>
                 );
               })}
+
+              <Link
+                href="/admin/users"
+                className={cn(sectionCardClass, sectionCardIdleClass, 'group')}
+              >
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-[#00D4FF] group-hover:text-[#7C5CFF] transition-colors" />
+                  <p className="text-sm font-semibold text-white">Users Directory</p>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">Browse users and manage account access</p>
+              </Link>
+
+              <Link
+                href="/admin/tickets"
+                className={cn(sectionCardClass, sectionCardIdleClass, 'group')}
+              >
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4 text-[#00D4FF] group-hover:text-[#7C5CFF] transition-colors" />
+                  <p className="text-sm font-semibold text-white">Help Tickets</p>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">Track and resolve support issues quickly</p>
+              </Link>
             </div>
           </div>
 
@@ -1219,7 +1338,32 @@ const handleDeleteUser = () => {
                   <Settings className="h-5 w-5 text-slate-300 mr-2" />
                   <h2 className="text-xl font-bold text-white">System Config</h2>
                 </div>
-                <div className="p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between">
+                <div className="mb-4 rounded-xl border border-[#1A2235] bg-[#0B0F1A] p-3">
+                  <p className="text-xs text-slate-400 mb-2">Split view for high-content settings</p>
+                  <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                    {systemPanelTabs.map((panel) => {
+                      const active = activeSystemPanel === panel.id;
+                      return (
+                        <button
+                          key={`system-panel-${panel.id}`}
+                          type="button"
+                          onClick={() => setActiveSystemPanel(panel.id)}
+                          className={cn(
+                            'rounded-lg border px-3 py-2 text-left transition-colors',
+                            active
+                              ? 'border-[#7C5CFF]/70 bg-[#7C5CFF]/15'
+                              : 'border-[#1A2235] bg-[#111827] hover:border-[#32507B]'
+                          )}
+                        >
+                          <p className="text-xs font-semibold text-white">{panel.label}</p>
+                          <p className="mt-0.5 text-[10px] text-slate-400">{panel.description}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className={cn('p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between', activeSystemPanel !== 'core' && 'hidden')}>
                   <div>
                     <p className="text-white font-bold">Beta Mode</p>
                     <p className="text-sm text-slate-400">When enabled, all free users temporarily receive "Basic" plan limits. Does not modify their database record.</p>
@@ -1229,7 +1373,7 @@ const handleDeleteUser = () => {
                     <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
-                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'core' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Plan Conversion Ratios</p>
                   <p className="text-xs text-slate-400 mb-3">Higher value = more days. Example: Basic 1, Pro 2, Premium 4 means 2 Basic days = 1 Pro day, 4 Basic days = 1 Premium day.</p>
                   <div className="grid grid-cols-2 gap-3">
@@ -1256,7 +1400,7 @@ const handleDeleteUser = () => {
                     {savingProration ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Proration Settings'}
                   </button>
                 </div>
-                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Pipeline Runner</p>
                   <p className="text-xs text-slate-400 mb-3">Choose primary execution environment for pipeline runs.</p>
                   <div className="mb-3 p-3 rounded-lg border border-[#1A2235] bg-[#111827]">
@@ -1326,6 +1470,82 @@ const handleDeleteUser = () => {
                       <p className="mt-2 text-[11px] text-slate-500">
                         Redis: {runtimeStatus.redis.status} | Dedicated Workers: {runtimeStatus.dedicatedWorkerHeartbeats ?? runtimeStatus.workerHeartbeats.bySource?.dedicated ?? runtimeStatus.workerHeartbeats.total} | Embedded(API): {runtimeStatus.embeddedWorkerHeartbeats ?? runtimeStatus.workerHeartbeats.bySource?.embedded ?? 0} | Mode: {runtimeStatus.runnerSelection.mode} | Effective: {runnerLabelMap[runtimeStatus.runnerSelection.effectivePrimary]} | Worker Profile: {runtimeStatus.workerRuntime?.profile || pipelineWorkerProfile} | Concurrency: {runtimeStatus.workerRuntime?.concurrency ?? 'auto'}
                       </p>
+                    ) : null}
+
+                    {runtimeStatus?.queue ? (
+                      <div className="mt-3 rounded-lg border border-[#1A2235] bg-[#111827] p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-semibold text-slate-200">Redis Queue Snapshot</p>
+                          <p
+                            className={cn(
+                              'text-[11px] font-semibold',
+                              runtimeStatus.queue.available
+                                ? 'text-green-400'
+                                : (runtimeStatus.queue.enabled ? 'text-amber-300' : 'text-slate-500')
+                            )}
+                          >
+                            {runtimeStatus.queue.available
+                              ? 'Live'
+                              : (runtimeStatus.queue.enabled ? 'Queue Unavailable' : 'Redis Disabled')}
+                          </p>
+                        </div>
+
+                        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+                          {([
+                            { key: 'waiting', label: 'Waiting' },
+                            { key: 'active', label: 'Active' },
+                            { key: 'prioritized', label: 'Priority' },
+                            { key: 'delayed', label: 'Delayed' },
+                            { key: 'failed', label: 'Failed' },
+                            { key: 'completed', label: 'Done' },
+                            { key: 'paused', label: 'Paused' },
+                          ] as const).map((entry) => (
+                            <div key={`queue-count-${entry.key}`} className="rounded-md border border-[#1A2235] bg-[#0B0F1A] px-2 py-1.5">
+                              <p className="text-[10px] uppercase tracking-wide text-slate-500">{entry.label}</p>
+                              <p className="text-sm font-semibold text-white">{runtimeStatus.queue?.counts?.[entry.key] ?? 0}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {runtimeStatus.queue.preview.length > 0 ? (
+                          <div className="mt-3 overflow-x-auto">
+                            <table className="w-full min-w-160 text-left text-[11px]">
+                              <thead>
+                                <tr className="text-slate-500">
+                                  <th className="pb-1 font-medium">State</th>
+                                  <th className="pb-1 font-medium">Queue ID</th>
+                                  <th className="pb-1 font-medium">Job ID</th>
+                                  <th className="pb-1 font-medium">Age</th>
+                                  <th className="pb-1 font-medium">Attempts</th>
+                                  <th className="pb-1 font-medium">Priority</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {runtimeStatus.queue.preview.map((job) => (
+                                  <tr key={`${job.state}-${job.queueId}-${job.mongoJobId || 'na'}`} className="border-t border-[#1A2235] text-slate-200">
+                                    <td className="py-1.5 pr-2">
+                                      <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold capitalize', queueStateBadgeClassMap[job.state])}>
+                                        {job.state}
+                                      </span>
+                                    </td>
+                                    <td className="py-1.5 pr-2 font-mono text-[10px] text-slate-300">{job.queueId || '-'}</td>
+                                    <td className="py-1.5 pr-2 font-mono text-[10px] text-slate-400">{job.mongoJobId || '-'}</td>
+                                    <td className="py-1.5 pr-2">{formatQueueAge(job.ageSeconds)}</td>
+                                    <td className="py-1.5 pr-2">{job.attemptsMade}</td>
+                                    <td className="py-1.5 pr-2">{job.priority}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-[11px] text-slate-500">No active/waiting/prioritized/delayed jobs in queue right now.</p>
+                        )}
+
+                        {runtimeStatus.queue.error ? (
+                          <p className="mt-2 text-[11px] text-amber-300">Queue note: {runtimeStatus.queue.error}</p>
+                        ) : null}
+                      </div>
                     ) : null}
 
                     {runtimeStatus?.autoStartEmbeddedWorkerWhenMissing ? (
@@ -1405,7 +1625,7 @@ const handleDeleteUser = () => {
                   </div>
                 </div>
 
-                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Worker Runtime Controls</p>
                   <p className="text-xs text-slate-400 mb-3">Manage worker behavior from admin panel. Profile/concurrency updates apply after dedicated worker restart.</p>
 
@@ -1496,7 +1716,7 @@ const handleDeleteUser = () => {
                   </button>
                 </div>
 
-                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'policies' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Queue And Worker Limits (Per Plan)</p>
                   <p className="text-xs text-slate-400 mb-3">Controls how many pipeline jobs a user can run or queue at one time (also used for channel hold cap).</p>
 
@@ -1528,7 +1748,7 @@ const handleDeleteUser = () => {
                   </button>
                 </div>
 
-                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'policies' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">History Retention Policy</p>
                   <p className="text-xs text-slate-400 mb-3">
                     Records are deleted only when both conditions are true: the user has more records than the plan cap, and records are older than minimum age.
@@ -1578,7 +1798,7 @@ const handleDeleteUser = () => {
                   </button>
                 </div>
 
-                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'policies' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Stuck Job Cleanup Policy</p>
                   <p className="text-xs text-slate-400 mb-3">Controls when stale queue/processing jobs are auto-terminated during recovery and periodic cleanup.</p>
 
@@ -1622,7 +1842,7 @@ const handleDeleteUser = () => {
                   </button>
                 </div>
 
-                <div className="mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl">
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'recovery' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Retry & Failover Policy</p>
                   <p className="text-xs text-slate-400 mb-3">Configure retry counts per plan and explicit Try #1 / Try #2 / Try #3 order. When cycling is enabled, jobs repeat this sequence instead of sticking on one runner.</p>
 

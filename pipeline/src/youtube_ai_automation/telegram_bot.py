@@ -994,7 +994,12 @@ class TelegramBotController:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
     controller = TelegramBotController(token=BOT_TOKEN, allowed_chat_id=ALLOWED_CHAT_ID)
     controller.run()
 

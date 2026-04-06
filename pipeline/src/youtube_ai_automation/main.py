@@ -18,6 +18,7 @@ import requests
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import wave
 from urllib.parse import unquote, urlparse
@@ -156,6 +157,8 @@ def _setup_logging() -> None:
     logging.basicConfig(
         level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
         format="%(asctime)s | %(levelname)s | %(message)s",
+        stream=sys.stdout,
+        force=True,
     )
     # Ensure output directories exist at startup
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

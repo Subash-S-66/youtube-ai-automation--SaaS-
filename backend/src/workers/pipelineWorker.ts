@@ -299,6 +299,87 @@ const stopWorkerHeartbeat = async (): Promise<void> => {
   }
 };
 
+const PIPELINE_QUEUE_SELF_HEAL_ENABLED = parseBooleanEnv(
+  process.env.PIPELINE_QUEUE_SELF_HEAL_ENABLED,
+  true
+);
+const PIPELINE_QUEUE_SELF_HEAL_INTERVAL_MS = clampInt(
+  parsePositiveInt(process.env.PIPELINE_QUEUE_SELF_HEAL_INTERVAL_MS, 30000),
+  10000,
+  5 * 60 * 1000
+);
+const PIPELINE_QUEUE_SELF_HEAL_RESTART_THRESHOLD = clampInt(
+  parsePositiveInt(process.env.PIPELINE_QUEUE_SELF_HEAL_RESTART_THRESHOLD, 6),
+  2,
+  60
+);
+const PIPELINE_QUEUE_MARKER_KEY = 'bull:pipelineQueue:marker';
+
+let queueSelfHealTimer: NodeJS.Timeout | null = null;
+let consecutiveQueueStallChecks = 0;
+
+const ensurePipelineQueueWakeMarker = async (): Promise<void> => {
+  if (!connection) {
+    return;
+  }
+  try {
+    await (connection as any).zadd(PIPELINE_QUEUE_MARKER_KEY, 0, '0');
+  } catch (error) {
+    console.warn('[PipelineWorker] Failed to restore queue wake marker:', error);
+  }
+};
+
+const startQueueSelfHealWatchdog = (): void => {
+  if (!PIPELINE_QUEUE_SELF_HEAL_ENABLED) {
+    return;
+  }
+
+  queueSelfHealTimer = setInterval(() => {
+    void (async () => {
+      try {
+        const queueCounts = await (pipelineQueue as any).getJobCounts('waiting', 'prioritized', 'active');
+        const waitingJobs = Number((queueCounts as any)?.waiting || 0);
+        const prioritizedJobs = Number((queueCounts as any)?.prioritized || 0);
+        const activeJobs = Number((queueCounts as any)?.active || 0);
+        const queuedJobs = waitingJobs + prioritizedJobs;
+
+        if (queuedJobs > 0 && activeJobs === 0) {
+          consecutiveQueueStallChecks += 1;
+          await ensurePipelineQueueWakeMarker();
+
+          console.warn(
+            `[PipelineWorker] Queue stall watchdog: waiting=${waitingJobs}, prioritized=${prioritizedJobs}, active=${activeJobs}, consecutive=${consecutiveQueueStallChecks}`
+          );
+
+          if (
+            !isEmbeddedWorkerProcess &&
+            consecutiveQueueStallChecks >= PIPELINE_QUEUE_SELF_HEAL_RESTART_THRESHOLD
+          ) {
+            console.error(
+              '[PipelineWorker] Queue appears stalled despite queued jobs. Exiting process so supervisor can restart the dedicated worker.'
+            );
+            process.exit(1);
+          }
+          return;
+        }
+
+        consecutiveQueueStallChecks = 0;
+      } catch (error) {
+        console.warn('[PipelineWorker] Queue stall watchdog check failed:', error);
+      }
+    })();
+  }, PIPELINE_QUEUE_SELF_HEAL_INTERVAL_MS);
+
+  queueSelfHealTimer.unref();
+};
+
+const stopQueueSelfHealWatchdog = (): void => {
+  if (queueSelfHealTimer) {
+    clearInterval(queueSelfHealTimer);
+    queueSelfHealTimer = null;
+  }
+};
+
 const MAX_LOG_SIZE = 100 * 1024; // Limit log to 100 KB
 
 // Helper to batch log updates
@@ -1555,7 +1636,12 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          // Poll Azure Container Apps execution status
          const pollIntervalMs = 10000;
          const pollStart = Date.now();
-         const jobTimeoutMs = 15 * 60 * 1000; // 15 mins
+         const configuredJobTimeoutMs = Number(process.env.AZURE_EXECUTION_TIMEOUT_MS || 0);
+         const jobTimeoutMs = Number.isFinite(configuredJobTimeoutMs) && configuredJobTimeoutMs > 0
+           ? Math.max(configuredJobTimeoutMs, 5 * 60 * 1000)
+           : 30 * 60 * 1000;
+         let lastLoggedStatus = '';
+         let lastStatusLogAt = 0;
          let finalStatusMarker = 'PENDING_WEBHOOK';
 
          // Get ARM token for polling
@@ -1619,7 +1705,14 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
                   });
                   latestStatus = sorted[0]?.properties?.status || '';
                 }
-                await appendLogSafe(jobId, `\n[Azure] Execution status: ${latestStatus}`);
+                const normalizedStatus = latestStatus || 'Unknown';
+                const now = Date.now();
+                if (normalizedStatus !== lastLoggedStatus || now - lastStatusLogAt >= 60_000) {
+                  const elapsedSeconds = Math.max(0, Math.round((now - pollStart) / 1000));
+                  await appendLogSafe(jobId, `\n[Azure] Execution status: ${normalizedStatus} (elapsed=${elapsedSeconds}s)`);
+                  lastLoggedStatus = normalizedStatus;
+                  lastStatusLogAt = now;
+                }
 
                if (latestStatus === 'Succeeded') {
                  finalStatusMarker = 'SUCCESS';
@@ -1639,7 +1732,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
            }
 
            if (Date.now() - pollStart >= jobTimeoutMs) {
-             await appendLogSafe(jobId, `\n[Azure] Job timed out after ${jobTimeoutMs}ms`);
+             await appendLogSafe(jobId, `\n[Azure] Job timed out after ${jobTimeoutMs}ms (set AZURE_EXECUTION_TIMEOUT_MS to adjust).`);
              finalStatusMarker = 'PENDING_WEBHOOK';
            }
          } else {
@@ -2025,6 +2118,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 );
 
 startWorkerHeartbeat();
+startQueueSelfHealWatchdog();
 
 pipelineWorker.on('completed', (job) => {
   console.log(`[PipelineWorker] BullMQ completed job ${job.id}.`);
@@ -2038,9 +2132,18 @@ pipelineWorker.on('stalled', (jobId) => {
   console.warn(`[PipelineWorker] Job stalled and will be retried: ${jobId}`);
 });
 
+pipelineWorker.on('error', (err) => {
+  console.error('[PipelineWorker] Worker runtime error:', err);
+  if (!isEmbeddedWorkerProcess) {
+    console.error('[PipelineWorker] Dedicated worker exiting due to runtime error.');
+    process.exit(1);
+  }
+});
+
 // Graceful Shutdown
 const shutdown = async (signal: string) => {
   console.log(`Received ${signal}, closing worker gracefully...`);
+  stopQueueSelfHealWatchdog();
   await stopWorkerHeartbeat();
   await pipelineWorker.close();
   if (connection) {

@@ -1,4 +1,10 @@
 import Redis from 'ioredis';
+import dotenv from 'dotenv';
+import path from 'path';
+
+if (!process.env.REDIS_URL) {
+  dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+}
 
 const redisUrl = String(process.env.REDIS_URL || '').trim();
 const parseMs = (raw: unknown, fallback: number): number => {

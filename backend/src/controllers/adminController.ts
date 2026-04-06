@@ -30,7 +30,7 @@ import {
   sanitizeJobHistoryMinAgeDays,
 } from '../services/jobHistoryRetentionPolicyService';
 import { getUploadLimits } from '../services/uploadLimitService';
-import { connection } from '../config/redis';
+import { connection, redisEnabled } from '../config/redis';
 import { resolveLocalPythonRuntime } from '../workers/localPipelineTrigger';
 import { getAzureToken } from '../workers/azureJobTrigger';
 
@@ -45,10 +45,13 @@ const SUPPORTED_PIPELINE_WORKER_PROFILES = ['local', 'vm', 'cloud'] as const;
 const SUPPORTED_WORKER_HEARTBEAT_SOURCES = ['dedicated', 'embedded'] as const;
 const DEFAULT_PENDING_RETRY_SCAN_LIMIT = 100;
 const MAX_PENDING_RETRY_SCAN_LIMIT = 500;
+const PIPELINE_QUEUE_PREVIEW_LIMIT = 5;
+const PIPELINE_QUEUE_PREVIEW_STATES = ['active', 'waiting', 'prioritized', 'delayed'] as const;
 
 type PipelineRunnerType = (typeof SUPPORTED_PIPELINE_RUNNERS)[number];
 type PipelineWorkerProfileType = (typeof SUPPORTED_PIPELINE_WORKER_PROFILES)[number];
 type WorkerHeartbeatSourceType = (typeof SUPPORTED_WORKER_HEARTBEAT_SOURCES)[number];
+type PipelineQueuePreviewState = (typeof PIPELINE_QUEUE_PREVIEW_STATES)[number];
 
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -365,6 +368,144 @@ const getPipelineWorkerHeartbeatSummary = async (): Promise<{
   }
 };
 
+const getPipelineQueueSnapshot = async (): Promise<{
+  enabled: boolean;
+  available: boolean;
+  counts: {
+    waiting: number;
+    active: number;
+    prioritized: number;
+    delayed: number;
+    completed: number;
+    failed: number;
+    paused: number;
+  };
+  preview: Array<{
+    queueId: string;
+    mongoJobId: string | null;
+    state: PipelineQueuePreviewState;
+    attemptsMade: number;
+    priority: number;
+    enqueuedAt: string | null;
+    startedAt: string | null;
+    ageSeconds: number | null;
+  }>;
+  sampleLimitPerState: number;
+  error?: string;
+}> => {
+  const emptySnapshot = {
+    enabled: redisEnabled,
+    available: false,
+    counts: {
+      waiting: 0,
+      active: 0,
+      prioritized: 0,
+      delayed: 0,
+      completed: 0,
+      failed: 0,
+      paused: 0,
+    },
+    preview: [] as Array<{
+      queueId: string;
+      mongoJobId: string | null;
+      state: PipelineQueuePreviewState;
+      attemptsMade: number;
+      priority: number;
+      enqueuedAt: string | null;
+      startedAt: string | null;
+      ageSeconds: number | null;
+    }>,
+    sampleLimitPerState: PIPELINE_QUEUE_PREVIEW_LIMIT,
+  };
+
+  if (!redisEnabled || !connection) {
+    return emptySnapshot;
+  }
+
+  const queueClient = pipelineQueue as any;
+  if (
+    !queueClient ||
+    typeof queueClient.getJobCounts !== 'function' ||
+    typeof queueClient.getJobs !== 'function'
+  ) {
+    return {
+      ...emptySnapshot,
+      error: 'Queue runtime client is unavailable.',
+    };
+  }
+
+  try {
+    const [countsRaw, previewByState] = await Promise.all([
+      queueClient.getJobCounts(
+        'waiting',
+        'active',
+        'prioritized',
+        'delayed',
+        'completed',
+        'failed',
+        'paused'
+      ),
+      Promise.all(
+        PIPELINE_QUEUE_PREVIEW_STATES.map(async (state) => {
+          const jobsRaw = await queueClient.getJobs([state], 0, PIPELINE_QUEUE_PREVIEW_LIMIT - 1, false);
+          const jobs = Array.isArray(jobsRaw) ? jobsRaw : [];
+          const now = Date.now();
+
+          return jobs.map((job: any) => {
+            const enqueuedAtMs = Number(job?.timestamp);
+            const startedAtMs = Number(job?.processedOn);
+            const rawPriority = Number(job?.opts?.priority);
+            const rawAttempts = Number(job?.attemptsMade);
+            const mongoJobIdRaw = job?.data?.jobId;
+
+            return {
+              queueId: String(job?.id ?? ''),
+              mongoJobId: typeof mongoJobIdRaw === 'string' || typeof mongoJobIdRaw === 'number'
+                ? String(mongoJobIdRaw)
+                : null,
+              state,
+              attemptsMade: Number.isFinite(rawAttempts) ? rawAttempts : 0,
+              priority: Number.isFinite(rawPriority) ? rawPriority : 0,
+              enqueuedAt: Number.isFinite(enqueuedAtMs) && enqueuedAtMs > 0
+                ? new Date(enqueuedAtMs).toISOString()
+                : null,
+              startedAt: Number.isFinite(startedAtMs) && startedAtMs > 0
+                ? new Date(startedAtMs).toISOString()
+                : null,
+              ageSeconds: Number.isFinite(enqueuedAtMs) && enqueuedAtMs > 0
+                ? Math.max(0, Math.floor((now - enqueuedAtMs) / 1000))
+                : null,
+            };
+          });
+        })
+      ),
+    ]);
+
+    const counts = {
+      waiting: Number.isFinite(Number(countsRaw?.waiting)) ? Number(countsRaw.waiting) : 0,
+      active: Number.isFinite(Number(countsRaw?.active)) ? Number(countsRaw.active) : 0,
+      prioritized: Number.isFinite(Number(countsRaw?.prioritized)) ? Number(countsRaw.prioritized) : 0,
+      delayed: Number.isFinite(Number(countsRaw?.delayed)) ? Number(countsRaw.delayed) : 0,
+      completed: Number.isFinite(Number(countsRaw?.completed)) ? Number(countsRaw.completed) : 0,
+      failed: Number.isFinite(Number(countsRaw?.failed)) ? Number(countsRaw.failed) : 0,
+      paused: Number.isFinite(Number(countsRaw?.paused)) ? Number(countsRaw.paused) : 0,
+    };
+
+    return {
+      enabled: true,
+      available: true,
+      counts,
+      preview: previewByState.flat(),
+      sampleLimitPerState: PIPELINE_QUEUE_PREVIEW_LIMIT,
+    };
+  } catch (error: any) {
+    return {
+      ...emptySnapshot,
+      error: String(error?.message || 'Failed to read queue snapshot.'),
+    };
+  }
+};
+
 export const getAdminStats = asyncHandler(async (req: Request, res: Response) => {
   const totalUsers = await User.countDocuments();
   const totalActiveSubscriptions = await User.countDocuments({
@@ -512,6 +653,7 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
 
 export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: Response) => {
   const heartbeatSummary = await getPipelineWorkerHeartbeatSummary();
+  const queueSnapshot = await getPipelineQueueSnapshot();
   const redisEnabled = Boolean(process.env.REDIS_URL);
   const redisStatus = redisEnabled
     ? String((connection as any)?.status || 'unknown')
@@ -611,6 +753,7 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
         enabled: redisEnabled,
         status: redisStatus,
       },
+      queue: queueSnapshot,
       workerHeartbeats: heartbeatSummary,
       dedicatedWorkerHeartbeats: heartbeatSummary.bySource.dedicated,
       embeddedWorkerHeartbeats: heartbeatSummary.bySource.embedded,

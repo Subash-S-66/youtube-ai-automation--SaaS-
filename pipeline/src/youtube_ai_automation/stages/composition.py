@@ -26,6 +26,10 @@ def compose_scenes(
     warnings: list[str] = []
     output_dir.mkdir(parents=True, exist_ok=True)
     script = "\n".join([line for line in lines if line.strip()])
+    logger.info(
+        "composition",
+        f"starting render media_count={len(media_paths)} target_duration={float(target_duration):.2f}s",
+    )
 
     subtitle_path = output_dir / "subtitles.ass"
     try:
@@ -48,6 +52,7 @@ def compose_scenes(
             output_path=video_path,
             target_duration_seconds=max(1.0, float(target_duration)),
         )
+        logger.info("composition", f"render completed output={video_path}")
     except Exception as exc:
         warnings.append(f"render_error:{str(exc)[:180]}")
         logger.error("composition", f"render failed: {str(exc)[:180]}")

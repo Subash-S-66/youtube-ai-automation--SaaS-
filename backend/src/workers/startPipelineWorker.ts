@@ -3,7 +3,7 @@ import path from 'path';
 import connectDB from '../config/db';
 import SystemConfig from '../models/SystemConfig';
 import { ensureSystemConfigSingleton } from '../utils/ensureSystemConfig';
-import { recoverCrashedJobs, startStuckJobCleanupInterval } from './stuckJobCleanup';
+import { recoverCrashedJobs, reconcileQueueWithDatabase, startStuckJobCleanupInterval } from './stuckJobCleanup';
 
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
@@ -24,6 +24,19 @@ const parseBooleanEnv = (value: unknown, fallback: boolean): boolean => {
 const enableWorkerStuckCleanup = parseBooleanEnv(
   process.env.WORKER_ENABLE_STUCK_JOB_CLEANUP,
   true
+);
+
+const parsePositiveInt = (value: unknown, fallback: number): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
+};
+
+const WORKER_QUEUE_RECONCILE_INTERVAL_MS = parsePositiveInt(
+  process.env.WORKER_QUEUE_RECONCILE_INTERVAL_MS,
+  2 * 60 * 1000
 );
 
 const normalizeWorkerProfile = (value: unknown): 'local' | 'vm' | 'cloud' => {
@@ -51,6 +64,20 @@ const normalizeWorkerConcurrency = (value: unknown): number | null => {
 const bootstrapPipelineWorker = async (): Promise<void> => {
   await connectDB();
   await ensureSystemConfigSingleton();
+
+  try {
+    await reconcileQueueWithDatabase();
+    console.log('[WorkerBootstrap] Pending queue reconciliation completed at startup.');
+  } catch (error) {
+    console.warn('[WorkerBootstrap] Pending queue reconciliation failed at startup:', error);
+  }
+
+  const reconcileTimer = setInterval(() => {
+    void reconcileQueueWithDatabase().catch((error) => {
+      console.warn('[WorkerBootstrap] Pending queue reconciliation failed:', error);
+    });
+  }, WORKER_QUEUE_RECONCILE_INTERVAL_MS);
+  reconcileTimer.unref();
 
   if (enableWorkerStuckCleanup) {
     await recoverCrashedJobs();

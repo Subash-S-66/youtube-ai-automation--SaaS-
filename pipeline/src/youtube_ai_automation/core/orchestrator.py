@@ -202,6 +202,7 @@ def run_orchestrated_pipeline(
     if bool(upload) and str(mode).lower() == "full" and composition_result.video_path:
         try:
             youtube_cfg = payload.get("youtube", {}) if isinstance(payload.get("youtube"), dict) else {}
+            logger.info("upload", "starting upload")
             upload_result = upload_video(
                 video_path=Path(composition_result.video_path),
                 title=str(youtube_cfg.get("title", "Untitled Short")).strip()[:100] or "Untitled Short",
@@ -230,6 +231,7 @@ def run_orchestrated_pipeline(
         logger.error("composition", "full mode completed without a rendered video output")
 
     elapsed = round(time.time() - start, 2)
+    logger.info("pipeline", f"orchestrated pipeline finished status={'FAILED' if composition_failed else 'COMPLETED'} duration={elapsed:.2f}s")
     result = {
         "jobId": job_id,
         "status": "FAILED" if composition_failed else "COMPLETED",

@@ -1,4 +1,10 @@
 import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import path from 'path';
+
+if (!process.env.MONGO_URI) {
+  dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+}
 
 const connectDB = async (): Promise<void> => {
   try {
