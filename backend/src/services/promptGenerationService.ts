@@ -161,6 +161,9 @@ export const generatePromptDirect = async (user_prompt: string): Promise<string>
 
   for (let attempt = 0; attempt < modelCandidates.length; attempt += 1) {
     const modelName = modelCandidates[attempt];
+    if (!modelName) {
+      continue;
+    }
     try {
       const resultText = await callNativeGeminiPrompt(user_prompt, modelName);
       if (!resultText || resultText.trim().split(/\s+/).length < 10) {

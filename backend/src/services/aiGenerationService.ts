@@ -114,6 +114,9 @@ export const generateFromAI = async (prompt: string): Promise<AIGenerationResult
   let lastError: any = null;
   for (let attempt = 0; attempt < modelCandidates.length; attempt += 1) {
     const modelName = modelCandidates[attempt];
+    if (!modelName) {
+      continue;
+    }
     try {
       const text = await callNativeGemini(normalizedPrompt, modelName);
       validateAIOutput(text);
