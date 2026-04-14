@@ -18,7 +18,7 @@ import Media from '../models/Media';
 import { ensureValidYouTubeToken } from '../services/youtubeTokenService';
 import { generateContent } from '../services/contentGenerationService';
 import { encrypt } from '../utils/encryption';
-import { triggerAzureJob, resolveAzureArmApiVersion } from './azureJobTrigger';
+import { triggerAzureJob, resolveAzureArmApiVersion, stopAzureJobExecution } from './azureJobTrigger';
 import { isLocalPipelineRuntimeAvailable, resolveLocalPythonRuntime, triggerLocalPipeline } from './localPipelineTrigger';
 import { triggerRemotePipeline } from './remotePipelineTrigger';
 import * as Sentry from '@sentry/node';
@@ -51,6 +51,12 @@ import {
   sanitizePipelineRetryCycles,
   sanitizePipelineRunnerFallbackOrder,
 } from '../services/pipelineRetryPolicyService';
+import {
+  sanitizeCompositionHeartbeatSeconds,
+  sanitizeFfmpegCommandTimeoutSeconds,
+  sanitizePipelineExecutionTimeoutMinutes,
+  resolvePipelineExecutionTimeoutMs,
+} from '../services/pipelineRuntimeControlService';
 
 // Load env vars
 
@@ -513,6 +519,9 @@ const resolvePipelineRunner = async (
   missingRemoteEnv: string[];
   remoteServiceUrl: string;
   remoteServiceSecret: string;
+  ffmpegCommandTimeoutSeconds: number;
+  compositionHeartbeatSeconds: number;
+  pipelineExecutionTimeoutMinutes: number | null;
 }> => {
   let config: any = null;
   const envRunner = (process.env.PIPELINE_RUNNER || '').toLowerCase();
@@ -523,7 +532,7 @@ const resolvePipelineRunner = async (
   try {
     config = await SystemConfig.findOne()
       .sort({ updatedAt: -1 })
-      .select('pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineServiceSecret pipelineRetryCycles pipelineCycleAcrossRunners');
+      .select('pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineServiceSecret pipelineRetryCycles pipelineCycleAcrossRunners ffmpegCommandTimeoutSeconds compositionHeartbeatSeconds pipelineExecutionTimeoutMinutes');
   } catch (error) {
     console.warn('Failed to load SystemConfig for pipeline runner. Falling back to env.', error);
   }
@@ -588,6 +597,9 @@ const resolvePipelineRunner = async (
         ])
       );
   const missingRemoteEnv = availability.remote ? [] : getMissingRemoteRunnerEnv(config?.pipelineServiceUrl);
+  const ffmpegCommandTimeoutSeconds = sanitizeFfmpegCommandTimeoutSeconds(config?.ffmpegCommandTimeoutSeconds);
+  const compositionHeartbeatSeconds = sanitizeCompositionHeartbeatSeconds(config?.compositionHeartbeatSeconds);
+  const pipelineExecutionTimeoutMinutes = sanitizePipelineExecutionTimeoutMinutes(config?.pipelineExecutionTimeoutMinutes);
 
   return {
     runner: resolvedRunner,
@@ -602,6 +614,9 @@ const resolvePipelineRunner = async (
     missingRemoteEnv,
     remoteServiceUrl,
     remoteServiceSecret,
+    ffmpegCommandTimeoutSeconds,
+    compositionHeartbeatSeconds,
+    pipelineExecutionTimeoutMinutes,
   };
 };
 
@@ -1351,6 +1366,20 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       // 4. Trigger pipeline runner (GitHub Actions or Azure Container Apps Job)
       const runnerSelection = await resolvePipelineRunner(job.attemptsMade || 0);
       const pipelineRunner = runnerSelection.runner;
+      const requestedVideosForTimeout = getRequestedUploadCount((settings as any)?.videoCount || 1);
+      const effectivePipelineExecutionTimeoutMinutes = sanitizePipelineExecutionTimeoutMinutes(
+        (settings as any)?.pipelineExecutionTimeoutMinutes ?? runnerSelection.pipelineExecutionTimeoutMinutes
+      );
+      const effectivePipelineExecutionTimeoutMs = resolvePipelineExecutionTimeoutMs(
+        effectivePipelineExecutionTimeoutMinutes,
+        requestedVideosForTimeout
+      );
+      const effectiveFfmpegCommandTimeoutSeconds = sanitizeFfmpegCommandTimeoutSeconds(
+        (settings as any)?.ffmpegCommandTimeoutSeconds ?? runnerSelection.ffmpegCommandTimeoutSeconds
+      );
+      const effectiveCompositionHeartbeatSeconds = sanitizeCompositionHeartbeatSeconds(
+        (settings as any)?.compositionHeartbeatSeconds ?? runnerSelection.compositionHeartbeatSeconds
+      );
       await appendLogSafe(
         jobId,
         `${JSON.stringify({
@@ -1366,6 +1395,10 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           runnerAvailability: runnerSelection.availability,
           missingAzureEnv: runnerSelection.missingAzureEnv,
           missingRemoteEnv: runnerSelection.missingRemoteEnv,
+          ffmpegCommandTimeoutSeconds: effectiveFfmpegCommandTimeoutSeconds,
+          compositionHeartbeatSeconds: effectiveCompositionHeartbeatSeconds,
+          pipelineExecutionTimeoutMinutes: effectivePipelineExecutionTimeoutMinutes,
+          pipelineExecutionTimeoutMs: effectivePipelineExecutionTimeoutMs,
         })}\n`
       );
 
@@ -1413,6 +1446,24 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
       await appendLogSafe(jobId, 'Job is running in pipeline...\n', 'processing');
       await updateProgressSafe(job, 55, 'dispatch', 'Dispatching pipeline runtime');
 
+      await JobModel.updateOne(
+        { _id: jobId },
+        {
+          $set: {
+            'result.dispatch.runner': pipelineRunner,
+            'result.dispatch.targetRunner': runnerSelection.targetRunner,
+            'result.dispatch.primaryRunner': runnerSelection.primary,
+            'result.dispatch.sequence': runnerSelection.sequence,
+            'result.dispatch.ffmpegCommandTimeoutSeconds': effectiveFfmpegCommandTimeoutSeconds,
+            'result.dispatch.compositionHeartbeatSeconds': effectiveCompositionHeartbeatSeconds,
+            'result.dispatch.pipelineExecutionTimeoutMinutes': effectivePipelineExecutionTimeoutMinutes,
+            'result.dispatch.pipelineExecutionTimeoutMs': effectivePipelineExecutionTimeoutMs,
+            'result.dispatch.selectedAt': new Date().toISOString(),
+            'result.dispatch.azureJobName': pipelineRunner === 'azure' ? String(process.env.AZURE_JOB_NAME || '').trim() : '',
+          },
+        }
+      );
+
       // We do NOT pass YOUTUBE_TOKEN as a plain environment variable in the clear.
       // Instead, we pass it encrypted so that it doesn't leak into Azure/Docker logs.
       // We will encrypt the token using the same ENCRYPTION_KEY used for DB storage.
@@ -1436,6 +1487,9 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "JULES_API_URL", value: process.env.JULES_API_URL || "" },
         { name: "JULES_API_KEY", value: process.env.JULES_API_KEY || "" },
         { name: "GEMINI_API_KEY", value: process.env.GEMINI_API_KEY || "" },
+        { name: "FFMPEG_COMMAND_TIMEOUT_SECONDS", value: String(effectiveFfmpegCommandTimeoutSeconds) },
+        { name: "COMPOSITION_HEARTBEAT_SECONDS", value: String(effectiveCompositionHeartbeatSeconds) },
+        { name: "PIPELINE_EXECUTION_TIMEOUT_MS", value: String(effectivePipelineExecutionTimeoutMs) },
         { name: "GEMINI_AUDIO_ENABLED", value: "true" },
         { name: "GEMINI_AUDIO_ONLY", value: "true" },
         { name: "FORCE_GOOGLE_AUDIO_ONLY", value: "true" },
@@ -1466,15 +1520,20 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         let result;
         try {
           try {
-            result = await triggerLocalPipeline(envVars);
+            result = await triggerLocalPipeline(envVars, undefined, {
+              timeoutMs: effectivePipelineExecutionTimeoutMs,
+            });
           } catch (localLaunchError: any) {
             const launchError: any = new Error(
+              localLaunchError?.code === 'ETIMEDOUT'
+                ? `Local pipeline timed out after ${Math.round(effectivePipelineExecutionTimeoutMs / 1000)}s.`
+                :
               localLaunchError?.code === 'ENOENT'
                 ? 'Local pipeline runtime is unavailable: Python executable not found. Configure PIPELINE_PYTHON_CMD or install Python on worker host.'
                 : `Failed to start local pipeline process: ${String(localLaunchError?.message || localLaunchError || 'unknown error')}`
             );
             launchError.stage = 'RENDER';
-            launchError.nonRetryable = localLaunchError?.code === 'ENOENT';
+            launchError.nonRetryable = localLaunchError?.code === 'ENOENT' || localLaunchError?.code === 'ETIMEDOUT';
             launchError.stderrTail = String(localLaunchError?.message || localLaunchError || '');
             throw launchError;
           }
@@ -1624,6 +1683,15 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         const triggerResult = await triggerAzureJob(AZURE_JOB_NAME, envVars);
         triggerSuccess = Boolean(triggerResult.success);
         executionName = triggerResult.executionName;
+        await JobModel.updateOne(
+          { _id: jobId },
+          {
+            $set: {
+              'result.dispatch.azureJobName': String(AZURE_JOB_NAME || '').trim(),
+              'result.dispatch.azureExecutionName': String(executionName || '').trim(),
+            },
+          }
+        );
         clearAzureAuthFailure();
       } catch (azureError: any) {
         const azureErrorMessage = String(azureError?.message || 'Azure authentication failed');
@@ -1650,10 +1718,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          // Poll Azure Container Apps execution status
          const pollIntervalMs = 10000;
          const pollStart = Date.now();
-         const configuredJobTimeoutMs = Number(process.env.AZURE_EXECUTION_TIMEOUT_MS || 0);
-         const jobTimeoutMs = Number.isFinite(configuredJobTimeoutMs) && configuredJobTimeoutMs > 0
-           ? Math.max(configuredJobTimeoutMs, 5 * 60 * 1000)
-           : 30 * 60 * 1000;
+         const jobTimeoutMs = Math.max(effectivePipelineExecutionTimeoutMs, 5 * 60 * 1000);
          let lastLoggedStatus = '';
          let lastStatusLogAt = 0;
          let finalStatusMarker = 'PENDING_WEBHOOK';
@@ -1746,8 +1811,19 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
            }
 
            if (Date.now() - pollStart >= jobTimeoutMs) {
-             await appendLogSafe(jobId, `\n[Azure] Job timed out after ${jobTimeoutMs}ms (set AZURE_EXECUTION_TIMEOUT_MS to adjust).`);
-             finalStatusMarker = 'PENDING_WEBHOOK';
+             await appendLogSafe(jobId, `\n[Azure] Job timed out after ${jobTimeoutMs}ms. Attempting execution stop...`);
+             if (executionName) {
+               try {
+                 const stopResult = await stopAzureJobExecution(String(AZURE_JOB_NAME || ''), executionName);
+                 await appendLogSafe(
+                   jobId,
+                   `\n[Azure] Stop request result for execution=${executionName}: ${stopResult.success ? 'success' : 'failed'}${stopResult.message ? ` (${stopResult.message})` : ''}`
+                 );
+               } catch (stopError: any) {
+                 await appendLogSafe(jobId, `\n[Azure] Stop request threw error: ${String(stopError?.message || stopError || 'unknown')}`);
+               }
+             }
+             finalStatusMarker = 'FAILED';
            }
          } else {
            // No ARM token available — fall back to webhook-driven status

@@ -14,6 +14,10 @@ export interface LocalPipelineCallbacks {
   onStderr?: (chunk: string) => void;
 }
 
+export interface LocalPipelineOptions {
+  timeoutMs?: number;
+}
+
 interface LocalPythonRuntimeResolution {
   available: boolean;
   command: string | null;
@@ -164,7 +168,8 @@ export const isLocalPipelineRuntimeAvailable = (): boolean => {
 
 export const triggerLocalPipeline = async (
   envVars: Array<{ name: string; value: string }>,
-  callbacks?: LocalPipelineCallbacks
+  callbacks?: LocalPipelineCallbacks,
+  options?: LocalPipelineOptions
 ): Promise<LocalPipelineResult> => {
   const repoRoot = path.resolve(__dirname, '../../..');
   const pipelineDir = path.join(repoRoot, 'pipeline');
@@ -196,6 +201,7 @@ export const triggerLocalPipeline = async (
   }
 
   return await new Promise<LocalPipelineResult>((resolve, reject) => {
+    const timeoutMs = Math.max(0, Math.floor(Number(options?.timeoutMs || 0)));
     const child = spawn(
       pythonCmd,
       ['-m', 'youtube_ai_automation.azure_job_runner'],
@@ -205,6 +211,35 @@ export const triggerLocalPipeline = async (
         stdio: ['ignore', 'pipe', 'pipe'],
       }
     );
+
+    let settled = false;
+    let timeoutHandle: NodeJS.Timeout | null = null;
+
+    const settleOnce = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+      callback();
+    };
+
+    if (timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        const err: any = new Error(`Local pipeline timed out after ${timeoutMs}ms`);
+        err.code = 'ETIMEDOUT';
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          // Best-effort process termination only.
+        }
+        settleOnce(() => reject(err));
+      }, timeoutMs);
+      timeoutHandle.unref();
+    }
 
     let stdout = '';
     let stderr = '';
@@ -218,19 +253,21 @@ export const triggerLocalPipeline = async (
       stderr += text;
       callbacks?.onStderr?.(text);
     });
-    child.on('error', reject);
+    child.on('error', (error) => settleOnce(() => reject(error)));
     child.on('close', (exitCode) => {
       const moduleNotFoundMatch = /ModuleNotFoundError: No module named '([^']+)'/.exec(stderr);
       if (moduleNotFoundMatch) {
         const missingModule = moduleNotFoundMatch[1];
         stderr += `\n[LocalPipeline] Missing Python dependency: ${missingModule}. Run: pip install -r pipeline/requirements.txt\n`;
       }
-      resolve({
-        success: exitCode === 0,
-        exitCode,
-        stdout,
-        stderr,
-      });
+      settleOnce(() =>
+        resolve({
+          success: exitCode === 0,
+          exitCode,
+          stdout,
+          stderr,
+        })
+      );
     });
   });
 };

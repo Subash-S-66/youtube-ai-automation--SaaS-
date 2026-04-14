@@ -7,6 +7,9 @@ export interface ISystemConfig extends Document {
   pipelineServiceUrl?: string;
   pipelineServiceSecret?: string;
   pipelineRunnerPinned?: boolean;
+  ffmpegCommandTimeoutSeconds?: number;
+  compositionHeartbeatSeconds?: number;
+  pipelineExecutionTimeoutMinutes?: number | null;
   runEmbeddedWorker?: boolean;
   autoStartEmbeddedWorkerWhenMissing?: boolean;
   includeEmbeddedWorkersInRuntimeStatus?: boolean;
@@ -85,6 +88,24 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     pipelineRunnerPinned: {
       type: Boolean,
       default: false,
+    },
+    ffmpegCommandTimeoutSeconds: {
+      type: Number,
+      default: 360,
+      min: 30,
+      max: 7200,
+    },
+    compositionHeartbeatSeconds: {
+      type: Number,
+      default: 30,
+      min: 5,
+      max: 600,
+    },
+    pipelineExecutionTimeoutMinutes: {
+      type: Number,
+      default: null,
+      min: 0.5,
+      max: 240,
     },
     runEmbeddedWorker: {
       type: Boolean,

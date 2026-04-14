@@ -20,6 +20,12 @@ import {
 } from './pipelineRetryPolicyService';
 import { getPipelineConcurrencyLimitForPlan } from './pipelineConcurrencyPolicyService';
 import { resolveLocalPythonRuntime } from '../workers/localPipelineTrigger';
+import {
+  resolvePipelineExecutionTimeoutMs,
+  sanitizeCompositionHeartbeatSeconds,
+  sanitizeFfmpegCommandTimeoutSeconds,
+  sanitizePipelineExecutionTimeoutMinutes,
+} from './pipelineRuntimeControlService';
 
 export interface PipelineInputSettings {
   targetDuration?: number;
@@ -486,7 +492,7 @@ export const enqueuePipelineJob = async ({
       SystemConfig.findOne()
         .sort({ updatedAt: -1 })
         .select(
-          'pipelineConcurrencyByPlan pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners'
+          'pipelineConcurrencyByPlan pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners ffmpegCommandTimeoutSeconds compositionHeartbeatSeconds pipelineExecutionTimeoutMinutes'
         )
         .lean(),
       PIPELINE_RETRY_CONFIG_TIMEOUT_MS,
@@ -663,7 +669,19 @@ export const enqueuePipelineJob = async ({
   }
 
   const finalLimitCheck = await getUploadLimits(userId);
-  const persistedPipelineConfig = { ...finalSettings, channelId: selectedChannelId }; // FIXED: Explicitly persist selected channelId in pipelineConfig.channelId.
+  const ffmpegCommandTimeoutSeconds = sanitizeFfmpegCommandTimeoutSeconds((queueConfig as any)?.ffmpegCommandTimeoutSeconds);
+  const compositionHeartbeatSeconds = sanitizeCompositionHeartbeatSeconds((queueConfig as any)?.compositionHeartbeatSeconds);
+  const pipelineExecutionTimeoutMinutes = sanitizePipelineExecutionTimeoutMinutes(
+    (queueConfig as any)?.pipelineExecutionTimeoutMinutes
+  );
+
+  const persistedPipelineConfig = {
+    ...finalSettings,
+    channelId: selectedChannelId,
+    ffmpegCommandTimeoutSeconds,
+    compositionHeartbeatSeconds,
+    pipelineExecutionTimeoutMinutes,
+  }; // FIXED: Persist runtime controls on each job so worker dispatch uses admin-selected values consistently.
   const immutableInputSnapshot = {
     promptId,
     userPrompt: String(prompt.user_prompt || '').trim(),
@@ -676,6 +694,12 @@ export const enqueuePipelineJob = async ({
     acceptedYouTubeLimitWarning: !!acceptedYouTubeLimitWarning,
     settings: persistedPipelineConfig,
   };
+
+  const timeoutVideoCount = finalSettings.videoCount || 1;
+  const jobTimeoutMs = resolvePipelineExecutionTimeoutMs(pipelineExecutionTimeoutMinutes, timeoutVideoCount);
+  const runtimeTimeoutLog = pipelineExecutionTimeoutMinutes === null
+    ? `Runtime timeout policy: auto (${Math.round(jobTimeoutMs / 60000)}m effective)`
+    : `Runtime timeout policy: ${pipelineExecutionTimeoutMinutes} minute(s)`;
 
   const jobData: Record<string, any> = {
     userId,
@@ -694,6 +718,7 @@ export const enqueuePipelineJob = async ({
       inputAudit.aliasMappings.length ? `Input alias mappings: ${inputAudit.aliasMappings.join(', ')}` : '',
       inputAudit.unusedFields.length ? `Input fields currently not used by runtime: ${inputAudit.unusedFields.join(', ')}` : '',
       inputAudit.notes.length ? `Input notes: ${inputAudit.notes.join(' | ')}` : '',
+      runtimeTimeoutLog,
     ].filter(Boolean).join('\n') + '\n',
     topic: chosenSubTopic || prompt.user_prompt,
     chosenSubTopic: chosenSubTopic || undefined,
@@ -737,9 +762,6 @@ export const enqueuePipelineJob = async ({
   };
   const jobPriority = planPriorities[finalLimitCheck.plan] || 4;
 
-  const count = finalSettings.videoCount || 1;
-  const jobTimeoutMinutes = 10 + (count - 1) * 5;
-  const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
   let retryConfig: any = queueConfig;
   if (!retryConfig || !retryConfig.pipelineRetriesByPlan) {
     try {
@@ -747,7 +769,7 @@ export const enqueuePipelineJob = async ({
         SystemConfig.findOne()
           .sort({ updatedAt: -1 })
           .select(
-            'pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners'
+            'pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners ffmpegCommandTimeoutSeconds compositionHeartbeatSeconds pipelineExecutionTimeoutMinutes'
           )
           .lean(),
         PIPELINE_RETRY_CONFIG_TIMEOUT_MS,

@@ -69,6 +69,16 @@ export const adminService = {
     return response.data;
   },
 
+  async getActivePipelineJobs(limit = 25) {
+    const response = await api.get(`/admin/pipeline/active-jobs?limit=${Math.max(1, Math.floor(limit || 25))}`);
+    return response.data;
+  },
+
+  async stopPipelineJob(jobId: string, reason: string) {
+    const response = await api.post(`/admin/pipeline/jobs/${jobId}/stop`, { reason });
+    return response.data;
+  },
+
   async updateSystemConfig(data: {
     betaMode: boolean;
     geminiModel?: string;
@@ -76,6 +86,9 @@ export const adminService = {
     pipelineServiceUrl?: string;
     pipelineServiceSecret?: string;
     pipelineRunnerPinned?: boolean;
+    ffmpegCommandTimeoutSeconds?: number;
+    compositionHeartbeatSeconds?: number;
+    pipelineExecutionTimeoutMinutes?: number | null;
     runEmbeddedWorker?: boolean;
     autoStartEmbeddedWorkerWhenMissing?: boolean;
     includeEmbeddedWorkersInRuntimeStatus?: boolean;

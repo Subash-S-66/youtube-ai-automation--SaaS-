@@ -204,3 +204,60 @@ export async function triggerAzureJob(
     throw new Error(`Azure Job API Error: ${detailMessage}`);
   }
 }
+
+export async function stopAzureJobExecution(
+  jobName: string,
+  executionName: string
+): Promise<{ success: boolean; message: string }> {
+  const normalizedJobName = String(jobName || '').trim();
+  const normalizedExecutionName = String(executionName || '').trim();
+  if (!normalizedJobName || !normalizedExecutionName) {
+    return {
+      success: false,
+      message: 'Job name and execution name are required.',
+    };
+  }
+
+  const subscriptionId = String(process.env.AZURE_SUBSCRIPTION_ID || '').trim();
+  const resourceGroup = String(process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP || '').trim();
+  const apiVersion = resolveAzureArmApiVersion(process.env.AZURE_ARM_API_VERSION);
+  const accessToken = await getAzureToken();
+
+  if (!subscriptionId || !resourceGroup || !accessToken) {
+    return {
+      success: false,
+      message: 'Azure credentials or scope settings are missing for stop operation.',
+    };
+  }
+
+  const stopUrl = `https://management.azure.com/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.App/jobs/${normalizedJobName}/executions/${encodeURIComponent(normalizedExecutionName)}/stop?api-version=${apiVersion}`;
+
+  try {
+    await axios.post(
+      stopUrl,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    return {
+      success: true,
+      message: `Execution ${normalizedExecutionName} stopped successfully.`,
+    };
+  } catch (error: any) {
+    const status = Number(error?.response?.status || 0);
+    const detail = compactErrorData(error?.response?.data);
+    const message =
+      status > 0
+        ? `Azure stop API failed (status=${status})${detail ? ` detail=${detail}` : ''}`
+        : String(error?.message || 'Azure stop API failed');
+    return {
+      success: false,
+      message,
+    };
+  }
+}

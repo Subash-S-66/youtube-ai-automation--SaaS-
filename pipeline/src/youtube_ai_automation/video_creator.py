@@ -273,6 +273,33 @@ def create_subtitles_from_script(
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
+DEFAULT_FFMPEG_COMMAND_TIMEOUT_SECONDS = 360.0
+
+
+def _parse_positive_float_env(name: str, fallback: float, minimum: float) -> float:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return fallback
+    try:
+        parsed = float(raw)
+    except Exception:
+        return fallback
+    if parsed <= 0:
+        return fallback
+    return max(minimum, parsed)
+
+
+def _resolve_ffmpeg_timeout_seconds(override: float | None = None) -> float:
+    if override is not None:
+        try:
+            return max(30.0, float(override))
+        except Exception:
+            pass
+    return _parse_positive_float_env(
+        "FFMPEG_COMMAND_TIMEOUT_SECONDS",
+        DEFAULT_FFMPEG_COMMAND_TIMEOUT_SECONDS,
+        30.0,
+    )
 
 
 def _format_ffmpeg_process_error(args: list[str], proc: subprocess.CompletedProcess[str]) -> str:
@@ -294,7 +321,26 @@ def _format_ffmpeg_process_error(args: list[str], proc: subprocess.CompletedProc
     return f"ffmpeg failed (exit={proc.returncode}) cmd={cmd_preview} | {err_excerpt}"
 
 
-def _run_ffmpeg(args: list[str]) -> None:
+def _prepare_ffmpeg_args(args: list[str]) -> list[str]:
+    prepared = [str(part) for part in args]
+    if not prepared:
+        return prepared
+
+    binary = Path(prepared[0]).name.lower()
+    if binary in {"ffmpeg", "ffmpeg.exe"}:
+        insert_at = 1
+        if "-nostdin" not in prepared:
+            prepared.insert(insert_at, "-nostdin")
+            insert_at += 1
+        if "-hide_banner" not in prepared:
+            prepared.insert(insert_at, "-hide_banner")
+    return prepared
+
+
+def _run_ffmpeg(args: list[str], *, timeout_seconds: float | None = None) -> None:
+    prepared_args = _prepare_ffmpeg_args(args)
+    effective_timeout = _resolve_ffmpeg_timeout_seconds(timeout_seconds)
+
     # Diagnostic: check local-file -i arguments only (skip ffmpeg virtual/stream inputs).
     def _is_virtual_input(input_arg: str, arg_index: int) -> bool:
         raw = str(input_arg or "").strip().lower()
@@ -306,13 +352,17 @@ def _run_ffmpeg(args: list[str]) -> None:
             return True
         if raw.startswith(("lavfi:", "concat:", "color=", "anullsrc", "testsrc", "sine=")):
             return True
-        if arg_index >= 2 and args[arg_index - 2] == "-f" and str(args[arg_index - 1]).lower() == "lavfi":
+        if (
+            arg_index >= 2
+            and prepared_args[arg_index - 2] == "-f"
+            and str(prepared_args[arg_index - 1]).lower() == "lavfi"
+        ):
             return True
         return False
 
-    for i, arg in enumerate(args):
-        if arg == "-i" and i + 1 < len(args):
-            input_spec = str(args[i + 1])
+    for i, arg in enumerate(prepared_args):
+        if arg == "-i" and i + 1 < len(prepared_args):
+            input_spec = str(prepared_args[i + 1])
             if _is_virtual_input(input_spec, i + 1):
                 continue
             input_file = Path(input_spec)
@@ -321,9 +371,27 @@ def _run_ffmpeg(args: list[str]) -> None:
             if input_file.is_dir():
                 raise RuntimeError(f"ffmpeg failed: Input path is a directory, not a file: {input_file}")
 
-    proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        proc = subprocess.run(
+            prepared_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=effective_timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        cmd_preview = " ".join(str(part) for part in prepared_args[:20])
+        if len(prepared_args) > 20:
+            cmd_preview += " ..."
+        stderr_excerpt = str((exc.stderr or exc.stdout or "")).strip()
+        if len(stderr_excerpt) > 800:
+            stderr_excerpt = f"{stderr_excerpt[:400]} ... {stderr_excerpt[-400:]}"
+        raise RuntimeError(
+            f"ffmpeg timed out after {int(effective_timeout)}s cmd={cmd_preview} | {stderr_excerpt or '<no output>'}"
+        ) from exc
+
     if proc.returncode != 0:
-        raise RuntimeError(_format_ffmpeg_process_error(args, proc))
+        raise RuntimeError(_format_ffmpeg_process_error(prepared_args, proc))
 
 
 def _probe_duration_seconds(path: Path) -> float:
@@ -342,10 +410,13 @@ def _probe_duration_seconds(path: Path) -> float:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            timeout=20,
         )
         if proc.returncode != 0:
             return 0.0
         return float((proc.stdout or "").strip() or 0.0)
+    except subprocess.TimeoutExpired:
+        return 0.0
     except Exception:
         return 0.0
 
@@ -404,6 +475,7 @@ def _burn_captions_drawtext(
     input_path: Path,
     output_path: Path,
     subtitle_path: Path,
+    timeout_seconds: float,
 ) -> bool:
     """
     Fallback caption burning using ffmpeg drawtext filter (no libass required).
@@ -478,7 +550,7 @@ def _burn_captions_drawtext(
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
             str(output_path),
-        ])
+        ], timeout_seconds=timeout_seconds)
         return True
     except Exception as exc:
         print(f"[VideoCreator] drawtext filter failed: {str(exc)[:200]}")
@@ -492,6 +564,7 @@ def render_vertical_video(
     subtitle_path: Path | None,
     output_path: Path,
     target_duration_seconds: float,
+    ffmpeg_timeout_seconds: float | None = None,
 ) -> Path:
     """
     Render a 1080x1920 mp4 video from mixed image/video inputs and merge narration audio.
@@ -499,6 +572,14 @@ def render_vertical_video(
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     duration = max(1.0, float(target_duration_seconds))
+    command_timeout_seconds = _resolve_ffmpeg_timeout_seconds(ffmpeg_timeout_seconds)
+    print(
+        (
+            f"[VideoCreator] render start media_count={len(media_paths)} "
+            f"target_duration={duration:.2f}s ffmpeg_timeout={int(command_timeout_seconds)}s"
+        ),
+        flush=True,
+    )
 
     usable_media = [p for p in media_paths if p.exists() and (_is_image(p) or _is_video(p))]
     if not usable_media:
@@ -512,7 +593,7 @@ def render_vertical_video(
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             str(visual_fallback),
-        ])
+        ], timeout_seconds=command_timeout_seconds)
         usable_media = [visual_fallback]
 
     with tempfile.TemporaryDirectory(prefix="cf_render_", dir=str(output_path.parent)) as tmpdir:
@@ -559,7 +640,7 @@ def render_vertical_video(
                         "-c:v", "libx264",
                         "-pix_fmt", "yuv420p",
                         str(seg),
-                    ])
+                    ], timeout_seconds=command_timeout_seconds)
                 else:
                     seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
                     video_idx += 1
@@ -574,7 +655,7 @@ def render_vertical_video(
                         "-c:v", "libx264",
                         "-pix_fmt", "yuv420p",
                         str(seg),
-                    ])
+                    ], timeout_seconds=command_timeout_seconds)
             except Exception as exc:
                 print(f"[VideoCreator] WARNING: skipping unusable media segment '{media.name}': {str(exc)[:240]}")
                 continue
@@ -594,10 +675,12 @@ def render_vertical_video(
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
                 str(emergency_segment),
-            ])
+            ], timeout_seconds=command_timeout_seconds)
             segments = [emergency_segment]
             segment_durations = [duration]
             print("[VideoCreator] WARNING: all media segments failed; using emergency background segment.")
+
+        print(f"[VideoCreator] segment prep completed segments={len(segments)}", flush=True)
 
         visual_track = tmp / "visual_track.mp4"
         if len(segments) == 1:
@@ -607,7 +690,7 @@ def render_vertical_video(
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
                 str(visual_track),
-            ])
+            ], timeout_seconds=command_timeout_seconds)
         else:
             # Join animation: cross-fade transitions between segments.
             transition_styles = [
@@ -654,7 +737,7 @@ def render_vertical_video(
                 str(visual_track),
             ])
             try:
-                _run_ffmpeg(cmd)
+                _run_ffmpeg(cmd, timeout_seconds=command_timeout_seconds)
             except Exception as exc:
                 fallback_duration = max(duration, sum(segment_durations))
                 print(
@@ -669,7 +752,9 @@ def render_vertical_video(
                     "-c:v", "libx264",
                     "-pix_fmt", "yuv420p",
                     str(visual_track),
-                ])
+                ], timeout_seconds=command_timeout_seconds)
+
+        print("[VideoCreator] visual composition completed", flush=True)
 
         # Guarantee visual timeline is long enough; prevents accidental early cuts
         # when stock clips are fewer than target duration.
@@ -685,7 +770,7 @@ def render_vertical_video(
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             str(visual_padded),
-        ])
+        ], timeout_seconds=command_timeout_seconds)
 
         # Optional: blend background music under narration with sidechain ducking.
         final_audio_input = audio_path
@@ -716,7 +801,7 @@ def render_vertical_video(
                         "-t", f"{final_duration:.2f}",
                         "-c:a", "pcm_s16le",
                         str(mixed_audio),
-                    ])
+                    ], timeout_seconds=command_timeout_seconds)
                     final_audio_input = mixed_audio
                 except Exception:
                     final_audio_input = audio_path
@@ -733,7 +818,9 @@ def render_vertical_video(
             "-c:a", "aac",
             "-t", f"{final_duration:.2f}",  # FIXED: Trim/match output to audio duration without silence padding.
             str(muxed_no_sub),
-        ])
+        ], timeout_seconds=command_timeout_seconds)
+
+        print(f"[VideoCreator] audio mux completed final_duration={final_duration:.2f}s", flush=True)
 
         if subtitle_path and subtitle_path.exists() and subtitle_path.suffix.lower() == ".ass":
             escaped_subtitle_path = _escape_subtitle_filter_path(subtitle_path)
@@ -756,8 +843,9 @@ def render_vertical_video(
                         "-pix_fmt", "yuv420p",
                         "-c:a", "copy",
                         str(output_path),
-                    ])
+                    ], timeout_seconds=command_timeout_seconds)
                     subtitle_burned = True
+                    print("[VideoCreator] subtitle burn completed", flush=True)
                     return output_path
                 except Exception as exc:
                     subtitle_burn_errors.append(f"[{subtitle_filter[:30]}]: {str(exc)[:100]}")
@@ -768,10 +856,11 @@ def render_vertical_video(
                     f"First error: {subtitle_burn_errors[0] if subtitle_burn_errors else 'unknown'}"
                 )
                 print("[VideoCreator] Trying drawtext fallback for captions...")
-                if _burn_captions_drawtext(muxed_no_sub, output_path, subtitle_path):
+                if _burn_captions_drawtext(muxed_no_sub, output_path, subtitle_path, command_timeout_seconds):
                     print("[VideoCreator] drawtext caption fallback succeeded.")
                     return output_path
                 print("[VideoCreator] All caption rendering methods failed - outputting video without captions.")
 
         shutil.copy2(muxed_no_sub, output_path)
+        print(f"[VideoCreator] render completed output={output_path}", flush=True)
         return output_path

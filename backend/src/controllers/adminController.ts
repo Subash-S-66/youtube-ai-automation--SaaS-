@@ -29,11 +29,20 @@ import {
   sanitizeJobHistoryLimitByPlan,
   sanitizeJobHistoryMinAgeDays,
 } from '../services/jobHistoryRetentionPolicyService';
-import { getUploadLimits } from '../services/uploadLimitService';
+import { getUploadLimits, releaseReservedCredits } from '../services/uploadLimitService';
+import { decrementChannelVideosOnHold, resolveJobChannelId } from '../services/channelHoldService';
 import { connection, redisEnabled } from '../config/redis';
 import { resolveLocalPythonRuntime } from '../workers/localPipelineTrigger';
-import { getAzureToken } from '../workers/azureJobTrigger';
+import { getAzureToken, stopAzureJobExecution } from '../workers/azureJobTrigger';
 import { getConfiguredGeminiModel, getGeminiModelCatalog } from '../services/geminiModelService';
+import {
+  DEFAULT_COMPOSITION_HEARTBEAT_SECONDS,
+  DEFAULT_FFMPEG_COMMAND_TIMEOUT_SECONDS,
+  resolvePipelineExecutionTimeoutMs,
+  sanitizeCompositionHeartbeatSeconds,
+  sanitizeFfmpegCommandTimeoutSeconds,
+  sanitizePipelineExecutionTimeoutMinutes,
+} from '../services/pipelineRuntimeControlService';
 
 // Stripe disabled. Using Razorpay for payments.
 
@@ -48,6 +57,17 @@ const DEFAULT_PENDING_RETRY_SCAN_LIMIT = 100;
 const MAX_PENDING_RETRY_SCAN_LIMIT = 500;
 const PIPELINE_QUEUE_PREVIEW_LIMIT = 5;
 const PIPELINE_QUEUE_PREVIEW_STATES = ['active', 'waiting', 'prioritized', 'delayed'] as const;
+const ACTIVE_PIPELINE_JOB_STATUSES = ['pending', 'processing'] as const;
+const ACTIVE_PIPELINE_JOB_DEFAULT_LIMIT = 25;
+const ACTIVE_PIPELINE_JOB_MAX_LIMIT = 100;
+const ADMIN_STOP_REASON_MIN_LENGTH = 5;
+const ADMIN_STOP_REASON_MAX_LENGTH = 500;
+const ADMIN_STOP_QUEUE_STATES: Array<'waiting' | 'delayed' | 'prioritized' | 'paused'> = [
+  'waiting',
+  'delayed',
+  'prioritized',
+  'paused',
+];
 
 type PipelineRunnerType = (typeof SUPPORTED_PIPELINE_RUNNERS)[number];
 type PipelineWorkerProfileType = (typeof SUPPORTED_PIPELINE_WORKER_PROFILES)[number];
@@ -217,6 +237,132 @@ const getRequestedUploadCount = (value: unknown): number => {
     return 1;
   }
   return Math.max(1, Math.floor(parsed));
+};
+
+const clampActiveJobLimit = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return ACTIVE_PIPELINE_JOB_DEFAULT_LIMIT;
+  }
+  return Math.max(1, Math.min(ACTIVE_PIPELINE_JOB_MAX_LIMIT, Math.floor(parsed)));
+};
+
+const normalizeAdminStopReason = (value: unknown): string => {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  return normalized.slice(0, ADMIN_STOP_REASON_MAX_LENGTH);
+};
+
+const inferRunnerFromLogs = (logs: unknown): PipelineRunnerType | null => {
+  const text = String(logs || '');
+  if (!text.trim()) {
+    return null;
+  }
+
+  const regex = /"selectedRunner":"(local|azure|remote)"/gi;
+  let match: RegExpExecArray | null = regex.exec(text);
+  let lastRunner: PipelineRunnerType | null = null;
+  while (match) {
+    const candidate = normalizePipelineRunner(match[1]);
+    if (candidate) {
+      lastRunner = candidate;
+    }
+    match = regex.exec(text);
+  }
+
+  if (lastRunner) {
+    return lastRunner;
+  }
+
+  if (/Dispatching local pipeline process/i.test(text)) {
+    return 'local';
+  }
+  if (/Successfully dispatched Azure Container App Job/i.test(text)) {
+    return 'azure';
+  }
+  if (/Dispatching remote pipeline service/i.test(text)) {
+    return 'remote';
+  }
+  return null;
+};
+
+const parseAzureExecutionNameFromLogs = (logs: unknown): string => {
+  const text = String(logs || '');
+  if (!text.trim()) {
+    return '';
+  }
+  const regex = /execution=([A-Za-z0-9._-]+)/g;
+  let match: RegExpExecArray | null = regex.exec(text);
+  let lastExecution = '';
+  while (match) {
+    const candidate = String(match[1] || '').trim();
+    if (candidate) {
+      lastExecution = candidate;
+    }
+    match = regex.exec(text);
+  }
+  return lastExecution;
+};
+
+const getDbJobIdFromQueueEntry = (queueEntry: any): string => {
+  const entryJobId = queueEntry?.data?.jobId;
+  if (typeof entryJobId === 'string' && entryJobId.trim()) {
+    return entryJobId.trim();
+  }
+  if (entryJobId != null) {
+    return String(entryJobId).trim();
+  }
+  return '';
+};
+
+const removeQueuedPipelineEntriesForDbJob = async (dbJobId: string): Promise<number> => {
+  if (!dbJobId || !pipelineQueue || typeof (pipelineQueue as any).getJobs !== 'function') {
+    return 0;
+  }
+
+  const candidates: any[] = [];
+  try {
+    const queuedEntries = await (pipelineQueue as any).getJobs(ADMIN_STOP_QUEUE_STATES);
+    if (Array.isArray(queuedEntries)) {
+      candidates.push(...queuedEntries);
+    }
+  } catch (error) {
+    console.warn(`[Admin] Failed to scan queue states while stopping job ${dbJobId}:`, error);
+  }
+
+  if (typeof (pipelineQueue as any).getJob === 'function') {
+    try {
+      const directEntry = await (pipelineQueue as any).getJob(dbJobId);
+      if (directEntry) {
+        candidates.push(directEntry);
+      }
+    } catch (error) {
+      console.warn(`[Admin] Failed to fetch direct queue entry for job ${dbJobId}:`, error);
+    }
+  }
+
+  const matchingEntries = new Map<string, any>();
+  for (const entry of candidates) {
+    const queueId = String(entry?.id || '').trim();
+    if (!queueId) {
+      continue;
+    }
+    const mappedDbJobId = getDbJobIdFromQueueEntry(entry);
+    if (mappedDbJobId === dbJobId || queueId === dbJobId) {
+      matchingEntries.set(queueId, entry);
+    }
+  }
+
+  let removedCount = 0;
+  for (const entry of matchingEntries.values()) {
+    try {
+      await entry.remove();
+      removedCount += 1;
+    } catch (error) {
+      console.warn(`[Admin] Failed to remove queue entry ${String(entry?.id || 'unknown')} for job ${dbJobId}:`, error);
+    }
+  }
+
+  return removedCount;
 };
 
 const resolveQueueAttemptBudgetForPlan = (plan: string, config: any): number => {
@@ -635,6 +781,9 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
       pipelineServiceUrl: '',
       pipelineServiceSecret: '',
       pipelineRunnerPinned: false,
+      ffmpegCommandTimeoutSeconds: sanitizeFfmpegCommandTimeoutSeconds(undefined),
+      compositionHeartbeatSeconds: sanitizeCompositionHeartbeatSeconds(undefined),
+      pipelineExecutionTimeoutMinutes: sanitizePipelineExecutionTimeoutMinutes(undefined),
       runEmbeddedWorker: false,
       autoStartEmbeddedWorkerWhenMissing: false,
       includeEmbeddedWorkersInRuntimeStatus: false,
@@ -692,7 +841,7 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
     config = await SystemConfig.findOne()
       .sort({ updatedAt: -1 })
       .select(
-        'pipelineRunner pipelineServiceUrl pipelineServiceSecret pipelineRunnerFallbackOrder pipelineRetryCycles pipelineCycleAcrossRunners pipelineRunnerPinned runEmbeddedWorker autoStartEmbeddedWorkerWhenMissing includeEmbeddedWorkersInRuntimeStatus pipelineWorkerProfile pipelineWorkerConcurrency'
+        'pipelineRunner pipelineServiceUrl pipelineServiceSecret pipelineRunnerFallbackOrder pipelineRetryCycles pipelineCycleAcrossRunners pipelineRunnerPinned runEmbeddedWorker autoStartEmbeddedWorkerWhenMissing includeEmbeddedWorkersInRuntimeStatus pipelineWorkerProfile pipelineWorkerConcurrency ffmpegCommandTimeoutSeconds compositionHeartbeatSeconds pipelineExecutionTimeoutMinutes'
       );
   } catch (error) {
     console.warn('[Admin] Failed to load SystemConfig for runtime status:', error);
@@ -749,6 +898,9 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
       ? config.pipelineWorkerConcurrency
       : process.env.PIPELINE_WORKER_CONCURRENCY
   );
+  const ffmpegCommandTimeoutSeconds = sanitizeFfmpegCommandTimeoutSeconds(config?.ffmpegCommandTimeoutSeconds);
+  const compositionHeartbeatSeconds = sanitizeCompositionHeartbeatSeconds(config?.compositionHeartbeatSeconds);
+  const pipelineExecutionTimeoutMinutes = sanitizePipelineExecutionTimeoutMinutes(config?.pipelineExecutionTimeoutMinutes);
   const dedicatedWorkersByRunner = heartbeatSummary.byRunnerSource.dedicated;
   const embeddedWorkersByRunner = heartbeatSummary.byRunnerSource.embedded;
 
@@ -841,6 +993,11 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
         profile: workerRuntimeProfile,
         concurrency: workerRuntimeConcurrency,
       },
+      runtimeControls: {
+        ffmpegCommandTimeoutSeconds,
+        compositionHeartbeatSeconds,
+        pipelineExecutionTimeoutMinutes,
+      },
       embeddedWorkerConfigured,
       autoStartEmbeddedWorkerWhenMissing,
     },
@@ -855,6 +1012,9 @@ const configSchema = z.object({
     pipelineServiceUrl: z.string().max(500).optional(),
     pipelineServiceSecret: z.string().max(500).optional(),
     pipelineRunnerPinned: z.boolean().optional(),
+    ffmpegCommandTimeoutSeconds: z.number().min(30).max(7200).optional(),
+    compositionHeartbeatSeconds: z.number().min(5).max(600).optional(),
+    pipelineExecutionTimeoutMinutes: z.number().min(0.5).max(240).nullable().optional(),
     runEmbeddedWorker: z.boolean().optional(),
     autoStartEmbeddedWorkerWhenMissing: z.boolean().optional(),
     includeEmbeddedWorkersInRuntimeStatus: z.boolean().optional(),
@@ -953,6 +1113,9 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     pipelineServiceSecret,
     geminiModel,
     pipelineRunnerPinned,
+    ffmpegCommandTimeoutSeconds,
+    compositionHeartbeatSeconds,
+    pipelineExecutionTimeoutMinutes,
     runEmbeddedWorker,
     autoStartEmbeddedWorkerWhenMissing,
     includeEmbeddedWorkersInRuntimeStatus,
@@ -984,6 +1147,15 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
   }
   if (typeof pipelineRunnerPinned === 'boolean') {
     updatePayload.pipelineRunnerPinned = pipelineRunnerPinned;
+  }
+  if (typeof ffmpegCommandTimeoutSeconds !== 'undefined') {
+    updatePayload.ffmpegCommandTimeoutSeconds = sanitizeFfmpegCommandTimeoutSeconds(ffmpegCommandTimeoutSeconds);
+  }
+  if (typeof compositionHeartbeatSeconds !== 'undefined') {
+    updatePayload.compositionHeartbeatSeconds = sanitizeCompositionHeartbeatSeconds(compositionHeartbeatSeconds);
+  }
+  if (typeof pipelineExecutionTimeoutMinutes !== 'undefined') {
+    updatePayload.pipelineExecutionTimeoutMinutes = sanitizePipelineExecutionTimeoutMinutes(pipelineExecutionTimeoutMinutes);
   }
   if (typeof runEmbeddedWorker === 'boolean') {
     updatePayload.runEmbeddedWorker = runEmbeddedWorker;
@@ -1062,7 +1234,7 @@ export const retryPendingPipelineJobs = asyncHandler(async (req: Request, res: R
   const config = await SystemConfig.findOne()
     .sort({ updatedAt: -1 })
     .select(
-      'pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners'
+      'pipelineRetriesByPlan pipelineRunner pipelineRunnerFallbackOrder pipelineRunnerPinned pipelineServiceUrl pipelineRetryCycles pipelineCycleAcrossRunners pipelineExecutionTimeoutMinutes'
     )
     .lean();
 
@@ -1099,8 +1271,10 @@ export const retryPendingPipelineJobs = asyncHandler(async (req: Request, res: R
       const planName = String((pendingJob as any)?.pipelineConfig?.plan || 'free').trim().toLowerCase();
       const jobAttempts = resolveQueueAttemptBudgetForPlan(planName, config || {});
       const requestedCount = getRequestedUploadCount((pendingJob as any)?.videoCount || (pendingJob as any)?.pipelineConfig?.videoCount);
-      const jobTimeoutMinutes = 10 + (requestedCount - 1) * 5;
-      const jobTimeoutMs = jobTimeoutMinutes * 60 * 1000;
+      const jobTimeoutMs = resolvePipelineExecutionTimeoutMs(
+        (pendingJob as any)?.pipelineConfig?.pipelineExecutionTimeoutMinutes ?? (config as any)?.pipelineExecutionTimeoutMinutes,
+        requestedCount
+      );
 
       const planPriorities: Record<string, number> = {
         premium: 1,
@@ -1149,6 +1323,270 @@ export const retryPendingPipelineJobs = asyncHandler(async (req: Request, res: R
       failed,
       clearedDispatchLocks,
       limit,
+    },
+  });
+});
+
+const activePipelineJobsSchema = z.object({
+  query: z.object({
+    limit: z.coerce.number().int().min(1).max(ACTIVE_PIPELINE_JOB_MAX_LIMIT).optional(),
+  }).optional(),
+});
+
+const stopPipelineJobSchema = z.object({
+  params: z.object({
+    jobId: z.string().trim().min(1),
+  }),
+  body: z.object({
+    reason: z.string().trim().min(ADMIN_STOP_REASON_MIN_LENGTH).max(ADMIN_STOP_REASON_MAX_LENGTH),
+  }),
+});
+
+export const getActivePipelineJobs = asyncHandler(async (req: Request, res: Response) => {
+  const validation = activePipelineJobsSchema.safeParse({ query: req.query || {} });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const limit = clampActiveJobLimit(validation.data.query?.limit);
+
+  const activeJobs = await Job.find({ status: { $in: [...ACTIVE_PIPELINE_JOB_STATUSES] } })
+    .sort({ startedAt: -1, queuedAt: -1, createdAt: -1 })
+    .limit(limit)
+    .select('_id userId status channelId videoCount queuedAt startedAt updatedAt progress logs result holdConsumed holdReleased pipelineConfig');
+
+  const userIds = Array.from(
+    new Set(
+      activeJobs
+        .map((job) => String((job as any)?.userId || '').trim())
+        .filter(Boolean)
+    )
+  );
+
+  const users = userIds.length > 0
+    ? await User.find({ _id: { $in: userIds } }).select('_id email').lean()
+    : [];
+  const userEmailMap = new Map<string, string>(
+    users.map((user: any) => [String(user._id), String(user.email || '')])
+  );
+
+  const now = Date.now();
+  const jobs = activeJobs.map((job: any) => {
+    const dispatch = (job?.result && typeof job.result === 'object') ? (job.result.dispatch || {}) : {};
+    const derivedRunner =
+      normalizePipelineRunner(dispatch?.runner) ||
+      inferRunnerFromLogs(job.logs) ||
+      null;
+
+    const azureExecutionName =
+      String(dispatch?.azureExecutionName || dispatch?.executionName || '').trim() ||
+      parseAzureExecutionNameFromLogs(job.logs);
+
+    const referenceTime =
+      (job.startedAt instanceof Date ? job.startedAt : null) ||
+      (job.queuedAt instanceof Date ? job.queuedAt : null) ||
+      (job.updatedAt instanceof Date ? job.updatedAt : null);
+
+    const elapsedSeconds =
+      referenceTime && Number.isFinite(referenceTime.getTime())
+        ? Math.max(0, Math.floor((now - referenceTime.getTime()) / 1000))
+        : null;
+
+    return {
+      _id: String(job._id),
+      userId: String(job.userId || ''),
+      userEmail: userEmailMap.get(String(job.userId || '')) || '',
+      status: String(job.status || ''),
+      channelId: String(job.channelId || resolveJobChannelId(job) || ''),
+      videoCount: getRequestedUploadCount(job.videoCount || job?.pipelineConfig?.videoCount),
+      queuedAt: job.queuedAt instanceof Date ? job.queuedAt.toISOString() : null,
+      startedAt: job.startedAt instanceof Date ? job.startedAt.toISOString() : null,
+      updatedAt: job.updatedAt instanceof Date ? job.updatedAt.toISOString() : null,
+      elapsedSeconds,
+      progress: {
+        progress: Number.isFinite(Number(job?.progress?.progress)) ? Number(job.progress.progress) : 0,
+        stage: String(job?.progress?.stage || ''),
+        message: String(job?.progress?.message || ''),
+        timestamp: String(job?.progress?.timestamp || ''),
+      },
+      runner: derivedRunner,
+      azureExecutionName: azureExecutionName || null,
+      holdConsumed: Boolean(job.holdConsumed),
+      holdReleased: Boolean(job.holdReleased),
+      canStop: String(job.status || '') === 'pending' || String(job.status || '') === 'processing',
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    data: {
+      limit,
+      total: jobs.length,
+      jobs,
+    },
+  });
+});
+
+export const stopPipelineJobByAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const validation = stopPipelineJobSchema.safeParse({ params: req.params, body: req.body || {} });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const jobId = String(validation.data.params.jobId || '').trim();
+  const reason = normalizeAdminStopReason(validation.data.body.reason);
+  if (reason.length < ADMIN_STOP_REASON_MIN_LENGTH) {
+    throw new AppError(`Reason must be at least ${ADMIN_STOP_REASON_MIN_LENGTH} characters.`, 400);
+  }
+
+  const dbJob = await Job.findById(jobId)
+    .select('_id userId status channelId videoCount pipelineConfig logs result holdConsumed holdReleased progress');
+  if (!dbJob) {
+    throw new AppError('Job not found.', 404);
+  }
+
+  const currentStatus = String((dbJob as any)?.status || '');
+  if (!ACTIVE_PIPELINE_JOB_STATUSES.includes(currentStatus as any)) {
+    throw new AppError('Only pending or processing jobs can be stopped.', 400);
+  }
+
+  const requestedCount = getRequestedUploadCount((dbJob as any)?.videoCount || (dbJob as any)?.pipelineConfig?.videoCount);
+  const userId = String((dbJob as any)?.userId || '').trim();
+  const channelId = resolveJobChannelId(dbJob as any);
+
+  const dispatch = ((dbJob as any)?.result && typeof (dbJob as any).result === 'object')
+    ? (((dbJob as any).result as any).dispatch || {})
+    : {};
+  const runner = normalizePipelineRunner(dispatch?.runner) || inferRunnerFromLogs((dbJob as any)?.logs);
+  const azureExecutionName =
+    String(dispatch?.azureExecutionName || dispatch?.executionName || '').trim() ||
+    parseAzureExecutionNameFromLogs((dbJob as any)?.logs);
+  const azureJobName = String(dispatch?.azureJobName || process.env.AZURE_JOB_NAME || '').trim();
+
+  let azureStopAttempted = false;
+  let azureStopSucceeded = false;
+  let azureStopMessage = '';
+
+  if (runner === 'azure' && azureExecutionName && azureJobName) {
+    azureStopAttempted = true;
+    try {
+      const stopResult = await stopAzureJobExecution(azureJobName, azureExecutionName);
+      azureStopSucceeded = Boolean(stopResult.success);
+      azureStopMessage = String(stopResult.message || '').trim();
+    } catch (error: any) {
+      azureStopMessage = String(error?.message || error || '').trim();
+    }
+  }
+
+  const [clearedDispatchLocks, removedQueueEntries] = await Promise.all([
+    clearDispatchLocksForJob(jobId),
+    removeQueuedPipelineEntriesForDbJob(jobId),
+  ]);
+
+  const shouldReleaseHolds = !Boolean((dbJob as any).holdConsumed) && !Boolean((dbJob as any).holdReleased);
+  const stoppedAt = new Date();
+  const stoppedBy = String((req as any)?.user?.id || '').trim();
+  const stopError = `Stopped by admin: ${reason}`;
+  const existingLogs = typeof (dbJob as any)?.logs === 'string' ? (dbJob as any).logs : '';
+  const stopLog = `[ADMIN_STOP] ${stoppedAt.toISOString()} reason="${reason}"${stoppedBy ? ` by=${stoppedBy}` : ''}`;
+
+  const nextResult = {
+    ...(((dbJob as any)?.result && typeof (dbJob as any).result === 'object') ? (dbJob as any).result : {}),
+    dispatch: {
+      ...dispatch,
+      ...(runner ? { runner } : {}),
+      ...(azureJobName ? { azureJobName } : {}),
+      ...(azureExecutionName ? { azureExecutionName } : {}),
+    },
+    adminStop: {
+      reason,
+      stoppedAt: stoppedAt.toISOString(),
+      stoppedBy: stoppedBy || null,
+      runner: runner || null,
+      azureExecutionName: azureExecutionName || null,
+      azureStopAttempted,
+      azureStopSucceeded,
+      azureStopMessage: azureStopMessage || null,
+      clearedDispatchLocks,
+      removedQueueEntries,
+    },
+  };
+
+  const updatePayload: any = {
+    status: 'failed',
+    completedAt: stoppedAt,
+    error: stopError,
+    errorMessage: stopError,
+    errorStage: 'RENDER',
+    progress: {
+      progress: 100,
+      stage: 'failed',
+      message: 'Stopped by admin',
+      timestamp: stoppedAt.toISOString(),
+    },
+    logs: `${existingLogs}${existingLogs.endsWith('\n') || !existingLogs ? '' : '\n'}${stopLog}\n`,
+    result: nextResult,
+    processedVideos: 0,
+  };
+
+  if (shouldReleaseHolds) {
+    updatePayload.holdReleased = true;
+    updatePayload.holdConsumed = false;
+  }
+
+  const updatedJob = await Job.findOneAndUpdate(
+    { _id: jobId, status: { $in: [...ACTIVE_PIPELINE_JOB_STATUSES] } },
+    { $set: updatePayload },
+    { returnDocument: 'after' }
+  );
+
+  if (!updatedJob) {
+    throw new AppError('Job is no longer active and could not be stopped.', 409);
+  }
+
+  let releasedCredits = 0;
+  let releasedChannelHolds = 0;
+  if (shouldReleaseHolds && userId) {
+    try {
+      await releaseReservedCredits(userId, requestedCount);
+      releasedCredits = requestedCount;
+    } catch (error) {
+      console.warn(`[Admin] Failed to release reserved credits for job ${jobId}:`, error);
+    }
+    if (channelId) {
+      try {
+        releasedChannelHolds = await decrementChannelVideosOnHold(userId, channelId, requestedCount);
+      } catch (error) {
+        console.warn(`[Admin] Failed to decrement channel hold for job ${jobId}:`, error);
+      }
+    }
+  }
+
+  if (userId) {
+    await applyUserJobHistoryRetention(userId).catch((error) => {
+      console.warn(`[Admin] Failed to apply job history retention for user ${userId}:`, error);
+    });
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Pipeline job stopped successfully.',
+    data: {
+      jobId,
+      status: 'failed',
+      reason,
+      runner: runner || null,
+      azureExecutionName: azureExecutionName || null,
+      azureStopAttempted,
+      azureStopSucceeded,
+      azureStopMessage: azureStopMessage || null,
+      clearedDispatchLocks,
+      removedQueueEntries,
+      releasedCredits,
+      releasedChannelHolds,
+      stoppedAt: stoppedAt.toISOString(),
     },
   });
 });

@@ -10,6 +10,11 @@ import {
   sanitizeJobHistoryLimitByPlan,
   sanitizeJobHistoryMinAgeDays,
 } from '../services/jobHistoryRetentionPolicyService';
+import {
+  sanitizeCompositionHeartbeatSeconds,
+  sanitizeFfmpegCommandTimeoutSeconds,
+  sanitizePipelineExecutionTimeoutMinutes,
+} from '../services/pipelineRuntimeControlService';
 
 const parseBooleanConfig = (value: unknown, fallback: boolean): boolean => {
   return typeof value === 'boolean' ? value : fallback;
@@ -62,6 +67,9 @@ export const ensureSystemConfigSingleton = async (): Promise<void> => {
       pipelineServiceUrl: '',
       pipelineServiceSecret: '',
       pipelineRunnerPinned: false,
+      ffmpegCommandTimeoutSeconds: sanitizeFfmpegCommandTimeoutSeconds(undefined),
+      compositionHeartbeatSeconds: sanitizeCompositionHeartbeatSeconds(undefined),
+      pipelineExecutionTimeoutMinutes: sanitizePipelineExecutionTimeoutMinutes(undefined),
       runEmbeddedWorker: false,
       autoStartEmbeddedWorkerWhenMissing: false,
       includeEmbeddedWorkersInRuntimeStatus: false,
@@ -91,6 +99,9 @@ export const ensureSystemConfigSingleton = async (): Promise<void> => {
         pipelineServiceSecret: normalizeOptionalText((latest as any).pipelineServiceSecret, 500),
         geminiModel: normalizeGeminiModel((latest as any).geminiModel),
         pipelineRunnerPinned: parseBooleanConfig((latest as any).pipelineRunnerPinned, false),
+        ffmpegCommandTimeoutSeconds: sanitizeFfmpegCommandTimeoutSeconds((latest as any).ffmpegCommandTimeoutSeconds),
+        compositionHeartbeatSeconds: sanitizeCompositionHeartbeatSeconds((latest as any).compositionHeartbeatSeconds),
+        pipelineExecutionTimeoutMinutes: sanitizePipelineExecutionTimeoutMinutes((latest as any).pipelineExecutionTimeoutMinutes),
         runEmbeddedWorker: parseBooleanConfig((latest as any).runEmbeddedWorker, false),
         autoStartEmbeddedWorkerWhenMissing: parseBooleanConfig((latest as any).autoStartEmbeddedWorkerWhenMissing, false),
         includeEmbeddedWorkersInRuntimeStatus: parseBooleanConfig((latest as any).includeEmbeddedWorkersInRuntimeStatus, false),

@@ -14,7 +14,9 @@ import {
   deleteUserByAdmin,
   getSystemConfig,
   getPipelineRuntimeStatus,
+  getActivePipelineJobs,
   retryPendingPipelineJobs,
+  stopPipelineJobByAdmin,
   updateSystemConfig,
   updateTimeoutConfig,
   triggerWeeklyReports,
@@ -40,7 +42,9 @@ router.get('/banner', getGlobalBannerConfig);
 router.get('/gemini-models', getGeminiModels);
 router.get('/config', getSystemConfig);
 router.get('/runtime-status', getPipelineRuntimeStatus);
+router.get('/pipeline/active-jobs', getActivePipelineJobs);
 router.post('/pipeline/retry-pending', retryPendingPipelineJobs);
+router.post('/pipeline/jobs/:jobId/stop', stopPipelineJobByAdmin);
 router.post('/config', updateSystemConfig);
 router.put('/config/timeout', updateTimeoutConfig);
 router.post('/trigger-reports', triggerWeeklyReports);

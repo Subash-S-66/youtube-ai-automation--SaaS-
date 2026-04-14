@@ -197,6 +197,35 @@ interface PipelineRuntimeStatus {
     profile: WorkerProfileType;
     concurrency: number | null;
   };
+  runtimeControls?: {
+    ffmpegCommandTimeoutSeconds: number;
+    compositionHeartbeatSeconds: number;
+    pipelineExecutionTimeoutMinutes: number | null;
+  };
+}
+
+interface ActivePipelineJob {
+  _id: string;
+  userId: string;
+  userEmail: string;
+  status: 'pending' | 'processing' | 'success' | 'failed';
+  channelId: string;
+  videoCount: number;
+  queuedAt: string | null;
+  startedAt: string | null;
+  updatedAt: string | null;
+  elapsedSeconds: number | null;
+  progress: {
+    progress: number;
+    stage: string;
+    message: string;
+    timestamp: string;
+  };
+  runner: PipelineRunnerType | null;
+  azureExecutionName: string | null;
+  holdConsumed: boolean;
+  holdReleased: boolean;
+  canStop: boolean;
 }
 
 export default function AdminDashboard() {
@@ -236,6 +265,9 @@ export default function AdminDashboard() {
   const [pipelineServiceUrl, setPipelineServiceUrl] = useState('');
   const [pipelineServiceSecret, setPipelineServiceSecret] = useState('');
   const [pipelineRunnerPinned, setPipelineRunnerPinned] = useState(false);
+  const [ffmpegCommandTimeoutSeconds, setFfmpegCommandTimeoutSeconds] = useState(360);
+  const [compositionHeartbeatSeconds, setCompositionHeartbeatSeconds] = useState(30);
+  const [pipelineExecutionTimeoutMinutes, setPipelineExecutionTimeoutMinutes] = useState<number | ''>('');
   const [runEmbeddedWorker, setRunEmbeddedWorker] = useState(false);
   const [autoStartEmbeddedWorkerWhenMissing, setAutoStartEmbeddedWorkerWhenMissing] = useState(false);
   const [includeEmbeddedWorkersInRuntimeStatus, setIncludeEmbeddedWorkersInRuntimeStatus] = useState(false);
@@ -270,6 +302,15 @@ export default function AdminDashboard() {
   const [runtimeStatus, setRuntimeStatus] = useState<PipelineRuntimeStatus | null>(null);
   const [runtimeStatusLoading, setRuntimeStatusLoading] = useState(false);
   const [runtimeStatusError, setRuntimeStatusError] = useState('');
+  const [activePipelineJobs, setActivePipelineJobs] = useState<ActivePipelineJob[]>([]);
+  const [activeJobsLoading, setActiveJobsLoading] = useState(false);
+  const [activeJobsError, setActiveJobsError] = useState('');
+  const [savingRuntimeExecutionPolicy, setSavingRuntimeExecutionPolicy] = useState(false);
+  const [stopJobModalOpen, setStopJobModalOpen] = useState(false);
+  const [stopJobTarget, setStopJobTarget] = useState<ActivePipelineJob | null>(null);
+  const [stopJobReason, setStopJobReason] = useState('');
+  const [stopJobReasonError, setStopJobReasonError] = useState('');
+  const [stoppingJob, setStoppingJob] = useState(false);
 
   const sectionTabs: Array<{
     id: AdminSection;
@@ -330,9 +371,9 @@ export default function AdminDashboard() {
     },
   ];
 
-  const sectionCardClass = 'w-full rounded-xl border px-3 py-3 text-left transition-colors';
-  const sectionCardActiveClass = 'border-[#7C5CFF]/60 bg-[#7C5CFF]/15';
-  const sectionCardIdleClass = 'border-[#1A2235] bg-[#0B0F1A] hover:border-[#32507B]';
+  const sectionCardClass = 'w-full rounded-2xl border px-4 py-4 text-left transition-all duration-200';
+  const sectionCardActiveClass = 'border-[#00D4FF]/60 bg-linear-to-br from-[#112033] to-[#0E1828] shadow-[0_0_0_1px_rgba(0,212,255,0.2)]';
+  const sectionCardIdleClass = 'border-[#1A2235] bg-[#0B0F1A]/90 hover:-translate-y-0.5 hover:border-[#32507B] hover:bg-[#10182A]';
 
   const openPicker = (ref: RefObject<HTMLInputElement | null>) => {
     if (!ref.current) return;
@@ -352,6 +393,9 @@ export default function AdminDashboard() {
     pipelineServiceUrl,
     pipelineServiceSecret,
     pipelineRunnerPinned,
+    ffmpegCommandTimeoutSeconds,
+    compositionHeartbeatSeconds,
+    pipelineExecutionTimeoutMinutes: pipelineExecutionTimeoutMinutes === '' ? null : Number(pipelineExecutionTimeoutMinutes),
     runEmbeddedWorker,
     autoStartEmbeddedWorkerWhenMissing,
     includeEmbeddedWorkersInRuntimeStatus,
@@ -399,6 +443,42 @@ export default function AdminDashboard() {
     return `${Math.floor(value / 86400)}d`;
   };
 
+  const formatElapsed = (elapsedSeconds: number | null | undefined): string => {
+    if (!Number.isFinite(Number(elapsedSeconds)) || Number(elapsedSeconds) < 0) {
+      return '--';
+    }
+    const total = Math.floor(Number(elapsedSeconds));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    if (minutes < 60) {
+      return `${minutes}m ${seconds}s`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const remMinutes = minutes % 60;
+    return `${hours}h ${remMinutes}m`;
+  };
+
+  const formatDateTime = (value: string | null | undefined): string => {
+    if (!value) {
+      return '--';
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return '--';
+    }
+    return parsed.toLocaleString();
+  };
+
+  const formatTimeoutMinutes = (value: number | null | undefined): string => {
+    if (!Number.isFinite(Number(value)) || Number(value) <= 0) {
+      return 'No runtime timeout';
+    }
+    const totalSeconds = Math.round(Number(value) * 60);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${seconds}s`;
+  };
+
   const fetchPipelineRuntimeStatus = async (silent = true) => {
     if (!silent) {
       setRuntimeStatusLoading(true);
@@ -417,6 +497,30 @@ export default function AdminDashboard() {
     } finally {
       if (!silent) {
         setRuntimeStatusLoading(false);
+      }
+    }
+  };
+
+  const fetchActivePipelineJobs = async (silent = true) => {
+    if (!silent) {
+      setActiveJobsLoading(true);
+    }
+    try {
+      const response = await adminService.getActivePipelineJobs(25);
+      if (response?.success && response?.data) {
+        const jobs = Array.isArray(response.data.jobs)
+          ? (response.data.jobs as ActivePipelineJob[])
+          : [];
+        setActivePipelineJobs(jobs);
+        setActiveJobsError('');
+      } else {
+        setActiveJobsError('Failed to load active pipeline jobs.');
+      }
+    } catch (err: unknown) {
+      setActiveJobsError(getErrorMessage(err, 'Failed to load active pipeline jobs.'));
+    } finally {
+      if (!silent) {
+        setActiveJobsLoading(false);
       }
     }
   };
@@ -783,6 +887,86 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleSaveRuntimeExecutionPolicy = async () => {
+    setSavingRuntimeExecutionPolicy(true);
+    try {
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      await fetchPipelineRuntimeStatus(false);
+      setModalConfig({
+        isOpen: true,
+        title: 'Runtime Controls Updated',
+        description: 'FFmpeg timeout, composition heartbeat, and pipeline runtime timeout have been updated.',
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: unknown) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: getErrorMessage(err, 'Failed to update runtime controls.'),
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingRuntimeExecutionPolicy(false);
+    }
+  };
+
+  const openStopJobModal = (job: ActivePipelineJob) => {
+    setStopJobTarget(job);
+    setStopJobReason('');
+    setStopJobReasonError('');
+    setStopJobModalOpen(true);
+  };
+
+  const closeStopJobModal = () => {
+    if (stoppingJob) {
+      return;
+    }
+    setStopJobModalOpen(false);
+    setStopJobTarget(null);
+    setStopJobReason('');
+    setStopJobReasonError('');
+  };
+
+  const handleConfirmStopJob = async () => {
+    if (!stopJobTarget) {
+      return;
+    }
+    const normalizedReason = stopJobReason.trim();
+    if (normalizedReason.length < 5) {
+      setStopJobReasonError('Reason must be at least 5 characters.');
+      return;
+    }
+
+    setStoppingJob(true);
+    try {
+      const response = await adminService.stopPipelineJob(stopJobTarget._id, normalizedReason);
+      await Promise.all([
+        fetchPipelineRuntimeStatus(false),
+        fetchActivePipelineJobs(false),
+      ]);
+      setStopJobModalOpen(false);
+      setStopJobTarget(null);
+      setStopJobReason('');
+      setStopJobReasonError('');
+      setModalConfig({
+        isOpen: true,
+        title: 'Job Stopped',
+        description: String(response?.message || 'The job was stopped successfully.'),
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: unknown) {
+      setStopJobReasonError(getErrorMessage(err, 'Failed to stop this job.'));
+    } finally {
+      setStoppingJob(false);
+    }
+  };
+
   const handleSaveConcurrencyPolicy = async () => {
     setSavingConcurrencyPolicy(true);
     try {
@@ -1053,11 +1237,12 @@ export default function AdminDashboard() {
           adminService.getUsers(userPage, 10, userSearch),
           adminService.getSystemConfig(),
           adminService.getGeminiModels(),
+          adminService.getActivePipelineJobs(25),
           adminService.getGlobalBanner(),
           import('../../services/planService').then(m => m.planService.getAdminPlans()),
         ]).then((results) => {
           if (!isMounted) return;
-          const [statsRes, usersRes, configRes, geminiModelsRes, bannerRes, plansRes] = results;
+          const [statsRes, usersRes, configRes, geminiModelsRes, activeJobsRes, bannerRes, plansRes] = results;
 
           if (statsRes.status === 'fulfilled' && statsRes.value?.success) setStats(statsRes.value.data);
           if (usersRes.status === 'fulfilled' && usersRes.value?.success) {
@@ -1081,6 +1266,18 @@ export default function AdminDashboard() {
             }
             if (typeof configRes.value.data.pipelineRunnerPinned === 'boolean') {
               setPipelineRunnerPinned(configRes.value.data.pipelineRunnerPinned);
+            }
+            if (typeof configRes.value.data.ffmpegCommandTimeoutSeconds === 'number' && Number.isFinite(configRes.value.data.ffmpegCommandTimeoutSeconds)) {
+              setFfmpegCommandTimeoutSeconds(Math.max(30, Math.min(7200, Math.floor(configRes.value.data.ffmpegCommandTimeoutSeconds))));
+            }
+            if (typeof configRes.value.data.compositionHeartbeatSeconds === 'number' && Number.isFinite(configRes.value.data.compositionHeartbeatSeconds)) {
+              setCompositionHeartbeatSeconds(Math.max(5, Math.min(600, Math.floor(configRes.value.data.compositionHeartbeatSeconds))));
+            }
+            if (typeof configRes.value.data.pipelineExecutionTimeoutMinutes === 'number' && Number.isFinite(configRes.value.data.pipelineExecutionTimeoutMinutes)) {
+              const rounded = Math.round(configRes.value.data.pipelineExecutionTimeoutMinutes * 10) / 10;
+              setPipelineExecutionTimeoutMinutes(Math.max(0.5, Math.min(240, rounded)));
+            } else {
+              setPipelineExecutionTimeoutMinutes('');
             }
             if (typeof configRes.value.data.runEmbeddedWorker === 'boolean') {
               setRunEmbeddedWorker(configRes.value.data.runEmbeddedWorker);
@@ -1184,6 +1381,13 @@ export default function AdminDashboard() {
             }
           }
 
+          if (activeJobsRes.status === 'fulfilled' && activeJobsRes.value?.success && activeJobsRes.value.data) {
+            const jobs = Array.isArray(activeJobsRes.value.data.jobs)
+              ? (activeJobsRes.value.data.jobs as ActivePipelineJob[])
+              : [];
+            setActivePipelineJobs(jobs);
+          }
+
           if (bannerRes.status === 'fulfilled' && bannerRes.value?.success && bannerRes.value.data) {
             const bd = bannerRes.value.data;
             setBannerMessage(bd.message || '');
@@ -1253,47 +1457,124 @@ export default function AdminDashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    if (activeSection !== 'system' || activeSystemPanel !== 'runtime') {
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadActiveJobs = async (silent: boolean) => {
+      if (!silent && isMounted) {
+        setActiveJobsLoading(true);
+      }
+
+      try {
+        const response = await adminService.getActivePipelineJobs(25);
+        if (!isMounted) {
+          return;
+        }
+
+        if (response?.success && response?.data) {
+          const jobs = Array.isArray(response.data.jobs)
+            ? (response.data.jobs as ActivePipelineJob[])
+            : [];
+          setActivePipelineJobs(jobs);
+          setActiveJobsError('');
+        } else {
+          setActiveJobsError('Failed to load active pipeline jobs.');
+        }
+      } catch (err: unknown) {
+        if (!isMounted) {
+          return;
+        }
+        setActiveJobsError(getErrorMessage(err, 'Failed to load active pipeline jobs.'));
+      } finally {
+        if (!silent && isMounted) {
+          setActiveJobsLoading(false);
+        }
+      }
+    };
+
+    void loadActiveJobs(false);
+    const timer = window.setInterval(() => {
+      void loadActiveJobs(true);
+    }, 15000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+    };
+  }, [activeSection, activeSystemPanel]);
+
   return (
     <>
-      <div className="max-w-7xl mx-auto py-8">
-        <div className="space-y-8">
-          <div className="rounded-2xl border border-[#1A2235] bg-linear-to-br from-[#121B2D] via-[#101827] to-[#0B0F1A] p-6 shadow-xl">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-[#00D4FF]">Admin Workspace</p>
-                <h1 className="mt-2 text-3xl font-extrabold text-white">Control Center</h1>
-                <p className="mt-2 max-w-2xl text-sm text-slate-300">
-                  Manage users, support, billing, queue health, and runner reliability from one place with faster section-based controls.
-                </p>
-              </div>
-              <div className="inline-flex items-center rounded-full border border-[#2C3B58] bg-[#0B0F1A]/70 px-3 py-1 text-xs font-semibold text-slate-300">
-                Active Section: <span className="ml-1 text-white capitalize">{activeSection}</span>
-              </div>
-            </div>
+      <div className="relative min-h-screen overflow-hidden bg-[#070B14] px-4 py-8 lg:px-8">
+        <div className="pointer-events-none absolute inset-0">
+          <div className="absolute -top-20 left-[-12%] h-80 w-80 rounded-full bg-[#00D4FF]/10 blur-3xl" />
+          <div className="absolute top-1/3 right-[-10%] h-96 w-96 rounded-full bg-[#7C5CFF]/10 blur-3xl" />
+          <div className="absolute bottom-[-12%] left-1/3 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
+        </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <div className="rounded-lg border border-[#20304A] bg-[#0B0F1A]/70 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-slate-500">Total Users</p>
-                <p className="text-lg font-bold text-white">{stats?.totalUsers ?? '--'}</p>
+        <div className="relative mx-auto max-w-365 space-y-6">
+          <div className="rounded-3xl border border-[#1E2C44] bg-linear-to-br from-[#101B2E] via-[#0E1626] to-[#0A0F1B] p-6 shadow-2xl">
+            <div className="grid gap-6 xl:grid-cols-[1.35fr,1fr]">
+              <div>
+                <div className="inline-flex items-center rounded-full border border-[#32507B] bg-[#0D1728]/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8adfff]">
+                  Admin Command Hub
+                </div>
+                <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-4xl">Faster, Clearer Admin Workflow</h1>
+                <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-300">
+                  Everything is grouped by outcome so you can broadcast updates, tune runtime behavior, and manage plans without jumping between noisy panels.
+                </p>
+
+                <div className="mt-5 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center rounded-full border border-[#2A3B5A] bg-[#0B1423] px-3 py-1 text-xs font-semibold text-slate-200">
+                    Active Section: <span className="ml-1 text-[#8adfff] capitalize">{activeSection}</span>
+                  </span>
+                  {activeSection === 'system' ? (
+                    <span className="inline-flex items-center rounded-full border border-[#2A3B5A] bg-[#0B1423] px-3 py-1 text-xs font-semibold text-slate-200">
+                      Panel: <span className="ml-1 text-[#d4c8ff] capitalize">{activeSystemPanel}</span>
+                    </span>
+                  ) : null}
+                  <span className="inline-flex items-center rounded-full border border-[#2A3B5A] bg-[#0B1423] px-3 py-1 text-xs font-semibold text-slate-300">
+                    Interface: Guided Mode
+                  </span>
+                </div>
               </div>
-              <div className="rounded-lg border border-[#20304A] bg-[#0B0F1A]/70 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-slate-500">Active Subs</p>
-                <p className="text-lg font-bold text-white">{stats?.totalActiveSubscriptions ?? '--'}</p>
-              </div>
-              <div className="rounded-lg border border-[#20304A] bg-[#0B0F1A]/70 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-slate-500">Jobs</p>
-                <p className="text-lg font-bold text-white">{stats?.jobs?.total ?? '--'}</p>
-              </div>
-              <div className="rounded-lg border border-[#20304A] bg-[#0B0F1A]/70 px-3 py-2">
-                <p className="text-[10px] uppercase tracking-wide text-slate-500">Success Rate</p>
-                <p className="text-lg font-bold text-white">{stats?.jobs?.successRate ?? '--'}</p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-3">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Total Users</p>
+                  <p className="mt-1 text-xl font-black text-white">{stats?.totalUsers ?? '--'}</p>
+                </div>
+                <div className="rounded-xl border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-3">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Active Subs</p>
+                  <p className="mt-1 text-xl font-black text-white">{stats?.totalActiveSubscriptions ?? '--'}</p>
+                </div>
+                <div className="rounded-xl border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-3">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Total Jobs</p>
+                  <p className="mt-1 text-xl font-black text-white">{stats?.jobs?.total ?? '--'}</p>
+                </div>
+                <div className="rounded-xl border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-3">
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Success Rate</p>
+                  <p className="mt-1 text-xl font-black text-white">{stats?.jobs?.successRate ?? '--'}</p>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 shadow-lg">
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-2">
-              {sectionTabs.map((section) => {
+          <div className="rounded-2xl border border-[#1A2235] bg-[#0C1322]/95 p-4 shadow-lg">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-bold text-white">Workflow Navigator</p>
+                <p className="text-xs text-slate-400">Move through focused sections instead of scrolling through everything at once.</p>
+              </div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Step-by-step control</p>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {sectionTabs.map((section, index) => {
                 const Icon = section.icon;
                 const active = activeSection === section.id;
                 return (
@@ -1306,37 +1587,60 @@ export default function AdminDashboard() {
                       active ? sectionCardActiveClass : sectionCardIdleClass
                     )}
                   >
-                    <div className="flex items-center gap-2">
-                      <Icon className={cn("h-4 w-4", active ? "text-[#7C5CFF]" : "text-[#00D4FF]")} />
-                      <p className="text-sm font-semibold text-white">{section.label}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Icon className={cn('h-4 w-4', active ? 'text-[#8adfff]' : 'text-[#00D4FF]')} />
+                        <p className="text-sm font-semibold text-white">{section.label}</p>
+                      </div>
+                      <span className={cn(
+                        'inline-flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold',
+                        active ? 'border-[#8adfff]/60 bg-[#8adfff]/10 text-[#8adfff]' : 'border-[#2A3B5A] text-slate-400'
+                      )}>
+                        {index + 1}
+                      </span>
                     </div>
                     <p className="mt-1 text-xs text-slate-400">{section.description}</p>
                   </button>
                 );
               })}
+            </div>
 
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Link
                 href="/admin/users"
-                className={cn(sectionCardClass, sectionCardIdleClass, 'group')}
+                className="group rounded-xl border border-[#1A2235] bg-[#0A101B] px-3 py-3 transition-colors hover:border-[#32507B]"
               >
                 <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4 text-[#00D4FF] group-hover:text-[#7C5CFF] transition-colors" />
+                  <Users className="h-4 w-4 text-[#00D4FF] group-hover:text-[#8adfff]" />
                   <p className="text-sm font-semibold text-white">Users Directory</p>
                 </div>
-                <p className="mt-1 text-xs text-slate-400">Browse users and manage account access</p>
+                <p className="mt-1 text-xs text-slate-400">Open user-level actions, plans, and account details.</p>
               </Link>
 
               <Link
                 href="/admin/tickets"
-                className={cn(sectionCardClass, sectionCardIdleClass, 'group')}
+                className="group rounded-xl border border-[#1A2235] bg-[#0A101B] px-3 py-3 transition-colors hover:border-[#32507B]"
               >
                 <div className="flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4 text-[#00D4FF] group-hover:text-[#7C5CFF] transition-colors" />
+                  <MessageSquare className="h-4 w-4 text-[#00D4FF] group-hover:text-[#8adfff]" />
                   <p className="text-sm font-semibold text-white">Help Tickets</p>
                 </div>
-                <p className="mt-1 text-xs text-slate-400">Track and resolve support issues quickly</p>
+                <p className="mt-1 text-xs text-slate-400">Jump directly into support conversations and responses.</p>
               </Link>
             </div>
+          </div>
+
+          <div className="rounded-2xl border border-[#1A2235] bg-[#0C1322]/90 p-4 shadow-lg">
+            <p className="text-sm font-semibold text-white">Focus Hint</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-400">
+              {activeSection === 'overview'
+                ? 'Start here for a quick health check, then jump to Broadcast, System, or Plans.'
+                : activeSection === 'communication'
+                  ? 'Use Broadcast for user-facing announcements. Keep messages short, clear, and targeted by plan.'
+                  : activeSection === 'system'
+                    ? 'System is split by Core, Runtime, Limits, and Recovery. Work panel-by-panel and save after each change.'
+                    : 'Plans lets you tune pricing, limits, and features. Save only when you finish a full plan review.'}
+            </p>
           </div>
 
           {/* Control Tools */}
@@ -1421,7 +1725,7 @@ export default function AdminDashboard() {
                     <div className="flex-1">
                       <label htmlFor="banner-start" className="block text-xs text-slate-400 mb-1">Start At (Optional)</label>
                       <div className="relative">
-                        <input id="banner-start" ref={bannerStartRef} type="datetime-local" value={bannerStart} onChange={(e) => setBannerStart(e.target.value)} className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                        <input id="banner-start" ref={bannerStartRef} type="datetime-local" value={bannerStart} onChange={(e) => setBannerStart(e.target.value)} className="calendar-white scheme-dark w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none" />
                         <button type="button" aria-label="Open start date picker" onClick={() => openPicker(bannerStartRef)} className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -1435,7 +1739,7 @@ export default function AdminDashboard() {
                     <div className="flex-1">
                       <label htmlFor="banner-end" className="block text-xs text-slate-400 mb-1">End At (Optional)</label>
                       <div className="relative">
-                        <input id="banner-end" ref={bannerEndRef} type="datetime-local" value={bannerEnd} onChange={(e) => setBannerEnd(e.target.value)} className="calendar-white w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none [color-scheme:dark]" />
+                        <input id="banner-end" ref={bannerEndRef} type="datetime-local" value={bannerEnd} onChange={(e) => setBannerEnd(e.target.value)} className="calendar-white scheme-dark w-full bg-[#0B0F1A] text-white px-3 py-2 pr-10 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none" />
                         <button type="button" aria-label="Open end date picker" onClick={() => openPicker(bannerEndRef)} className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -1454,7 +1758,7 @@ export default function AdminDashboard() {
                     </div>
                     <span className="relative inline-flex items-center">
                     <input id="banner-active" type="checkbox" className="sr-only peer" checked={bannerActive} disabled={togglingBanner || bannering} onChange={(e) => handleBannerActiveToggle(e.target.checked)} />
-                      <span className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></span>
+                      <span className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></span>
                     </span>
                   </label>
                   <button type="submit" disabled={bannering || togglingBanner} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-white font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
@@ -1501,7 +1805,7 @@ export default function AdminDashboard() {
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input id="beta-mode-toggle" aria-label="Toggle Beta Mode" type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
-                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
+                    <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
                 <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'core' && 'hidden')}>
@@ -1898,6 +2202,179 @@ export default function AdminDashboard() {
                   </button>
                 </div>
 
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-white">Pipeline Execution Controls</p>
+                    <button
+                      type="button"
+                      onClick={() => { void fetchPipelineRuntimeStatus(false); }}
+                      className="text-[11px] px-2 py-1 rounded bg-[#1A2235] text-slate-200 hover:text-white transition-colors"
+                    >
+                      {runtimeStatusLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : 'Refresh Runtime'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2 mb-3">
+                    Control in-job timing behavior. The runtime timeout applies only after a job starts processing, not while waiting in queue.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">FFmpeg Command Timeout (Seconds)</label>
+                      <input
+                        type="number"
+                        min="30"
+                        max="7200"
+                        step="1"
+                        value={ffmpegCommandTimeoutSeconds}
+                        onChange={(e) => {
+                          const parsed = Number(e.target.value);
+                          const safeValue = Number.isFinite(parsed) ? Math.max(30, Math.min(7200, Math.floor(parsed))) : 360;
+                          setFfmpegCommandTimeoutSeconds(safeValue);
+                        }}
+                        className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Composition Heartbeat (Seconds)</label>
+                      <input
+                        type="number"
+                        min="5"
+                        max="600"
+                        step="1"
+                        value={compositionHeartbeatSeconds}
+                        onChange={(e) => {
+                          const parsed = Number(e.target.value);
+                          const safeValue = Number.isFinite(parsed) ? Math.max(5, Math.min(600, Math.floor(parsed))) : 30;
+                          setCompositionHeartbeatSeconds(safeValue);
+                        }}
+                        className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="text-xs text-slate-400 block mb-1">Pipeline Runtime Timeout (Minutes)</label>
+                      <input
+                        type="number"
+                        min="0.5"
+                        max="240"
+                        step="0.1"
+                        placeholder="Leave empty for fallback policy"
+                        value={pipelineExecutionTimeoutMinutes}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (!raw.trim()) {
+                            setPipelineExecutionTimeoutMinutes('');
+                            return;
+                          }
+                          const parsed = Number(raw);
+                          const normalized = Number.isFinite(parsed) ? Math.max(0.5, Math.min(240, parsed)) : 0.5;
+                          setPipelineExecutionTimeoutMinutes(Math.round(normalized * 10) / 10);
+                        }}
+                        className="w-full bg-[#111827] text-white px-2 py-2 rounded border border-[#1A2235]"
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">Supports decimals. Example: 3.5 means 3 minutes and 30 seconds.</p>
+                    </div>
+                  </div>
+
+                  <p className="mt-3 text-[11px] text-slate-500">
+                    Current runtime values: FFmpeg {runtimeStatus?.runtimeControls?.ffmpegCommandTimeoutSeconds ?? ffmpegCommandTimeoutSeconds}s | Heartbeat {runtimeStatus?.runtimeControls?.compositionHeartbeatSeconds ?? compositionHeartbeatSeconds}s | Timeout {formatTimeoutMinutes(runtimeStatus?.runtimeControls?.pipelineExecutionTimeoutMinutes ?? (pipelineExecutionTimeoutMinutes === '' ? null : Number(pipelineExecutionTimeoutMinutes)))}.
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveRuntimeExecutionPolicy}
+                    disabled={savingRuntimeExecutionPolicy}
+                    className="mt-3 w-full py-2 bg-[#14b8a6] hover:bg-[#0d9488] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingRuntimeExecutionPolicy ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Runtime Execution Controls'}
+                  </button>
+                </div>
+
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-white">Active Pipeline Jobs</p>
+                    <button
+                      type="button"
+                      onClick={() => { void fetchActivePipelineJobs(false); }}
+                      className="text-[11px] px-2 py-1 rounded bg-[#1A2235] text-slate-200 hover:text-white transition-colors"
+                    >
+                      {activeJobsLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : 'Refresh Jobs'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Stop running jobs from admin. A stop reason is required and held channel slots are released automatically.
+                  </p>
+
+                  {activeJobsError ? (
+                    <p className="mt-2 text-[11px] text-red-400">{activeJobsError}</p>
+                  ) : null}
+
+                  {activePipelineJobs.length > 0 ? (
+                    <div className="mt-3 overflow-x-auto">
+                      <table className="w-full min-w-180 text-left text-[11px]">
+                        <thead>
+                          <tr className="text-slate-500">
+                            <th className="pb-1 font-medium">Status</th>
+                            <th className="pb-1 font-medium">User</th>
+                            <th className="pb-1 font-medium">Runner</th>
+                            <th className="pb-1 font-medium">Channel</th>
+                            <th className="pb-1 font-medium">Elapsed</th>
+                            <th className="pb-1 font-medium">Queued</th>
+                            <th className="pb-1 font-medium">Hold</th>
+                            <th className="pb-1 font-medium">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activePipelineJobs.map((job) => {
+                            const statusBadgeClass = job.status === 'processing'
+                              ? 'border-blue-500/40 bg-blue-500/10 text-blue-300'
+                              : (job.status === 'pending'
+                                ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                                : (job.status === 'success'
+                                  ? 'border-green-500/40 bg-green-500/10 text-green-300'
+                                  : 'border-red-500/40 bg-red-500/10 text-red-300'));
+
+                            return (
+                              <tr key={`active-job-${job._id}`} className="border-t border-[#1A2235] text-slate-200 align-top">
+                                <td className="py-1.5 pr-2">
+                                  <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold capitalize', statusBadgeClass)}>
+                                    {job.status}
+                                  </span>
+                                  {job.progress?.stage ? (
+                                    <p className="mt-1 text-[10px] text-slate-400">{job.progress.stage}</p>
+                                  ) : null}
+                                </td>
+                                <td className="py-1.5 pr-2">
+                                  <p className="font-medium text-slate-100">{job.userEmail || job.userId || '--'}</p>
+                                  <p className="text-[10px] text-slate-500 font-mono">{job._id}</p>
+                                </td>
+                                <td className="py-1.5 pr-2 capitalize">{job.runner ? runnerLabelMap[job.runner] : '--'}</td>
+                                <td className="py-1.5 pr-2 font-mono text-[10px] text-slate-300">{job.channelId || '--'}</td>
+                                <td className="py-1.5 pr-2">{formatElapsed(job.elapsedSeconds)}</td>
+                                <td className="py-1.5 pr-2">{formatDateTime(job.queuedAt)}</td>
+                                <td className="py-1.5 pr-2 text-[10px] text-slate-300">{job.holdConsumed && !job.holdReleased ? 'On Hold' : 'Clear'}</td>
+                                <td className="py-1.5 pr-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => openStopJobModal(job)}
+                                    disabled={!job.canStop || stoppingJob}
+                                    className="px-2 py-1 rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    Stop
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-[11px] text-slate-500">No running or pending pipeline jobs right now.</p>
+                  )}
+                </div>
+
                 <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'policies' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Queue And Worker Limits (Per Plan)</p>
                   <p className="text-xs text-slate-400 mb-3">Controls how many pipeline jobs a user can run or queue at one time (also used for channel hold cap).</p>
@@ -2163,7 +2640,7 @@ export default function AdminDashboard() {
                         <span className="mr-2 text-xs text-slate-400">Active</span>
                         <div className="relative inline-flex items-center">
                           <input aria-label={`Toggle active for ${plan.name}`} type="checkbox" className="sr-only peer" checked={plan.is_active} onChange={(e) => handlePlanChange(plan._id, { is_active: e.target.checked })} />
-                          <div className="w-9 h-5 bg-[#1A2235] rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
+                          <div className="w-9 h-5 bg-[#1A2235] rounded-full peer peer-checked:after:translate-x-full after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                         </div>
                       </label>
                     </div>
@@ -2364,6 +2841,66 @@ export default function AdminDashboard() {
 
         </div>
       </div>
+      {stopJobModalOpen && stopJobTarget ? (
+        <div className="fixed inset-0 z-110 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-[#253451] bg-[#0F172A] p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-white">Stop Pipeline Job</h3>
+            <p className="mt-1 text-sm text-slate-300">
+              This will stop the job immediately, mark it as failed, and release held channel capacity.
+            </p>
+
+            <div className="mt-3 rounded-lg border border-[#1A2235] bg-[#111827] p-3 text-[12px] text-slate-300 space-y-1">
+              <p><span className="text-slate-500">Job:</span> <span className="font-mono">{stopJobTarget._id}</span></p>
+              <p><span className="text-slate-500">User:</span> {stopJobTarget.userEmail || stopJobTarget.userId}</p>
+              <p><span className="text-slate-500">Runner:</span> {stopJobTarget.runner ? runnerLabelMap[stopJobTarget.runner] : '--'}</p>
+              <p><span className="text-slate-500">Queued:</span> {formatDateTime(stopJobTarget.queuedAt)}</p>
+              <p><span className="text-slate-500">Started:</span> {formatDateTime(stopJobTarget.startedAt)}</p>
+              <p><span className="text-slate-500">Elapsed:</span> {formatElapsed(stopJobTarget.elapsedSeconds)}</p>
+            </div>
+
+            <div className="mt-4">
+              <label className="text-xs text-slate-400 block mb-1">Reason (required, min 5 chars)</label>
+              <textarea
+                value={stopJobReason}
+                onChange={(e) => {
+                  setStopJobReason(e.target.value);
+                  if (stopJobReasonError) {
+                    setStopJobReasonError('');
+                  }
+                }}
+                rows={3}
+                maxLength={300}
+                placeholder="Why are you stopping this job?"
+                className="w-full rounded-lg border border-[#1A2235] bg-[#111827] px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-[#00D4FF] focus:outline-none"
+              />
+              <div className="mt-1 flex items-center justify-between">
+                <p className="text-[11px] text-slate-500">{stopJobReason.trim().length}/300</p>
+                {stopJobReasonError ? <p className="text-[11px] text-red-400">{stopJobReasonError}</p> : null}
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeStopJobModal}
+                disabled={stoppingJob}
+                className="px-4 py-2 rounded-lg bg-[#1F2937] text-slate-200 hover:text-white disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => { void handleConfirmStopJob(); }}
+                disabled={stoppingJob || stopJobReason.trim().length < 5}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-500 disabled:opacity-50 flex items-center"
+              >
+                {stoppingJob ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : null}
+                Stop Job
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <AppModal
         isOpen={modalConfig.isOpen}
         title={modalConfig.title}
