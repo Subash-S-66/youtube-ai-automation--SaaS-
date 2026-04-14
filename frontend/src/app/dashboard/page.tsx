@@ -1129,7 +1129,12 @@ function Dashboard() {
 
   const handleApiError = (err: unknown) => {
      const apiError = err as ApiErrorShape;
-     const errorMsg = apiError.response?.data?.message || apiError.message || 'An unknown error occurred.';
+     const statusCode = Number(apiError.response?.status || 0);
+     const rawErrorMsg = apiError.response?.data?.message || apiError.message || 'An unknown error occurred.';
+     const errorMsg =
+       statusCode === 504
+         ? 'The prompt service is taking too long to respond (gateway timeout). Please retry in a few seconds.'
+         : rawErrorMsg;
      const isConcurrencyLimitError = /maximum\s+concurrent\s+(jobs|pipelines)\s+reached/i.test(errorMsg);
      const isUploadQuotaError =
        errorMsg.includes('videos running/pending') ||

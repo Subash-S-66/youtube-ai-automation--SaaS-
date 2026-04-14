@@ -53,6 +53,36 @@ export interface PromptGenerationOptions {
   };
 }
 
+const parseTimeoutMs = (raw: unknown, fallback: number): number => {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(1000, Math.floor(parsed));
+};
+
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation, timeoutPromise]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+};
+
+const PROMPT_GENERATION_TIMEOUT_MS = parseTimeoutMs(
+  process.env.PROMPT_GENERATION_TIMEOUT_MS,
+  parseTimeoutMs(process.env.GEMINI_TIMEOUT_MS, 15000)
+);
+
 const buildPromptWithOptions = (user_prompt: string, options: PromptGenerationOptions = {}): string => {
   const targetDuration = Math.max(15, Math.min(60, Number(options.targetDuration || 40)));
   const ctaEnabled = !!options.ctaEnabled;
@@ -102,13 +132,17 @@ const callNativeGeminiPrompt = async (prompt: string): Promise<string> => {
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
 
-  const result = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.7,
-      maxOutputTokens: 512,
-    },
-  });
+  const result = await withTimeout(
+    model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 512,
+      },
+    }),
+    PROMPT_GENERATION_TIMEOUT_MS,
+    'Prompt generation request'
+  );
   return result.response.text() || '';
 };
 
@@ -125,6 +159,9 @@ export const generatePromptDirect = async (user_prompt: string): Promise<string>
     const normalized = String(error?.message || '').toLowerCase();
     const err: any = new Error(message);
     err.statusCode =
+      normalized.includes('timed out')
+        ? 504
+        :
       normalized.includes('429') ||
       normalized.includes('too many requests') ||
       normalized.includes('quota') ||

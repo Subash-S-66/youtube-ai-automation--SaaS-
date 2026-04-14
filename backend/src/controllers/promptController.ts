@@ -52,8 +52,12 @@ export const generatePrompt = asyncHandler(
     try {
       generated_prompt = await generateAIPrompt(user_prompt, promptOptions);
     } catch (error: any) {
+      const statusCode = Number(error?.statusCode || error?.response?.status || 0);
       const message = String(error?.message || 'Prompt generation failed');
       const normalized = message.toLowerCase();
+      if (statusCode >= 400 && statusCode < 600) {
+        throw new AppError(message, statusCode);
+      }
       if (
         normalized.includes('429') ||
         normalized.includes('too many requests') ||
@@ -61,6 +65,12 @@ export const generatePrompt = asyncHandler(
         normalized.includes('rate limit')
       ) {
         throw new AppError(`Prompt generation rate-limited by Gemini. ${message}`, 429);
+      }
+      if (normalized.includes('timed out') || normalized.includes('timeout')) {
+        throw new AppError(
+          'Prompt generation timed out while waiting for the AI provider. Please retry in a few seconds.',
+          504
+        );
       }
       throw new AppError(message, 502);
     }
