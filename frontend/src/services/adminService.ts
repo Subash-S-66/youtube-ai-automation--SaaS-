@@ -48,6 +48,12 @@ export const adminService = {
     return response.data;
   },
 
+  async getGeminiModels(refresh = false) {
+    const query = refresh ? '?refresh=true' : '';
+    const response = await api.get(`/admin/gemini-models${query}`);
+    return response.data;
+  },
+
   async getSystemConfig() {
     const response = await api.get('/admin/config');
     return response.data;
@@ -65,6 +71,7 @@ export const adminService = {
 
   async updateSystemConfig(data: {
     betaMode: boolean;
+    geminiModel?: string;
     pipelineRunner?: 'local' | 'azure' | 'remote';
     pipelineServiceUrl?: string;
     pipelineServiceSecret?: string;

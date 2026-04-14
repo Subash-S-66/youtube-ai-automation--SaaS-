@@ -1,12 +1,11 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AppError } from '../middleware/errorHandler';
+import { getGeminiModelAttemptSequence } from './geminiModelService';
 
 export interface AIGenerationResult {
   text: string;
   provider: 'gemini';
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const parseTimeoutMs = (raw: unknown, fallback: number): number => {
   const rawText = String(raw ?? '').trim();
@@ -24,6 +23,7 @@ const parseTimeoutMs = (raw: unknown, fallback: number): number => {
 };
 
 const GEMINI_TIMEOUT_MS = parseTimeoutMs(process.env.GEMINI_TIMEOUT_MS, 15000);
+const MAX_ALTERNATIVE_RETRIES = 3;
 
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
   let timer: NodeJS.Timeout | undefined;
@@ -52,13 +52,12 @@ const isQuotaOrRateLimit = (message: string): boolean => {
   );
 };
 
-const callNativeGemini = async (prompt: string, timeoutMs = GEMINI_TIMEOUT_MS): Promise<string> => {
+const callNativeGemini = async (prompt: string, modelName: string, timeoutMs = GEMINI_TIMEOUT_MS): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY || '';
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured');
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
   console.log(`[AIService] Trying Native Google Gemini model: ${modelName}`);
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({ model: modelName });
@@ -110,28 +109,41 @@ export const generateFromAI = async (prompt: string): Promise<AIGenerationResult
     throw new AppError('Prompt is required for AI generation.', 400);
   }
 
-  const retryDelaysMs = [2000, 5000, 10000];
+  const modelCandidates = await getGeminiModelAttemptSequence(MAX_ALTERNATIVE_RETRIES);
+  console.log(`[AIService] Model attempt sequence: ${modelCandidates.join(' -> ')}`);
   let lastError: any = null;
-  for (let attempt = 1; attempt <= retryDelaysMs.length + 1; attempt++) {
+  for (let attempt = 0; attempt < modelCandidates.length; attempt += 1) {
+    const modelName = modelCandidates[attempt];
     try {
-      const text = await callNativeGemini(normalizedPrompt);
+      const text = await callNativeGemini(normalizedPrompt, modelName);
       validateAIOutput(text);
-      console.log('[AIService] Successfully generated content using native-gemini');
+      console.log(`[AIService] Successfully generated content using native-gemini model=${modelName}`);
       return { text, provider: 'gemini' };
     } catch (error: any) {
       lastError = error;
       const message = String(error?.message || 'unknown error');
-      if (!isQuotaOrRateLimit(message) || attempt > retryDelaysMs.length) {
-        break;
+      console.error(
+        `[AIService] Gemini generation error (model=${modelName}, attempt=${attempt + 1}/${modelCandidates.length}): ${message}`
+      );
+      const nextModel = modelCandidates[attempt + 1];
+      if (nextModel) {
+        console.warn(
+          `[AIService] Switching to alternate Gemini model=${nextModel} (retry ${attempt + 1}/${MAX_ALTERNATIVE_RETRIES}).`
+        );
       }
-      const delay = retryDelaysMs[attempt - 1] ?? 2000;
-      console.warn(`[AIService] Gemini rate-limited (attempt ${attempt}). Retrying in ${delay}ms...`);
-      await sleep(delay);
     }
   }
 
   try {
     const message = String(lastError?.message || 'unknown error');
+    const normalized = message.toLowerCase();
+    if (
+      normalized.includes('503') ||
+      normalized.includes('service unavailable') ||
+      normalized.includes('high demand')
+    ) {
+      throw new AppError(`AI generation failed (gemini overload): ${message}`, 503);
+    }
     if (isQuotaOrRateLimit(message)) {
       throw new AppError(
         `AI generation failed (gemini quota/rate limit): ${message}`,

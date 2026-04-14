@@ -2,6 +2,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface ISystemConfig extends Document {
   betaMode: boolean;
+  geminiModel?: string;
   pipelineRunner?: 'local' | 'azure' | 'remote';
   pipelineServiceUrl?: string;
   pipelineServiceSecret?: string;
@@ -57,6 +58,12 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     betaMode: {
       type: Boolean,
       default: false,
+    },
+    geminiModel: {
+      type: String,
+      default: 'gemini-3.1-flash-lite-preview',
+      trim: true,
+      maxlength: 120,
     },
     pipelineRunner: {
       type: String,

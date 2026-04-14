@@ -45,11 +45,20 @@ const normalizeOptionalText = (value: unknown, maxLength = 500): string => {
   return normalized.slice(0, maxLength);
 };
 
+const normalizeGeminiModel = (value: unknown): string => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return String(process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview').trim() || 'gemini-3.1-flash-lite-preview';
+  }
+  return normalized.slice(0, 120);
+};
+
 export const ensureSystemConfigSingleton = async (): Promise<void> => {
   const latest = await SystemConfig.findOne().sort({ updatedAt: -1 });
   if (!latest) {
     await SystemConfig.create({
       betaMode: false,
+      geminiModel: normalizeGeminiModel(undefined),
       pipelineServiceUrl: '',
       pipelineServiceSecret: '',
       pipelineRunnerPinned: false,
@@ -80,6 +89,7 @@ export const ensureSystemConfigSingleton = async (): Promise<void> => {
         pipelineRunnerFallbackOrder: sanitizePipelineRunnerFallbackOrder((latest as any).pipelineRunnerFallbackOrder),
         pipelineServiceUrl: normalizeOptionalText((latest as any).pipelineServiceUrl, 500),
         pipelineServiceSecret: normalizeOptionalText((latest as any).pipelineServiceSecret, 500),
+        geminiModel: normalizeGeminiModel((latest as any).geminiModel),
         pipelineRunnerPinned: parseBooleanConfig((latest as any).pipelineRunnerPinned, false),
         runEmbeddedWorker: parseBooleanConfig((latest as any).runEmbeddedWorker, false),
         autoStartEmbeddedWorkerWhenMissing: parseBooleanConfig((latest as any).autoStartEmbeddedWorkerWhenMissing, false),

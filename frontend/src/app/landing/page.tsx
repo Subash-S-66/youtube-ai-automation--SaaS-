@@ -239,7 +239,7 @@ const faqItems = [
   {
     question: 'What AI generates the scripts?',
     answer:
-      'Google Gemini (gemini-flash-lite by default). The content_generator module falls back to additional Gemini keys if one is rate-limited.',
+      'Google Gemini (gemini-3.1-flash-lite-preview by default). The content_generator module falls back to additional Gemini keys if one is rate-limited.',
   },
   {
     question: 'How does Story Mode work?',

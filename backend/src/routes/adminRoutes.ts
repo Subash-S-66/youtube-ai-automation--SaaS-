@@ -10,6 +10,7 @@ import {
   createNotification,
   setGlobalBanner,
   getGlobalBannerConfig,
+  getGeminiModels,
   deleteUserByAdmin,
   getSystemConfig,
   getPipelineRuntimeStatus,
@@ -36,6 +37,7 @@ router.delete('/users/:id', deleteUserByAdmin);
 router.post('/notify', createNotification);
 router.post('/banner', setGlobalBanner);
 router.get('/banner', getGlobalBannerConfig);
+router.get('/gemini-models', getGeminiModels);
 router.get('/config', getSystemConfig);
 router.get('/runtime-status', getPipelineRuntimeStatus);
 router.post('/pipeline/retry-pending', retryPendingPipelineJobs);

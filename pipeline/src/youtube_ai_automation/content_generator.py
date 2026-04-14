@@ -315,7 +315,7 @@ def _normalize_model_name(model: str) -> str:
 
 
 def _model_candidates(primary: str) -> list[str]:
-    primary = _normalize_model_name(primary) or "gemini-flash-lite-latest"
+    primary = _normalize_model_name(primary) or "gemini-3.1-flash-lite-preview"
     fallbacks_env = os.getenv("GEMINI_FALLBACK_MODELS", "")
     fallbacks = [_normalize_model_name(m) for m in fallbacks_env.split(",") if m.strip()]
     seen: set[str] = set()
@@ -578,7 +578,7 @@ def generate_content(
     topic: str,
     provider: str = "gemini",
     gemini_api_key: str = "",
-    gemini_model: str = "gemini-flash-lite-latest",
+    gemini_model: str = "gemini-3.1-flash-lite-preview",
     openai_api_key: str = "",
     openai_model: str = "gpt-4o-mini",
     anthropic_api_key: str = "",

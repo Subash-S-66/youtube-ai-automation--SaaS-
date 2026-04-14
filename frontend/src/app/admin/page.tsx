@@ -228,6 +228,10 @@ export default function AdminDashboard() {
   const bannerStartRef = useRef<HTMLInputElement | null>(null);
   const bannerEndRef = useRef<HTMLInputElement | null>(null);
   const [betaMode, setBetaMode] = useState(false);
+  const [geminiModel, setGeminiModel] = useState('gemini-3.1-flash-lite-preview');
+  const [geminiModels, setGeminiModels] = useState<string[]>([]);
+  const [geminiModelsSource, setGeminiModelsSource] = useState<'api' | 'fallback' | ''>('');
+  const [geminiModelsLoading, setGeminiModelsLoading] = useState(false);
   const [pipelineRunner, setPipelineRunner] = useState<'local' | 'azure' | 'remote'>('local');
   const [pipelineServiceUrl, setPipelineServiceUrl] = useState('');
   const [pipelineServiceSecret, setPipelineServiceSecret] = useState('');
@@ -249,6 +253,7 @@ export default function AdminDashboard() {
   const [updatingConfig, setUpdatingConfig] = useState(false);
   const [planValueMap, setPlanValueMap] = useState<PlanNumberMap>({ free: 0, basic: 1, pro: 2, premium: 4 });
   const [savingProration, setSavingProration] = useState(false);
+  const [savingGeminiModel, setSavingGeminiModel] = useState(false);
   const [savingPipelineRunner, setSavingPipelineRunner] = useState(false);
   const [savingRemoteRunnerConfig, setSavingRemoteRunnerConfig] = useState(false);
   const [savingWorkerRuntimePolicy, setSavingWorkerRuntimePolicy] = useState(false);
@@ -341,6 +346,7 @@ export default function AdminDashboard() {
 
   const getSystemConfigPayload = () => ({
     betaMode,
+    geminiModel,
     planValueMap,
     pipelineRunner,
     pipelineServiceUrl,
@@ -412,6 +418,34 @@ export default function AdminDashboard() {
       if (!silent) {
         setRuntimeStatusLoading(false);
       }
+    }
+  };
+
+  const fetchGeminiModels = async (refresh = false, syncSelected = false) => {
+    setGeminiModelsLoading(true);
+    try {
+      const response = await adminService.getGeminiModels(refresh);
+      if (response?.success && response?.data) {
+        const models = Array.isArray(response.data.models)
+          ? response.data.models
+              .map((value: unknown) => String(value || '').trim())
+              .filter((value: string) => value.length > 0)
+          : [];
+        setGeminiModels(models);
+        const source = String(response.data.source || '').trim().toLowerCase();
+        if (source === 'api' || source === 'fallback') {
+          setGeminiModelsSource(source);
+        } else {
+          setGeminiModelsSource('');
+        }
+        if (syncSelected && response.data.selectedModel) {
+          setGeminiModel(String(response.data.selectedModel).trim());
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load Gemini models', error);
+    } finally {
+      setGeminiModelsLoading(false);
     }
   };
 
@@ -635,6 +669,33 @@ export default function AdminDashboard() {
       });
     } finally {
       setSavingProration(false);
+    }
+  };
+
+  const handleSaveGeminiModel = async () => {
+    setSavingGeminiModel(true);
+    try {
+      await adminService.updateSystemConfig(getSystemConfigPayload());
+      await fetchGeminiModels(true, true);
+      setModalConfig({
+        isOpen: true,
+        title: 'Gemini Model Updated',
+        description: `Active Gemini model set to ${geminiModel}.`,
+        type: 'success',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } catch (err: unknown) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Error',
+        description: getErrorMessage(err, 'Failed to update Gemini model.'),
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+    } finally {
+      setSavingGeminiModel(false);
     }
   };
 
@@ -991,11 +1052,12 @@ export default function AdminDashboard() {
           adminService.getStats(),
           adminService.getUsers(userPage, 10, userSearch),
           adminService.getSystemConfig(),
+          adminService.getGeminiModels(),
           adminService.getGlobalBanner(),
           import('../../services/planService').then(m => m.planService.getAdminPlans()),
         ]).then((results) => {
           if (!isMounted) return;
-          const [statsRes, usersRes, configRes, bannerRes, plansRes] = results;
+          const [statsRes, usersRes, configRes, geminiModelsRes, bannerRes, plansRes] = results;
 
           if (statsRes.status === 'fulfilled' && statsRes.value?.success) setStats(statsRes.value.data);
           if (usersRes.status === 'fulfilled' && usersRes.value?.success) {
@@ -1005,6 +1067,9 @@ export default function AdminDashboard() {
 
           if (configRes.status === 'fulfilled' && configRes.value?.success && configRes.value.data) {
             setBetaMode(configRes.value.data.betaMode);
+            if (typeof configRes.value.data.geminiModel === 'string' && configRes.value.data.geminiModel.trim().length > 0) {
+              setGeminiModel(configRes.value.data.geminiModel.trim());
+            }
             if (configRes.value.data.pipelineRunner) {
               setPipelineRunner(configRes.value.data.pipelineRunner as 'local' | 'azure' | 'remote');
             }
@@ -1092,6 +1157,30 @@ export default function AdminDashboard() {
                 pro: Number(configRes.value.data.planValueMap.pro ?? 2),
                 premium: Number(configRes.value.data.planValueMap.premium ?? 4),
               });
+            }
+          }
+
+          if (geminiModelsRes.status === 'fulfilled' && geminiModelsRes.value?.success && geminiModelsRes.value.data) {
+            const configGeminiModel =
+              configRes.status === 'fulfilled' && configRes.value?.data?.geminiModel
+                ? String(configRes.value.data.geminiModel).trim()
+                : '';
+            const models = Array.isArray(geminiModelsRes.value.data.models)
+              ? geminiModelsRes.value.data.models
+                  .map((value: unknown) => String(value || '').trim())
+                  .filter((value: string) => value.length > 0)
+              : [];
+            setGeminiModels(models);
+            const source = String(geminiModelsRes.value.data.source || '').trim().toLowerCase();
+            if (source === 'api' || source === 'fallback') {
+              setGeminiModelsSource(source);
+            }
+            if (
+              !configGeminiModel &&
+              typeof geminiModelsRes.value.data.selectedModel === 'string' &&
+              geminiModelsRes.value.data.selectedModel.trim().length > 0
+            ) {
+              setGeminiModel(geminiModelsRes.value.data.selectedModel.trim());
             }
           }
 
@@ -1440,6 +1529,57 @@ export default function AdminDashboard() {
                     className="mt-3 w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {savingProration ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Proration Settings'}
+                  </button>
+                </div>
+                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-white">Gemini Model Control</p>
+                    <span className={cn(
+                      'text-[10px] uppercase tracking-wide px-2 py-0.5 rounded border',
+                      geminiModelsSource === 'api'
+                        ? 'border-green-500/40 text-green-300 bg-green-500/10'
+                        : 'border-amber-500/40 text-amber-300 bg-amber-500/10'
+                    )}>
+                      {geminiModelsSource === 'api' ? 'API Models' : 'Fallback List'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-2">
+                    Admin-selected default Gemini model. If it fails, server automatically retries up to 3 random alternative models and logs each attempt.
+                  </p>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3">
+                    <select
+                      id="gemini-model-select"
+                      aria-label="Gemini model select"
+                      value={geminiModel}
+                      onChange={(e) => setGeminiModel(e.target.value)}
+                      className="w-full bg-[#111827] text-white px-3 py-2 rounded border border-[#1A2235]"
+                    >
+                      {geminiModels.length > 0 ? (
+                        geminiModels.map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))
+                      ) : (
+                        <option value={geminiModel}>{geminiModel || 'gemini-3.1-flash-lite-preview'}</option>
+                      )}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => { void fetchGeminiModels(true, false); }}
+                      disabled={geminiModelsLoading}
+                      className="py-2 px-3 bg-[#1A2235] hover:bg-[#243451] text-slate-200 font-semibold rounded-lg transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {geminiModelsLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Refresh Models'}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleSaveGeminiModel}
+                    disabled={savingGeminiModel || !geminiModel.trim()}
+                    className="mt-3 w-full py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white font-bold rounded-lg transition-colors flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {savingGeminiModel ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Gemini Model'}
                   </button>
                 </div>
                 <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>

@@ -261,7 +261,7 @@ server.listen(PORT, () => {
 
   // AI Provider diagnostics
   const geminiConfigured = !!process.env.GEMINI_API_KEY;
-  const geminiModel = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
+  const geminiModel = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview';
   const geminiTimeoutMs = parseTimeoutMsForLog(process.env.GEMINI_TIMEOUT_MS, 15000);
   const promptGenerationTimeoutMs = parseTimeoutMsForLog(process.env.PROMPT_GENERATION_TIMEOUT_MS, geminiTimeoutMs);
   console.log('[AI Config] Provider: native-gemini only');

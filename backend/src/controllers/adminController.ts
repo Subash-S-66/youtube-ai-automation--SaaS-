@@ -33,6 +33,7 @@ import { getUploadLimits } from '../services/uploadLimitService';
 import { connection, redisEnabled } from '../config/redis';
 import { resolveLocalPythonRuntime } from '../workers/localPipelineTrigger';
 import { getAzureToken } from '../workers/azureJobTrigger';
+import { getConfiguredGeminiModel, getGeminiModelCatalog } from '../services/geminiModelService';
 
 // Stripe disabled. Using Razorpay for payments.
 
@@ -111,6 +112,14 @@ const normalizePipelineServiceUrl = (value: unknown): string => {
 
 const normalizePipelineServiceSecret = (value: unknown): string => {
   return String(value || '').trim().slice(0, 500);
+};
+
+const normalizeGeminiModel = (value: unknown): string => {
+  const normalized = String(value || '').trim().replace(/^models\//i, '');
+  if (!normalized) {
+    return String(process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite-preview').trim() || 'gemini-3.1-flash-lite-preview';
+  }
+  return normalized.slice(0, 120);
 };
 
 const normalizeWorkerHeartbeatSource = (value: unknown): WorkerHeartbeatSourceType => {
@@ -621,6 +630,7 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
   if (!config) {
     config = await SystemConfig.create({
       betaMode: false,
+      geminiModel: normalizeGeminiModel(undefined),
       pipelineRunner: 'local',
       pipelineServiceUrl: '',
       pipelineServiceSecret: '',
@@ -648,6 +658,24 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
   res.status(200).json({
     success: true,
     data: config,
+  });
+});
+
+export const getGeminiModels = asyncHandler(async (req: Request, res: Response) => {
+  const forceRefresh = String(req.query.refresh || '').trim().toLowerCase() === 'true';
+  const [selectedModel, catalog] = await Promise.all([
+    getConfiguredGeminiModel(forceRefresh),
+    getGeminiModelCatalog(forceRefresh),
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      selectedModel,
+      models: catalog.models,
+      source: catalog.source,
+      fetchedAt: catalog.fetchedAt,
+    },
   });
 });
 
@@ -822,6 +850,7 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
 const configSchema = z.object({
   body: z.object({
     betaMode: z.boolean(),
+    geminiModel: z.string().trim().min(1).max(120).optional(),
     pipelineRunner: z.enum(['local', 'azure', 'remote']).optional(),
     pipelineServiceUrl: z.string().max(500).optional(),
     pipelineServiceSecret: z.string().max(500).optional(),
@@ -922,6 +951,7 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     betaMode,
     pipelineServiceUrl,
     pipelineServiceSecret,
+    geminiModel,
     pipelineRunnerPinned,
     runEmbeddedWorker,
     autoStartEmbeddedWorkerWhenMissing,
@@ -940,6 +970,9 @@ export const updateSystemConfig = asyncHandler(async (req: Request, res: Respons
     processingHardTimeoutMinutes,
   } = validation.data.body;
   const updatePayload: any = { betaMode };
+  if (typeof geminiModel !== 'undefined') {
+    updatePayload.geminiModel = normalizeGeminiModel(geminiModel);
+  }
   if (validation.data.body.pipelineRunner) {
     updatePayload.pipelineRunner = validation.data.body.pipelineRunner;
   }

@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { getGeminiModelAttemptSequence } from './geminiModelService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SYSTEM PROMPT  – Converts raw user topic/idea → a tight narration brief
@@ -89,6 +90,7 @@ const PROMPT_GENERATION_TIMEOUT_MS = parseTimeoutMs(
   process.env.PROMPT_GENERATION_TIMEOUT_MS,
   parseTimeoutMs(process.env.GEMINI_TIMEOUT_MS, 15000)
 );
+const MAX_ALTERNATIVE_RETRIES = 3;
 
 const buildPromptWithOptions = (user_prompt: string, options: PromptGenerationOptions = {}): string => {
   const targetDuration = Math.max(15, Math.min(60, Number(options.targetDuration || 40)));
@@ -127,13 +129,12 @@ ${storyContext}
 Write the narration brief now. Remember: plain paragraph, spoken aloud, ${minWords}–${maxWords} words, no labels or formatting.`;
 };
 
-const callNativeGeminiPrompt = async (prompt: string): Promise<string> => {
+const callNativeGeminiPrompt = async (prompt: string, modelName: string): Promise<string> => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured.');
   }
 
-  const modelName = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
   console.log(`[PromptService] Trying Native Google Gemini model: ${modelName}`);
   
   const genAI = new GoogleGenerativeAI(apiKey);
@@ -154,31 +155,50 @@ const callNativeGeminiPrompt = async (prompt: string): Promise<string> => {
 };
 
 export const generatePromptDirect = async (user_prompt: string): Promise<string> => {
-  try {
-    const resultText = await callNativeGeminiPrompt(user_prompt);
-    if (!resultText || resultText.trim().split(/\s+/).length < 10) {
-      throw new Error('AI returned empty or too-short response.');
+  const modelCandidates = await getGeminiModelAttemptSequence(MAX_ALTERNATIVE_RETRIES);
+  console.log(`[PromptService] Model attempt sequence: ${modelCandidates.join(' -> ')}`);
+  let lastError: any = null;
+
+  for (let attempt = 0; attempt < modelCandidates.length; attempt += 1) {
+    const modelName = modelCandidates[attempt];
+    try {
+      const resultText = await callNativeGeminiPrompt(user_prompt, modelName);
+      if (!resultText || resultText.trim().split(/\s+/).length < 10) {
+        throw new Error('AI returned empty or too-short response.');
+      }
+      console.log(`[PromptService] Successfully generated prompt using native-gemini model=${modelName}`);
+      return resultText.trim();
+    } catch (error: any) {
+      lastError = error;
+      const rawMessage = String(error?.message || 'unknown error');
+      console.error(
+        `[PromptService] Native Gemini error (model=${modelName}, attempt=${attempt + 1}/${modelCandidates.length}): ${rawMessage}`
+      );
+
+      const nextModel = modelCandidates[attempt + 1];
+      if (nextModel) {
+        console.warn(
+          `[PromptService] Switching to alternate Gemini model=${nextModel} (retry ${attempt + 1}/${MAX_ALTERNATIVE_RETRIES}).`
+        );
+      }
     }
-    console.log('[PromptService] Successfully generated prompt using native-gemini');
-    return resultText.trim();
-  } catch (error: any) {
-    const rawMessage = String(error?.message || 'unknown error');
-    console.error(`[PromptService] Native Gemini error: ${rawMessage}`);
-    const message = `Prompt generation failed (native-gemini): ${error?.message || 'unknown error'}`;
-    const normalized = String(error?.message || '').toLowerCase();
-    const err: any = new Error(message);
-    err.statusCode =
-      normalized.includes('timed out')
-        ? 504
-        :
-      normalized.includes('429') ||
-      normalized.includes('too many requests') ||
-      normalized.includes('quota') ||
-      normalized.includes('rate limit')
-        ? 429
-        : 502;
-    throw err;
   }
+
+  const message = `Prompt generation failed (native-gemini): ${lastError?.message || 'unknown error'}`;
+  const normalized = String(lastError?.message || '').toLowerCase();
+  const err: any = new Error(message);
+  err.statusCode =
+    normalized.includes('timed out')
+      ? 504
+      : normalized.includes('503') || normalized.includes('service unavailable') || normalized.includes('high demand')
+        ? 503
+        : normalized.includes('429') ||
+            normalized.includes('too many requests') ||
+            normalized.includes('quota') ||
+            normalized.includes('rate limit')
+          ? 429
+          : 502;
+  throw err;
 };
 
 export const generatePrompt = async (user_prompt: string, options: PromptGenerationOptions = {}): Promise<string> => {
