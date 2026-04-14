@@ -58,6 +58,12 @@ jobs:
             exit 1
           fi
 
+          job_name="$AZURE_JOB_NAME"
+          if [ ${#job_name} -lt 2 ] || [ ${#job_name} -gt 32 ] || [[ "$job_name" == *"--"* ]] || [[ ! "$job_name" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]]; then
+            echo "Invalid AZURE_JOB_NAME '$job_name'. Expected 2-32 chars, lower-case alphanumeric or '-', start with a letter, end with alphanumeric, and no '--'." >&2
+            exit 1
+          fi
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:

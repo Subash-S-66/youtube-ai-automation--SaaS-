@@ -56,6 +56,69 @@ if ([string]::IsNullOrWhiteSpace($JobName)) {
     throw "JobName is required. Set AZURE_JOB_NAME or pass -JobName explicitly."
 }
 
+$JobName = $JobName.Trim()
+
+function Test-IsValidContainerAppJobName {
+    param([string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return $false
+    }
+
+    if ($Name.Length -lt 2 -or $Name.Length -gt 32) {
+        return $false
+    }
+
+    if ($Name -match "--") {
+        return $false
+    }
+
+    return ($Name -match "^[a-z][a-z0-9-]*[a-z0-9]$")
+}
+
+function Get-ContainerAppJobNameSuggestion {
+    param([string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return ""
+    }
+
+    $candidate = $Name.Trim().ToLowerInvariant()
+    $candidate = $candidate -replace "[^a-z0-9-]", "-"
+    $candidate = $candidate -replace "-{2,}", "-"
+    $candidate = $candidate -replace "^[^a-z]+", ""
+    $candidate = $candidate -replace "[^a-z0-9]+$", ""
+
+    if ($candidate.Length -gt 32) {
+        $candidate = $candidate.Substring(0, 32).TrimEnd("-")
+    }
+
+    if ($candidate.Length -lt 2) {
+        return ""
+    }
+
+    if ($candidate -notmatch "^[a-z]" -or $candidate -notmatch "[a-z0-9]$") {
+        return ""
+    }
+
+    return $candidate
+}
+
+if (-not (Test-IsValidContainerAppJobName -Name $JobName)) {
+    $suggestedJobName = Get-ContainerAppJobNameSuggestion -Name $JobName
+    $suggestionMessage = ""
+    if (-not [string]::IsNullOrWhiteSpace($suggestedJobName)) {
+        $suggestionMessage = " Suggested value: '$suggestedJobName'."
+    }
+
+    throw (
+        "Invalid JobName '$JobName'. Azure Container Apps job names must be 2-32 characters, use lower-case letters/numbers or '-', " +
+        "start with a letter, end with a letter/number, and cannot contain '--'." +
+        "$suggestionMessage " +
+        "Update AZURE_JOB_NAME (repo variable/secret) or pass -JobName explicitly."
+    )
+}
+
 if ($ImageRepository.Contains(":")) {
     throw "ImageRepository must not include a tag. Pass only repository name and use -ImageTag for the versioned tag."
 }
@@ -103,17 +166,24 @@ function Invoke-ExternalCommand {
     }
     Write-Host ">> $commandText"
 
-    if ($CaptureOutput) {
-        $result = & $CommandParts[0] $CommandParts[1..($CommandParts.Count - 1)] 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "Command failed ($LASTEXITCODE): $commandText`n$result"
-        }
-        return $result
-    }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
 
-    & $CommandParts[0] $CommandParts[1..($CommandParts.Count - 1)]
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed ($LASTEXITCODE): $commandText"
+    try {
+        if ($CaptureOutput) {
+            $result = & $CommandParts[0] $CommandParts[1..($CommandParts.Count - 1)] 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "Command failed ($LASTEXITCODE): $commandText`n$result"
+            }
+            return $result
+        }
+
+        & $CommandParts[0] $CommandParts[1..($CommandParts.Count - 1)]
+        if ($LASTEXITCODE -ne 0) {
+            throw "Command failed ($LASTEXITCODE): $commandText"
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
 }
 
@@ -129,29 +199,37 @@ function ConvertFrom-CliJson {
         throw "No JSON output returned from $Context."
     }
 
-    # Azure CLI extensions can prepend warning lines before JSON payload.
-    $objectStart = $rawOutput.IndexOf("{")
-    $arrayStart = $rawOutput.IndexOf("[")
-    $startIndex = -1
+    # Azure CLI extensions can prepend stderr warning/error lines before JSON payload.
+    $lines = $rawOutput -split "`r?`n"
+    $candidateStartIndexes = @()
 
-    if ($objectStart -ge 0 -and $arrayStart -ge 0) {
-        $startIndex = [Math]::Min($objectStart, $arrayStart)
-    } elseif ($objectStart -ge 0) {
-        $startIndex = $objectStart
-    } elseif ($arrayStart -ge 0) {
-        $startIndex = $arrayStart
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $trimmedLine = $lines[$i].TrimStart()
+        if ($trimmedLine.StartsWith("{") -or $trimmedLine.StartsWith("[")) {
+            $candidateStartIndexes += $i
+        }
     }
 
-    if ($startIndex -lt 0) {
+    if ($candidateStartIndexes.Count -eq 0) {
         throw "Expected JSON output from $Context but received:`n$rawOutput"
     }
 
-    $jsonPayload = $rawOutput.Substring($startIndex)
-    try {
-        return $jsonPayload | ConvertFrom-Json
-    } catch {
-        throw "Failed to parse JSON output from $Context.`nRaw output:`n$rawOutput"
+    foreach ($startIndex in $candidateStartIndexes) {
+        for ($endIndex = $lines.Count - 1; $endIndex -ge $startIndex; $endIndex--) {
+            $jsonPayload = (($lines[$startIndex..$endIndex]) -join "`n").Trim()
+            if ([string]::IsNullOrWhiteSpace($jsonPayload)) {
+                continue
+            }
+
+            try {
+                return $jsonPayload | ConvertFrom-Json
+            } catch {
+                continue
+            }
+        }
     }
+
+    throw "Failed to parse JSON output from $Context.`nRaw output:`n$rawOutput"
 }
 
 function Get-CurrentPrincipalObjectId {
@@ -422,18 +500,53 @@ if ([string]::IsNullOrWhiteSpace($resolvedSubscriptionId)) {
     }
 }
 
+$subscriptionArgs = @()
+if (-not [string]::IsNullOrWhiteSpace($resolvedSubscriptionId)) {
+    $subscriptionArgs = @("--subscription", $resolvedSubscriptionId)
+    Invoke-ExternalCommand -CommandParts @("az", "account", "set", "--subscription", $resolvedSubscriptionId)
+}
+
 $jobExists = $false
 $existingJob = $null
+$jobLookupError = ""
 try {
-    $existingJobJson = Invoke-ExternalCommand -CommandParts @(
+    $existingJobJson = Invoke-ExternalCommand -CommandParts (
+        @(
         "az", "containerapp", "job", "show",
         "-n", $JobName,
-        "-g", $ResourceGroup
+        "-g", $ResourceGroup,
+        "-o", "json"
+    ) + $subscriptionArgs
     ) -CaptureOutput
     $existingJob = ConvertFrom-CliJson -CommandOutput $existingJobJson -Context "az containerapp job show -n $JobName -g $ResourceGroup"
     $jobExists = $true
 } catch {
+    $jobLookupError = $_.Exception.Message
     $jobExists = $false
+}
+
+if (-not $jobExists) {
+    try {
+        $jobListJson = Invoke-ExternalCommand -CommandParts (
+            @(
+                "az", "containerapp", "job", "list",
+                "-g", $ResourceGroup,
+                "--query", "[?name=='$JobName'] | [0]",
+                "-o", "json"
+            ) + $subscriptionArgs
+        ) -CaptureOutput
+        $listedJob = ConvertFrom-CliJson -CommandOutput $jobListJson -Context "az containerapp job list -g $ResourceGroup"
+        if ($listedJob -and -not [string]::IsNullOrWhiteSpace([string]$listedJob.name)) {
+            $existingJob = $listedJob
+            $jobExists = $true
+        }
+    } catch {
+        $jobExists = $false
+    }
+}
+
+if (-not $jobExists -and -not [string]::IsNullOrWhiteSpace($jobLookupError)) {
+    Write-Warning "Unable to inspect existing job '$JobName' in resource group '$ResourceGroup'. Treating as not found. Lookup details: $jobLookupError"
 }
 
 $effectiveEnvironmentResourceId = $EnvironmentResourceId
