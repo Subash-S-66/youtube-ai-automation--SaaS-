@@ -50,6 +50,8 @@ export const generatePrompt = asyncHandler(
     if (safeTemplateConfig !== undefined) promptOptions.templateConfig = safeTemplateConfig;
 
     let generated_prompt = '';
+    let usedFallbackPrompt = false;
+    let fallbackWarning = '';
     try {
       console.log(
         `[PromptController] generate start user=${req.user.id} promptChars=${String(user_prompt || '').length}`
@@ -59,29 +61,54 @@ export const generatePrompt = asyncHandler(
       const statusCode = Number(error?.statusCode || error?.response?.status || 0);
       const message = String(error?.message || 'Prompt generation failed');
       const normalized = message.toLowerCase();
+      const trimmedUserPrompt = String(user_prompt || '').trim();
+      const canFallbackToUserPrompt = Boolean(trimmedUserPrompt);
+      const isTransientProviderFailure =
+        statusCode === 429 ||
+        statusCode === 503 ||
+        statusCode === 504 ||
+        normalized.includes('429') ||
+        normalized.includes('too many requests') ||
+        normalized.includes('quota') ||
+        normalized.includes('rate limit') ||
+        normalized.includes('timed out') ||
+        normalized.includes('timeout') ||
+        normalized.includes('service unavailable') ||
+        normalized.includes('high demand');
       console.error(
         `[PromptController] generate failed user=${req.user.id} status=${statusCode || 'n/a'} elapsedMs=${
           Date.now() - startedAt
         } message=${message}`
       );
-      if (statusCode >= 400 && statusCode < 600) {
-        throw new AppError(message, statusCode);
+      if (isTransientProviderFailure && canFallbackToUserPrompt) {
+        generated_prompt = trimmedUserPrompt;
+        usedFallbackPrompt = true;
+        fallbackWarning =
+          'AI prompt service was unavailable. Using your original prompt so the job can continue in the background.';
+        console.warn(
+          `[PromptController] generate fallback user=${req.user.id} elapsedMs=${Date.now() - startedAt} reason=${message}`
+        );
       }
-      if (
+
+      if (usedFallbackPrompt) {
+        // Continue with fallback prompt persistence and response below.
+      } else if (statusCode >= 400 && statusCode < 600) {
+        throw new AppError(message, statusCode);
+      } else if (
         normalized.includes('429') ||
         normalized.includes('too many requests') ||
         normalized.includes('quota') ||
         normalized.includes('rate limit')
       ) {
         throw new AppError(`Prompt generation rate-limited by Gemini. ${message}`, 429);
-      }
-      if (normalized.includes('timed out') || normalized.includes('timeout')) {
+      } else if (normalized.includes('timed out') || normalized.includes('timeout')) {
         throw new AppError(
           'Prompt generation timed out while waiting for the AI provider. Please retry in a few seconds.',
           504
         );
+      } else {
+        throw new AppError(message, 502);
       }
-      throw new AppError(message, 502);
     }
 
     // Save prompt pair to DB
@@ -94,6 +121,8 @@ export const generatePrompt = asyncHandler(
     res.status(201).json({
       promptId: newPrompt._id,
       gemini_prompt: generated_prompt,
+      fallbackUsed: usedFallbackPrompt,
+      warning: usedFallbackPrompt ? fallbackWarning : undefined,
     });
     console.log(
       `[PromptController] generate success user=${req.user.id} elapsedMs=${Date.now() - startedAt} promptId=${String(

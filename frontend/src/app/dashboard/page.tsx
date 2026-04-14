@@ -176,10 +176,14 @@ interface SequenceResponse {
 interface PromptResponse {
   promptId?: string;
   gemini_prompt?: string;
+  warning?: string;
+  fallbackUsed?: boolean;
   data?: {
     promptId?: string;
     id?: string;
     gemini_prompt?: string;
+    warning?: string;
+    fallbackUsed?: boolean;
   };
 }
 
@@ -1095,6 +1099,10 @@ function Dashboard() {
         promptRes?.data?.promptId ||
         promptRes?.data?.id ||
         '';
+      const promptWarning = String(promptRes?.warning || promptRes?.data?.warning || '').trim();
+      if (promptWarning) {
+        setMessage({ text: promptWarning, type: 'warning' });
+      }
       if (!promptId) {
         throw new Error('Prompt generation response is missing promptId');
       }
@@ -1132,10 +1140,26 @@ function Dashboard() {
      const apiError = err as ApiErrorShape;
      const statusCode = Number(apiError.response?.status || 0);
      const rawErrorMsg = apiError.response?.data?.message || apiError.message || 'An unknown error occurred.';
+     const normalizedRawErrorMsg = String(rawErrorMsg || '').toLowerCase();
+     const isGeminiQuotaOrRateLimit =
+       (normalizedRawErrorMsg.includes('429') ||
+         normalizedRawErrorMsg.includes('too many requests') ||
+         normalizedRawErrorMsg.includes('quota') ||
+         normalizedRawErrorMsg.includes('rate limit')) &&
+       (normalizedRawErrorMsg.includes('gemini') ||
+         normalizedRawErrorMsg.includes('generativelanguage.googleapis.com') ||
+         normalizedRawErrorMsg.includes('googlegenerativeai'));
+     const isRunnerUnavailableError = normalizedRawErrorMsg.includes('no available pipeline runner');
+     const compactRawErrorMsg = rawErrorMsg.length > 1200 ? `${rawErrorMsg.slice(0, 1200)}...` : rawErrorMsg;
+
      const errorMsg =
        statusCode === 504
          ? 'The prompt service is taking too long to respond (gateway timeout). Please retry in a few seconds.'
-         : rawErrorMsg;
+         : isGeminiQuotaOrRateLimit
+           ? 'AI provider is currently rate-limited. Please retry in around 20 seconds.'
+           : isRunnerUnavailableError || statusCode === 503
+             ? 'Video processing is temporarily unavailable. Please retry shortly.'
+             : compactRawErrorMsg;
      const isConcurrencyLimitError = /maximum\s+concurrent\s+(jobs|pipelines)\s+reached/i.test(errorMsg);
      const isUploadQuotaError =
        errorMsg.includes('videos running/pending') ||

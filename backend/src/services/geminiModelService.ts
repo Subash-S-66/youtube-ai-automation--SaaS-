@@ -9,6 +9,13 @@ export interface GeminiModelCatalog {
 }
 
 const DEFAULT_GEMINI_MODEL = 'gemini-3.1-flash-lite-preview';
+const DEFAULT_GEMINI_FALLBACK_MODELS = [
+  DEFAULT_GEMINI_MODEL,
+  'gemini-2.0-flash-lite-001',
+  'gemini-flash-lite-latest',
+  'gemini-2.0-flash',
+];
+const NON_TEXT_MODEL_PATTERN = /(embedding|audio|image|live|computer-use|robotics)/i;
 const CONFIG_CACHE_TTL_MS = 30 * 1000;
 const MODEL_CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
 const MODEL_LIST_REQUEST_TIMEOUT_MS = 10 * 1000;
@@ -49,6 +56,26 @@ const getEnvFallbackModels = (): string[] => {
     .map((item) => item.trim())
     .filter(Boolean);
   return uniqueModels(parsed);
+};
+
+const getModelPriority = (model: string): number => {
+  const normalized = String(model || '').trim().toLowerCase();
+  if (!normalized) {
+    return 100;
+  }
+  if (normalized === DEFAULT_GEMINI_MODEL) {
+    return 0;
+  }
+  if (normalized.includes('flash-lite')) {
+    return 10;
+  }
+  if (normalized.includes('flash')) {
+    return 20;
+  }
+  if (normalized.includes('pro')) {
+    return 90;
+  }
+  return 50;
 };
 
 const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
@@ -105,7 +132,12 @@ const fetchAvailableGeminiModelsFromApi = async (): Promise<string[]> => {
 const buildFallbackCatalog = async (): Promise<GeminiModelCatalog> => {
   const configured = await getConfiguredGeminiModel();
   return {
-    models: uniqueModels([configured, getEnvDefaultModel(), ...getEnvFallbackModels()]),
+    models: uniqueModels([
+      configured,
+      getEnvDefaultModel(),
+      ...getEnvFallbackModels(),
+      ...DEFAULT_GEMINI_FALLBACK_MODELS,
+    ]),
     source: 'fallback',
     fetchedAt: new Date().toISOString(),
   };
@@ -162,23 +194,25 @@ export const getGeminiModelCatalog = async (forceRefresh = false): Promise<Gemin
   return catalog;
 };
 
-const shuffleInPlace = (items: string[]): string[] => {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const current = copy[i]!;
-    const random = copy[j]!;
-    [copy[i], copy[j]] = [random, current];
-  }
-  return copy;
-};
-
 export const getGeminiModelAttemptSequence = async (maxAlternativeRetries = 3): Promise<string[]> => {
   const primary = await getConfiguredGeminiModel();
   const catalog = await getGeminiModelCatalog();
-  const alternatives = shuffleInPlace(
-    uniqueModels([...(catalog.models || []), ...getEnvFallbackModels()]).filter((model) => model !== primary)
-  );
+  const allCandidates = uniqueModels([
+    ...(catalog.models || []),
+    ...getEnvFallbackModels(),
+    ...DEFAULT_GEMINI_FALLBACK_MODELS,
+  ]);
+  const textCandidates = allCandidates.filter((model) => !NON_TEXT_MODEL_PATTERN.test(model));
+  const candidatePool = textCandidates.length > 0 ? textCandidates : allCandidates;
+  const alternatives = candidatePool
+    .filter((model) => model !== primary)
+    .sort((a, b) => {
+      const priorityDiff = getModelPriority(a) - getModelPriority(b);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      return a.localeCompare(b);
+    });
   const selectedAlternatives = alternatives.slice(0, Math.max(0, Math.floor(maxAlternativeRetries)));
   return [primary, ...selectedAlternatives];
 };

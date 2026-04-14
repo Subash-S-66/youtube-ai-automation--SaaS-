@@ -19,6 +19,7 @@ import {
   sanitizePipelineRunnerFallbackOrder,
 } from './pipelineRetryPolicyService';
 import { getPipelineConcurrencyLimitForPlan } from './pipelineConcurrencyPolicyService';
+import { resolveLocalPythonRuntime } from '../workers/localPipelineTrigger';
 
 export interface PipelineInputSettings {
   targetDuration?: number;
@@ -108,6 +109,94 @@ const normalizeRunner = (raw: unknown): 'local' | 'azure' | 'remote' | null => {
     return normalized;
   }
   return null;
+};
+
+const normalizePipelineServiceUrl = (value: unknown): string => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized.replace(/\/+$/, '').slice(0, 500);
+};
+
+const getMissingAzureRunnerEnv = (): string[] => {
+  const missing: string[] = [];
+  if (!String(process.env.AZURE_JOB_NAME || '').trim()) {
+    missing.push('AZURE_JOB_NAME');
+  }
+  if (!String(process.env.AZURE_RESOURCE_GROUP || process.env.RESOURCE_GROUP || '').trim()) {
+    missing.push('AZURE_RESOURCE_GROUP|RESOURCE_GROUP');
+  }
+  if (!String(process.env.AZURE_SUBSCRIPTION_ID || '').trim()) {
+    missing.push('AZURE_SUBSCRIPTION_ID');
+  }
+  if (!String(process.env.AZURE_TENANT_ID || '').trim()) {
+    missing.push('AZURE_TENANT_ID');
+  }
+  if (!String(process.env.AZURE_CLIENT_ID || '').trim()) {
+    missing.push('AZURE_CLIENT_ID');
+  }
+  if (!String(process.env.AZURE_CLIENT_SECRET || '').trim()) {
+    missing.push('AZURE_CLIENT_SECRET');
+  }
+  return missing;
+};
+
+const getMissingRemoteRunnerEnv = (serviceUrlFromConfig?: unknown): string[] => {
+  const configuredUrl = normalizePipelineServiceUrl(serviceUrlFromConfig);
+  const envUrl = normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL);
+  const effectiveUrl = configuredUrl || envUrl;
+  return effectiveUrl ? [] : ['PIPELINE_SERVICE_URL'];
+};
+
+const ensureRunnerAvailabilityOrThrow = (config: any): void => {
+  const configPrimary = normalizeRunner(config?.pipelineRunner);
+  const envPrimary = normalizeRunner(process.env.PIPELINE_RUNNER);
+  const envPinned = parseBoolean(process.env.PIPELINE_RUNNER_PINNED, false);
+  const effectivePinned = typeof config?.pipelineRunnerPinned === 'boolean'
+    ? config.pipelineRunnerPinned
+    : envPinned;
+  const remoteConfigured = Boolean(
+    normalizePipelineServiceUrl(config?.pipelineServiceUrl) || normalizePipelineServiceUrl(process.env.PIPELINE_SERVICE_URL)
+  );
+  const autoPrimary: 'local' | 'remote' = remoteConfigured ? 'remote' : 'local';
+  const derivedPrimary: 'local' | 'azure' | 'remote' = effectivePinned
+    ? (envPrimary || configPrimary || autoPrimary)
+    : (configPrimary || envPrimary || autoPrimary);
+  const fallbackOrder = sanitizePipelineRunnerFallbackOrder(config?.pipelineRunnerFallbackOrder);
+  const sequence = buildRunnerSequence(derivedPrimary, fallbackOrder);
+
+  const localRuntime = resolveLocalPythonRuntime();
+  const missingAzureEnv = getMissingAzureRunnerEnv();
+  const missingRemoteEnv = getMissingRemoteRunnerEnv(config?.pipelineServiceUrl);
+
+  const availability: Record<'local' | 'azure' | 'remote', boolean> = {
+    local: localRuntime.available,
+    azure: missingAzureEnv.length === 0,
+    remote: missingRemoteEnv.length === 0,
+  };
+
+  if (availability.local || availability.azure || availability.remote) {
+    return;
+  }
+
+  const diagnostics = [
+    `primaryRunner=${derivedPrimary}`,
+    `runnerSequence=${sequence.join(' -> ')}`,
+    `availability=${JSON.stringify(availability)}`,
+    localRuntime.available
+      ? ''
+      : `localRuntime=${localRuntime.reason} (checked: ${localRuntime.candidates.join(', ')})`,
+    missingAzureEnv.length > 0 ? `missingAzureEnv=${missingAzureEnv.join(', ')}` : '',
+    missingRemoteEnv.length > 0 ? `missingRemoteEnv=${missingRemoteEnv.join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' | ');
+
+  throw new AppError(
+    `No available pipeline runner. ${diagnostics}`,
+    503
+  );
 };
 
 const SUBTOPIC_GEN_TIMEOUT_MS = parseTimeoutMs(process.env.SUBTOPIC_GEN_TIMEOUT_MS, 3000);
@@ -407,6 +496,9 @@ export const enqueuePipelineJob = async ({
     queueConfig = null;
     console.warn('[PipelineRunService] Queue config lookup timed out, using fallback limits:', error);
   }
+
+  ensureRunnerAvailabilityOrThrow(queueConfig);
+
   const dynamicQueueLimit = getPipelineConcurrencyLimitForPlan(
     limitCheck.plan,
     queueConfig as any,

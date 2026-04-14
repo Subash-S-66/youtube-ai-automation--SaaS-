@@ -86,11 +86,14 @@ const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: s
   }
 };
 
-const PROMPT_GENERATION_TIMEOUT_MS = parseTimeoutMs(
-  process.env.PROMPT_GENERATION_TIMEOUT_MS,
-  parseTimeoutMs(process.env.GEMINI_TIMEOUT_MS, 15000)
+const PROMPT_GENERATION_TIMEOUT_MS = Math.min(
+  parseTimeoutMs(
+    process.env.PROMPT_GENERATION_TIMEOUT_MS,
+    parseTimeoutMs(process.env.GEMINI_TIMEOUT_MS, 8000)
+  ),
+  8000
 );
-const MAX_ALTERNATIVE_RETRIES = 3;
+const MAX_ALTERNATIVE_RETRIES = 0;
 
 const buildPromptWithOptions = (user_prompt: string, options: PromptGenerationOptions = {}): string => {
   const targetDuration = Math.max(15, Math.min(60, Number(options.targetDuration || 40)));

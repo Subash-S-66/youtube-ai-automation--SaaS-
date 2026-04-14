@@ -38,18 +38,53 @@ const dedupeCandidates = (values: string[]): string[] => {
   return result;
 };
 
+const resolveProjectRoots = (): string[] => {
+  const cwd = path.resolve(process.cwd());
+  const fromWorkerDir = path.resolve(__dirname, '../../..');
+  const fromWorkerParent = path.resolve(__dirname, '../../../..');
+  const fromEnv = String(process.env.APP_ROOT || '').trim();
+
+  const roots = dedupeCandidates([fromEnv, cwd, fromWorkerDir, fromWorkerParent]).map((root) =>
+    path.resolve(root)
+  );
+
+  return roots.filter((root) => {
+    const isFilesystemRoot = root === path.parse(root).root;
+    if (!isFilesystemRoot) {
+      return true;
+    }
+    // Keep root only when it actually looks like this project location.
+    return fs.existsSync(path.join(root, 'pipeline')) || fs.existsSync(path.join(root, 'backend'));
+  });
+};
+
 const resolvePythonCandidates = (): string[] => {
-  const repoRoot = path.resolve(__dirname, '../../..');
+  const projectRoots = resolveProjectRoots();
+
+  const repoRoot =
+    projectRoots.find((root) => fs.existsSync(path.join(root, 'pipeline'))) ||
+    projectRoots[0] ||
+    path.resolve(process.cwd());
   const pipelineDir = path.join(repoRoot, 'pipeline');
 
   const candidates: string[] = [
     String(process.env.PIPELINE_PYTHON_CMD || '').trim(),
     String(process.env.PYTHON_EXECUTABLE || '').trim(),
-    path.join(repoRoot, '.venv', 'Scripts', 'python.exe'),
-    path.join(repoRoot, '.venv', 'bin', 'python'),
-    path.join(pipelineDir, '.venv', 'Scripts', 'python.exe'),
-    path.join(pipelineDir, '.venv', 'bin', 'python'),
   ];
+
+  for (const root of projectRoots) {
+    candidates.push(path.join(root, '.venv', 'Scripts', 'python.exe'));
+    candidates.push(path.join(root, '.venv', 'bin', 'python'));
+
+    const nestedPipelineDir = path.join(root, 'pipeline');
+    candidates.push(path.join(nestedPipelineDir, '.venv', 'Scripts', 'python.exe'));
+    candidates.push(path.join(nestedPipelineDir, '.venv', 'bin', 'python'));
+  }
+
+  candidates.push(path.join(repoRoot, '.venv', 'Scripts', 'python.exe'));
+  candidates.push(path.join(repoRoot, '.venv', 'bin', 'python'));
+  candidates.push(path.join(pipelineDir, '.venv', 'Scripts', 'python.exe'));
+  candidates.push(path.join(pipelineDir, '.venv', 'bin', 'python'));
 
   if (process.platform === 'win32') {
     candidates.push('py', 'python', 'python3');

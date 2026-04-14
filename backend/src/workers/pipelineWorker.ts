@@ -1371,11 +1371,24 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
 
       if (!runnerSelection.availability[pipelineRunner]) {
         const localRuntime = resolveLocalPythonRuntime();
+        const diagnostics = [
+          !localRuntime.available
+            ? `Local runtime checked: ${localRuntime.candidates.join(', ')}`
+            : '',
+          runnerSelection.missingAzureEnv.length > 0
+            ? `Missing Azure runner config: ${runnerSelection.missingAzureEnv.join(', ')}`
+            : '',
+          runnerSelection.missingRemoteEnv.length > 0
+            ? `Missing remote runner config: ${runnerSelection.missingRemoteEnv.join(', ')}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' | ');
         const err: any = new Error(
           `No available pipeline runner. Availability=${JSON.stringify(runnerSelection.availability)}${
-            localRuntime.available
-              ? ''
-              : ` | Local runtime checked: ${localRuntime.candidates.join(', ')}`
+            diagnostics
+              ? ` | ${diagnostics}`
+              : ''
           }`
         );
         err.stage = 'RENDER';
