@@ -1,14 +1,31 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Image from 'next/image';
-import dynamic from 'next/dynamic';
-import { m, AnimatePresence } from 'framer-motion';
+import { m } from 'framer-motion';
 
 
 import { ArrowRight, Mail } from 'lucide-react';
 import { authService } from '../../services/authService';
+
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as ApiErrorShape;
+    const message = err.response?.data?.message;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message;
+    }
+  }
+  return fallback;
+};
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState('');
@@ -24,8 +41,8 @@ export default function ForgotPassword() {
     try {
       const data = await authService.forgotPassword(email);
       setSuccess(data.message || 'If the email exists, a password reset link has been sent.');
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to request password reset.');
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error, 'Failed to request password reset.'));
     } finally {
       setIsLoading(false);
     }

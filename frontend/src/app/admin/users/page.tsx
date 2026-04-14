@@ -16,12 +16,64 @@ interface UserSummary {
   subscriptionExpiresAt?: string;
 }
 
+interface UserDetailsProfile {
+  email: string;
+  plan: string;
+  subscriptionExpiresAt?: string;
+  uploadsUsedToday: number;
+  uploadsOnHold: number;
+  isEmailVerified: boolean;
+  isYoutubeConnected: boolean;
+}
+
+interface UserDetailsJob {
+  _id: string;
+  createdAt: string;
+  status: string;
+}
+
+interface UserDetailsPrompt {
+  _id: string;
+  title?: string;
+  createdAt: string;
+}
 
 interface UserDetails {
-  user: any;
-  jobs: any[];
-  prompts: any[];
+  user: UserDetailsProfile;
+  jobs: UserDetailsJob[];
+  prompts: UserDetailsPrompt[];
 }
+
+interface UserDetailsResponse {
+  data: UserDetails;
+}
+
+interface UsersResponse {
+  success?: boolean;
+  data: UserSummary[];
+  pagination?: {
+    pages?: number;
+  };
+}
+
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as ApiErrorShape;
+    const message = err.response?.data?.message;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message;
+    }
+  }
+  return fallback;
+};
 
 export default function AdminUsersPage() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
@@ -82,8 +134,9 @@ export default function AdminUsersPage() {
   const openPicker = (ref: RefObject<HTMLInputElement | null>) => {
     const el = ref.current;
     if (!el) return;
-    if (typeof (el as any).showPicker === 'function') {
-      (el as any).showPicker();
+    const pickerInput = el as HTMLInputElement & { showPicker?: () => void };
+    if (typeof pickerInput.showPicker === 'function') {
+      pickerInput.showPicker();
     } else {
       el.focus();
     }
@@ -98,11 +151,11 @@ export default function AdminUsersPage() {
     try {
       setSelectedUserId(id);
       setUserDetails(null);
-      const data = await adminService.getUserDetails(id);
-      setUserDetails(data.data);
-      setEditPlan(data.data.user.plan);
-      if (data.data.user.subscriptionExpiresAt) {
-        setEditExpiry(new Date(data.data.user.subscriptionExpiresAt).toISOString().split('T')[0]);
+      const detailsRes = await adminService.getUserDetails(id) as UserDetailsResponse;
+      setUserDetails(detailsRes.data);
+      setEditPlan(detailsRes.data.user.plan);
+      if (detailsRes.data.user.subscriptionExpiresAt) {
+        setEditExpiry(new Date(detailsRes.data.user.subscriptionExpiresAt).toISOString().split('T')[0]);
       } else {
         setEditExpiry('');
       }
@@ -128,11 +181,11 @@ export default function AdminUsersPage() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (error: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update plan.',
+        description: getApiErrorMessage(error, 'Failed to update plan.'),
         type: 'error',
         confirmText: 'Dismiss',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -166,7 +219,7 @@ export default function AdminUsersPage() {
             confirmText: 'OK',
             onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
           });
-        } catch (err) {
+        } catch {
           setModalConfig({
             isOpen: true,
             title: 'Error',
@@ -198,7 +251,7 @@ export default function AdminUsersPage() {
       setCreateAdminEmail('');
       setCreateAdminPassword('');
 
-      const usersRes = await adminService.getUsers(userPage, 10, userSearch);
+      const usersRes = await adminService.getUsers(userPage, 10, userSearch) as UsersResponse;
       if (usersRes?.success) {
         setUsers(usersRes.data);
         setUserTotalPages(usersRes.pagination?.pages || 1);
@@ -212,11 +265,11 @@ export default function AdminUsersPage() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (error: unknown) {
       setModalConfig({
         isOpen: true,
         title: `Create ${createStaffRole === 'helper' ? 'Helper' : 'Admin'} Failed`,
-        description: err.response?.data?.message || `Unable to create ${createStaffRole} user.`,
+        description: getApiErrorMessage(error, `Unable to create ${createStaffRole} user.`),
         type: 'error',
         confirmText: 'Dismiss',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),

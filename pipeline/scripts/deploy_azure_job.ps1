@@ -379,6 +379,11 @@ if ($jobExists -and $existingJob -and -not [string]::IsNullOrWhiteSpace($existin
 
 $deployingPrincipalObjectId = Get-CurrentPrincipalObjectId
 $requiredLinkedAction = "Microsoft.App/managedEnvironments/join/action"
+$strictLinkedScopePreflight = if ([string]::IsNullOrWhiteSpace($env:AZURE_STRICT_LINKED_SCOPE_PREFLIGHT)) {
+    $true
+} else {
+    [System.Convert]::ToBoolean($env:AZURE_STRICT_LINKED_SCOPE_PREFLIGHT)
+}
 
 if (-not $jobExists -and -not $AllowCreate) {
     throw "Target job '$JobName' not found in resource group '$ResourceGroup'. Refusing to create a new job unless -AllowCreate is set to true."
@@ -450,7 +455,14 @@ if (-not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [st
         if ($rolesGrantingJoin.Count -gt 0) {
             Write-Host "RBAC preflight passed for linked action '$requiredLinkedAction' on '$effectiveEnvironmentResourceId'."
         } elseif ($unresolvedRoleChecks.Count -gt 0) {
-            Write-Warning "Could not fully verify linked action '$requiredLinkedAction' because one or more role definitions could not be resolved. Deployment will continue and may fail later with LinkedAuthorizationFailed."
+            $unresolvedMessage = "Could not fully verify linked action '$requiredLinkedAction' because one or more role definitions could not be resolved."
+            if ($strictLinkedScopePreflight) {
+                throw (
+                    "$unresolvedMessage`n" +
+                    "Set AZURE_STRICT_LINKED_SCOPE_PREFLIGHT=false only if you intentionally want best-effort preflight."
+                )
+            }
+            Write-Warning "$unresolvedMessage Deployment will continue and may fail later with LinkedAuthorizationFailed."
         }
     } catch {
         if (
@@ -459,40 +471,19 @@ if (-not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [st
         ) {
             throw
         }
+        if ($strictLinkedScopePreflight) {
+            throw (
+                "Could not verify managed environment RBAC preflight. " +
+                "Set AZURE_STRICT_LINKED_SCOPE_PREFLIGHT=false only if you intentionally want best-effort preflight.`n" +
+                $_.Exception.Message
+            )
+        }
         Write-Warning "Could not verify managed environment RBAC preflight. Deployment will continue and may fail later with LinkedAuthorizationFailed."
     }
 }
 
 $loginServer = "$RegistryName.azurecr.io"
 $fullImage = "$loginServer/$ImageName"
-
-try {
-    Invoke-ExternalCommand -CommandParts @("az", "acr", "build", "-r", $RegistryName, "-t", $ImageName, ".")
-} catch {
-    Write-Host "ACR build with streaming logs failed. Retrying with --no-logs..."
-    try {
-        Invoke-ExternalCommand -CommandParts @("az", "acr", "build", "-r", $RegistryName, "-t", $ImageName, ".", "--no-logs")
-    } catch {
-        Write-Host "ACR Tasks unavailable or failed. Falling back to local Docker build and push."
-
-        try {
-            Invoke-ExternalCommand -CommandParts @("docker", "version") | Out-Null
-        } catch {
-            throw "ACR build failed and Docker daemon is unavailable. Start Docker Desktop or resolve ACR build errors, then retry."
-        }
-
-        $acrTempJson = Invoke-ExternalCommand -CommandParts @("az", "acr", "credential", "show", "-n", $RegistryName) -CaptureOutput
-        $acrTemp = $acrTempJson | ConvertFrom-Json
-
-        Invoke-ExternalCommand -CommandParts @(
-            "docker", "login", $loginServer,
-            "--username", $acrTemp.username,
-            "--password", $acrTemp.passwords[0].value
-        )
-        Invoke-ExternalCommand -CommandParts @("docker", "build", "-t", $fullImage, ".")
-        Invoke-ExternalCommand -CommandParts @("docker", "push", $fullImage)
-    }
-}
 
 $acrJson = Invoke-ExternalCommand -CommandParts @("az", "acr", "credential", "show", "-n", $RegistryName) -CaptureOutput
 $acr = $acrJson | ConvertFrom-Json
@@ -601,6 +592,7 @@ $envArgs.Add("TELEGRAM_ALLOWED_CHAT_ID=secretref:telegram-allowed-chat-id")
 $envArgs.Add("RUN_COUNT=1")
 
 if ($jobExists) {
+    # Preflight write operations before image build so RBAC issues fail fast.
     Invoke-AzureCommandWithLinkedScopeGuidance -CommandParts (
         @(
             "az", "containerapp", "job", "secret", "set",
@@ -618,6 +610,37 @@ if ($jobExists) {
         "--username", $acrUser,
         "--password", $acrPass
     ) -DisplayText "az containerapp job registry set -n $JobName -g $ResourceGroup --server $loginServer --username <hidden> --password <hidden>" -ManagedEnvironmentScope $effectiveEnvironmentResourceId -PrincipalObjectId $deployingPrincipalObjectId
+}
+
+try {
+    Invoke-ExternalCommand -CommandParts @("az", "acr", "build", "-r", $RegistryName, "-t", $ImageName, ".")
+} catch {
+    Write-Host "ACR build with streaming logs failed. Retrying with --no-logs..."
+    try {
+        Invoke-ExternalCommand -CommandParts @("az", "acr", "build", "-r", $RegistryName, "-t", $ImageName, ".", "--no-logs")
+    } catch {
+        Write-Host "ACR Tasks unavailable or failed. Falling back to local Docker build and push."
+
+        try {
+            Invoke-ExternalCommand -CommandParts @("docker", "version") | Out-Null
+        } catch {
+            throw "ACR build failed and Docker daemon is unavailable. Start Docker Desktop or resolve ACR build errors, then retry."
+        }
+
+        $acrTempJson = Invoke-ExternalCommand -CommandParts @("az", "acr", "credential", "show", "-n", $RegistryName) -CaptureOutput
+        $acrTemp = $acrTempJson | ConvertFrom-Json
+
+        Invoke-ExternalCommand -CommandParts @(
+            "docker", "login", $loginServer,
+            "--username", $acrTemp.username,
+            "--password", $acrTemp.passwords[0].value
+        )
+        Invoke-ExternalCommand -CommandParts @("docker", "build", "-t", $fullImage, ".")
+        Invoke-ExternalCommand -CommandParts @("docker", "push", $fullImage)
+    }
+}
+
+if ($jobExists) {
 
     Invoke-AzureCommandWithLinkedScopeGuidance -CommandParts (
         @(
