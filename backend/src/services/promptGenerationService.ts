@@ -54,8 +54,12 @@ export interface PromptGenerationOptions {
 }
 
 const parseTimeoutMs = (raw: unknown, fallback: number): number => {
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
+  const rawText = String(raw ?? '').trim();
+  if (!rawText) {
+    return fallback;
+  }
+  const parsed = Number(rawText);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
     return fallback;
   }
   // Treat small values as seconds to avoid common env misconfiguration (e.g. "15" => 15s, not 15ms).
