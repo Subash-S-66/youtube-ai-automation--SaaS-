@@ -117,6 +117,43 @@ function Invoke-ExternalCommand {
     }
 }
 
+function ConvertFrom-CliJson {
+    param(
+        [Parameter(Mandatory = $true)]
+        $CommandOutput,
+        [string]$Context = "command"
+    )
+
+    $rawOutput = ($CommandOutput | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($rawOutput)) {
+        throw "No JSON output returned from $Context."
+    }
+
+    # Azure CLI extensions can prepend warning lines before JSON payload.
+    $objectStart = $rawOutput.IndexOf("{")
+    $arrayStart = $rawOutput.IndexOf("[")
+    $startIndex = -1
+
+    if ($objectStart -ge 0 -and $arrayStart -ge 0) {
+        $startIndex = [Math]::Min($objectStart, $arrayStart)
+    } elseif ($objectStart -ge 0) {
+        $startIndex = $objectStart
+    } elseif ($arrayStart -ge 0) {
+        $startIndex = $arrayStart
+    }
+
+    if ($startIndex -lt 0) {
+        throw "Expected JSON output from $Context but received:`n$rawOutput"
+    }
+
+    $jsonPayload = $rawOutput.Substring($startIndex)
+    try {
+        return $jsonPayload | ConvertFrom-Json
+    } catch {
+        throw "Failed to parse JSON output from $Context.`nRaw output:`n$rawOutput"
+    }
+}
+
 function Get-CurrentPrincipalObjectId {
     try {
         $token = Invoke-ExternalCommand -CommandParts @(
@@ -216,7 +253,7 @@ function Get-RoleDefinitionJoinActionCheck {
             "-o", "json"
         ) -CaptureOutput
 
-        $roleDefinition = $roleDefinitionJson | ConvertFrom-Json
+        $roleDefinition = ConvertFrom-CliJson -CommandOutput $roleDefinitionJson -Context "az role definition show --id $RoleDefinitionId"
         if ($roleDefinition.roleName) {
             $result.RoleName = [string]$roleDefinition.roleName
         }
@@ -393,7 +430,7 @@ try {
         "-n", $JobName,
         "-g", $ResourceGroup
     ) -CaptureOutput
-    $existingJob = $existingJobJson | ConvertFrom-Json
+    $existingJob = ConvertFrom-CliJson -CommandOutput $existingJobJson -Context "az containerapp job show -n $JobName -g $ResourceGroup"
     $jobExists = $true
 } catch {
     $jobExists = $false
@@ -424,7 +461,7 @@ if ([string]::IsNullOrWhiteSpace($RegistryName)) {
             "-o", "json"
         ) -CaptureOutput
 
-        $acrNames = @($acrListJson | ConvertFrom-Json)
+        $acrNames = @(ConvertFrom-CliJson -CommandOutput $acrListJson -Context "az acr list -g $ResourceGroup --query [].name")
         if ($acrNames.Count -eq 1) {
             $RegistryName = [string]$acrNames[0]
         } elseif ($acrNames.Count -gt 1) {
@@ -491,7 +528,7 @@ if (-not $buildPushOnly -and -not [string]::IsNullOrWhiteSpace($deployingPrincip
             }
         }
 
-        $assignments = @($assignmentJson | ConvertFrom-Json)
+        $assignments = @(ConvertFrom-CliJson -CommandOutput $assignmentJson -Context "az role assignment list --scope $effectiveEnvironmentResourceId")
         if (-not $assignments -or $assignments.Count -eq 0) {
             throw (
                 "No role assignments found for deploying principal '$deployingPrincipalObjectId' on managed environment scope '$effectiveEnvironmentResourceId'.`n" +
@@ -589,7 +626,7 @@ $loginServer = "$RegistryName.azurecr.io"
 $fullImage = "$loginServer/$ImageName"
 
 $acrJson = Invoke-ExternalCommand -CommandParts @("az", "acr", "credential", "show", "-n", $RegistryName) -CaptureOutput
-$acr = $acrJson | ConvertFrom-Json
+$acr = ConvertFrom-CliJson -CommandOutput $acrJson -Context "az acr credential show -n $RegistryName"
 $acrUser = $acr.username
 $acrPass = $acr.passwords[0].value
 
@@ -731,7 +768,7 @@ try {
         }
 
         $acrTempJson = Invoke-ExternalCommand -CommandParts @("az", "acr", "credential", "show", "-n", $RegistryName) -CaptureOutput
-        $acrTemp = $acrTempJson | ConvertFrom-Json
+        $acrTemp = ConvertFrom-CliJson -CommandOutput $acrTempJson -Context "az acr credential show -n $RegistryName"
 
         Invoke-ExternalCommand -CommandParts @(
             "docker", "login", $loginServer,
