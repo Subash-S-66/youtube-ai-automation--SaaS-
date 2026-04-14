@@ -19,7 +19,8 @@ const parseTimeoutMs = (raw: unknown, fallback: number): number => {
   }
   // Treat small values as seconds to avoid common env misconfiguration (e.g. "15" => 15s, not 15ms).
   const normalized = parsed > 0 && parsed <= 300 ? parsed * 1000 : parsed;
-  return Math.max(1000, Math.floor(normalized));
+  // Keep AI call timeout above a practical minimum to avoid near-instant failures.
+  return Math.max(5000, Math.floor(normalized));
 };
 
 const GEMINI_TIMEOUT_MS = parseTimeoutMs(process.env.GEMINI_TIMEOUT_MS, 15000);

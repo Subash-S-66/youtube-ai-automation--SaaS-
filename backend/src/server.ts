@@ -29,6 +29,19 @@ const parseBooleanEnv = (value: string | undefined, fallback: boolean): boolean 
   return fallback;
 };
 
+const parseTimeoutMsForLog = (raw: unknown, fallback: number): number => {
+  const rawText = String(raw ?? '').trim();
+  if (!rawText) {
+    return fallback;
+  }
+  const parsed = Number(rawText);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  const normalized = parsed > 0 && parsed <= 300 ? parsed * 1000 : parsed;
+  return Math.max(5000, Math.floor(normalized));
+};
+
 const normalizeWorkerProfile = (value: unknown): 'local' | 'vm' | 'cloud' => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'vm') {
@@ -249,9 +262,13 @@ server.listen(PORT, () => {
   // AI Provider diagnostics
   const geminiConfigured = !!process.env.GEMINI_API_KEY;
   const geminiModel = process.env.GEMINI_MODEL || 'gemini-flash-lite-latest';
+  const geminiTimeoutMs = parseTimeoutMsForLog(process.env.GEMINI_TIMEOUT_MS, 15000);
+  const promptGenerationTimeoutMs = parseTimeoutMsForLog(process.env.PROMPT_GENERATION_TIMEOUT_MS, geminiTimeoutMs);
   console.log('[AI Config] Provider: native-gemini only');
   console.log(`[AI Config] Gemini API: ${geminiConfigured ? 'configured' : 'NOT configured - generation will fail'}`);
   console.log(`[AI Config] Model: ${geminiModel}`);
+  console.log(`[AI Config] GEMINI_TIMEOUT_MS (effective): ${geminiTimeoutMs}`);
+  console.log(`[AI Config] PROMPT_GENERATION_TIMEOUT_MS (effective): ${promptGenerationTimeoutMs}`);
   console.log(`[AI Config] Embedded Pipeline Worker (configured): ${runEmbeddedWorkerConfigured ? 'enabled' : 'disabled'}`);
   console.log(`[AI Config] Embedded Pipeline Worker (active): ${embeddedWorkerStarted ? 'yes' : 'no'}`);
   console.log(`[AI Config] Worker profile: ${workerProfileConfigured}`);

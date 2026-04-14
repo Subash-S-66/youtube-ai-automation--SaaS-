@@ -64,7 +64,8 @@ const parseTimeoutMs = (raw: unknown, fallback: number): number => {
   }
   // Treat small values as seconds to avoid common env misconfiguration (e.g. "15" => 15s, not 15ms).
   const normalized = parsed > 0 && parsed <= 300 ? parsed * 1000 : parsed;
-  return Math.max(1000, Math.floor(normalized));
+  // Keep prompt generation timeout above a practical minimum to avoid near-instant 504s.
+  return Math.max(5000, Math.floor(normalized));
 };
 
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
