@@ -1,29 +1,84 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { authService } from '../../../services/authService';
 import { supportService } from '../../../services/supportService';
 import { Mail, Search, Send, Loader2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
 import io, { Socket } from 'socket.io-client';
 
+type TicketFilterStatus = 'all' | 'open' | 'closed';
+
+interface AdminUser {
+  role?: string;
+  plan?: string;
+  displayPlan?: string;
+  isBetaMode?: boolean;
+  [key: string]: unknown;
+}
+
+interface TicketUser {
+  email?: string;
+  plan?: string;
+  [key: string]: unknown;
+}
+
+interface TicketMessage {
+  _id: string;
+  sender: string;
+  message: string;
+  createdAt: string;
+}
+
+interface TicketItem {
+  _id: string;
+  userId?: TicketUser | null;
+  status: string;
+  latestMessage?: string;
+  latestMessageSender?: string;
+  updatedAt: string;
+}
+
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+interface AdminTicketUpdatePayload {
+  ticketId: string;
+  message: TicketMessage;
+}
+
+const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as ApiErrorShape;
+    const message = err.response?.data?.message;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message;
+    }
+  }
+  return fallback;
+};
+
 export default function AdminTicketsPage() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<AdminUser | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  const [tickets, setTickets] = useState<any[]>([]);
-  const [selectedTicket, setSelectedTicket] = useState<any>(null);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [tickets, setTickets] = useState<TicketItem[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<TicketItem | null>(null);
+  const [messages, setMessages] = useState<TicketMessage[]>([]);
   const [ticketSearch, setTicketSearch] = useState('');
-  const [ticketStatus, setTicketStatus] = useState<'all' | 'open' | 'closed'>('all');
+  const [ticketStatus, setTicketStatus] = useState<TicketFilterStatus>('all');
 
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
-  const [socket, setSocket] = useState<Socket | null>(null);
+  const socketRef = useRef<Socket | null>(null);
   const ticketSearchRef = useRef('');
-  const ticketStatusRef = useRef<'all' | 'open' | 'closed'>('all');
+  const ticketStatusRef = useRef<TicketFilterStatus>('all');
   const canCloseTickets = user?.role === 'admin';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -36,6 +91,46 @@ export default function AdminTicketsPage() {
     ticketSearchRef.current = ticketSearch;
     ticketStatusRef.current = ticketStatus;
   }, [ticketSearch, ticketStatus]);
+
+  const fetchTickets = useCallback(async () => {
+    try {
+      const res = await supportService.getAdminTickets(ticketSearchRef.current, ticketStatusRef.current);
+      const data = (res as { data?: TicketItem[] }).data;
+      setTickets(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Failed to fetch tickets', error);
+    }
+  }, []);
+
+  const connectAdminSocket = useCallback(() => {
+    if (socketRef.current) return;
+
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
+    const newSocket = io(backendUrl, { withCredentials: true });
+
+    newSocket.on('connect', () => {
+      newSocket.emit('join_admin_support');
+    });
+
+    newSocket.on('admin_ticket_update', (data: AdminTicketUpdatePayload) => {
+      // Re-fetch tickets to update the latest message preview in the list
+      void fetchTickets();
+
+      // If we are currently viewing this ticket, append the message
+      setSelectedTicket((prevTicket) => {
+        if (prevTicket && prevTicket._id === data.ticketId) {
+          setMessages((prevMsgs) => [...prevMsgs, data.message]);
+        }
+        return prevTicket;
+      });
+    });
+
+    newSocket.on('admin_ticket_closed', () => {
+      void fetchTickets();
+    });
+
+    socketRef.current = newSocket;
+  }, [fetchTickets]);
 
   useEffect(() => {
     const init = async () => {
@@ -54,72 +149,38 @@ export default function AdminTicketsPage() {
         });
         await fetchTickets();
         connectAdminSocket();
-      } catch (err) {
+      } catch {
         router.push('/login');
       } finally {
         setLoading(false);
       }
     };
-    init();
-  }, [router]);
-
-  const fetchTickets = async () => {
-    try {
-      const res = await supportService.getAdminTickets(ticketSearchRef.current, ticketStatusRef.current);
-      setTickets(res.data);
-    } catch (err) {
-      console.error('Failed to fetch tickets', err);
-    }
-  };
+    void init();
+  }, [connectAdminSocket, fetchTickets, router]);
 
   useEffect(() => {
     if (!user || (user.role !== 'admin' && user.role !== 'helper')) return;
-    fetchTickets();
-  }, [ticketSearch, ticketStatus]);
-
-  const connectAdminSocket = () => {
-    if (socket) return;
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
-    const newSocket = io(backendUrl, { withCredentials: true });
-
-    newSocket.on('connect', () => {
-      newSocket.emit('join_admin_support');
-    });
-
-    newSocket.on('admin_ticket_update', (data: any) => {
-      // Re-fetch tickets to update the latest message preview in the list
-      fetchTickets();
-
-      // If we are currently viewing this ticket, append the message
-      setSelectedTicket((prevTicket: any) => {
-        if (prevTicket && prevTicket._id === data.ticketId) {
-          setMessages((prevMsgs) => [...prevMsgs, data.message]);
-        }
-        return prevTicket;
-      });
-    });
-
-    newSocket.on('admin_ticket_closed', () => {
-      fetchTickets();
-    });
-
-    setSocket(newSocket);
-  };
+    void fetchTickets();
+  }, [fetchTickets, ticketSearch, ticketStatus, user]);
 
   useEffect(() => {
     return () => {
-      if (socket) socket.disconnect();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
     };
-  }, [socket]);
+  }, []);
 
-  const openTicketChat = async (t: any) => {
+  const openTicketChat = async (t: TicketItem) => {
     setSelectedTicket(t);
     setMessages([]);
     try {
       const res = await supportService.getAdminTicketMessages(t._id);
-      setMessages(res.data.messages || []);
-    } catch (err) {
-      console.error('Failed to load messages', err);
+      const data = (res as { data?: { messages?: TicketMessage[] } }).data;
+      setMessages(Array.isArray(data?.messages) ? data.messages : []);
+    } catch (error) {
+      console.error('Failed to load messages', error);
     }
   };
 
@@ -130,11 +191,14 @@ export default function AdminTicketsPage() {
     setReplying(true);
     try {
       const res = await supportService.sendMessage(replyText, selectedTicket._id);
-      setMessages((prev) => [...prev, res.data]);
+      const data = (res as { data?: TicketMessage }).data;
+      if (data) {
+        setMessages((prev) => [...prev, data]);
+      }
       setReplyText('');
-      fetchTickets(); // update list preview
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to send reply');
+      void fetchTickets(); // update list preview
+    } catch (error: unknown) {
+      alert(getApiErrorMessage(error, 'Failed to send reply'));
     } finally {
       setReplying(false);
     }
@@ -148,9 +212,9 @@ export default function AdminTicketsPage() {
     try {
       await supportService.closeTicket(selectedTicket._id);
       setSelectedTicket({ ...selectedTicket, status: 'closed' });
-      fetchTickets();
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to close ticket');
+      void fetchTickets();
+    } catch (error: unknown) {
+      alert(getApiErrorMessage(error, 'Failed to close ticket'));
     }
   };
 
@@ -257,7 +321,7 @@ export default function AdminTicketsPage() {
 
               {/* Chat Thread */}
               <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar bg-[#0B0F1A]/50">
-                 {messages.map((msg: any) => {
+                 {messages.map((msg) => {
                   const isAdmin = msg.sender === 'admin';
                   const time = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 

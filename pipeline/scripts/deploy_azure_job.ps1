@@ -122,6 +122,92 @@ function Get-CurrentPrincipalObjectId {
     }
 }
 
+function Test-ActionMatchesPattern {
+    param(
+        [string]$Action,
+        [string]$Pattern
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Action) -or [string]::IsNullOrWhiteSpace($Pattern)) {
+        return $false
+    }
+
+    $regexPattern = '^' + [System.Text.RegularExpressions.Regex]::Escape($Pattern.Trim()).Replace("\*", ".*") + '$'
+    return [System.Text.RegularExpressions.Regex]::IsMatch(
+        $Action,
+        $regexPattern,
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+}
+
+function Test-RolePermissionAllowsAction {
+    param(
+        $Permission,
+        [string]$Action
+    )
+
+    $allowedPatterns = @($Permission.actions)
+    $deniedPatterns = @($Permission.notActions)
+
+    $isAllowed = $false
+    foreach ($pattern in $allowedPatterns) {
+        if (Test-ActionMatchesPattern -Action $Action -Pattern ([string]$pattern)) {
+            $isAllowed = $true
+            break
+        }
+    }
+
+    if (-not $isAllowed) {
+        return $false
+    }
+
+    foreach ($pattern in $deniedPatterns) {
+        if (Test-ActionMatchesPattern -Action $Action -Pattern ([string]$pattern)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Get-RoleDefinitionJoinActionCheck {
+    param(
+        [string]$RoleDefinitionId,
+        [string]$Action
+    )
+
+    $result = [PSCustomObject]@{
+        Resolved = $false
+        Allows = $false
+        RoleName = $RoleDefinitionId
+    }
+
+    try {
+        $roleDefinitionJson = Invoke-ExternalCommand -CommandParts @(
+            "az", "role", "definition", "show",
+            "--id", $RoleDefinitionId,
+            "-o", "json"
+        ) -CaptureOutput
+
+        $roleDefinition = $roleDefinitionJson | ConvertFrom-Json
+        if ($roleDefinition.roleName) {
+            $result.RoleName = [string]$roleDefinition.roleName
+        }
+
+        $result.Resolved = $true
+        foreach ($permission in @($roleDefinition.permissions)) {
+            if (Test-RolePermissionAllowsAction -Permission $permission -Action $Action) {
+                $result.Allows = $true
+                break
+            }
+        }
+    } catch {
+        Write-Warning "Unable to resolve role definition '$RoleDefinitionId' while evaluating linked-scope permission preflight."
+    }
+
+    return $result
+}
+
 function Invoke-AzureCommandWithLinkedScopeGuidance {
     param(
         [Parameter(Mandatory = $true)]
@@ -292,6 +378,7 @@ if ($jobExists -and $existingJob -and -not [string]::IsNullOrWhiteSpace($existin
 }
 
 $deployingPrincipalObjectId = Get-CurrentPrincipalObjectId
+$requiredLinkedAction = "Microsoft.App/managedEnvironments/join/action"
 
 if (-not $jobExists -and -not $AllowCreate) {
     throw "Target job '$JobName' not found in resource group '$ResourceGroup'. Refusing to create a new job unless -AllowCreate is set to true."
@@ -307,7 +394,7 @@ if (-not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [st
             "--all",
             "-o", "json"
         ) -CaptureOutput
-        $assignments = $assignmentJson | ConvertFrom-Json
+        $assignments = @($assignmentJson | ConvertFrom-Json)
         if (-not $assignments -or $assignments.Count -eq 0) {
             throw (
                 "No role assignments found for deploying principal '$deployingPrincipalObjectId' on managed environment scope '$effectiveEnvironmentResourceId'.`n" +
@@ -315,8 +402,61 @@ if (-not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [st
                 "  az role assignment create --assignee-object-id $deployingPrincipalObjectId --role Contributor --scope $effectiveEnvironmentResourceId"
             )
         }
+
+        $roleDefinitionIds = @(
+            $assignments |
+                ForEach-Object { [string]$_.roleDefinitionId } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+                Sort-Object -Unique
+        )
+
+        if (-not $roleDefinitionIds -or $roleDefinitionIds.Count -eq 0) {
+            throw "Role assignment preflight could not resolve role definition IDs for principal '$deployingPrincipalObjectId' on '$effectiveEnvironmentResourceId'."
+        }
+
+        $roleChecks = @()
+        foreach ($roleDefinitionId in $roleDefinitionIds) {
+            $roleChecks += Get-RoleDefinitionJoinActionCheck -RoleDefinitionId $roleDefinitionId -Action $requiredLinkedAction
+        }
+
+        $resolvedRoleChecks = @($roleChecks | Where-Object { $_.Resolved })
+        $unresolvedRoleChecks = @($roleChecks | Where-Object { -not $_.Resolved })
+        $rolesGrantingJoin = @(
+            $resolvedRoleChecks |
+                Where-Object { $_.Allows } |
+                ForEach-Object { $_.RoleName } |
+                Sort-Object -Unique
+        )
+
+        if ($resolvedRoleChecks.Count -gt 0 -and $rolesGrantingJoin.Count -eq 0) {
+            $resolvedRoleNames = @(
+                $resolvedRoleChecks |
+                    ForEach-Object { $_.RoleName } |
+                    Sort-Object -Unique
+            )
+            $resolvedRoleText = if ($resolvedRoleNames.Count -gt 0) {
+                $resolvedRoleNames -join ", "
+            } else {
+                "<resolved roles>"
+            }
+
+            throw (
+                "Deploying principal '$deployingPrincipalObjectId' has linked-scope assignments on '$effectiveEnvironmentResourceId' ($resolvedRoleText), but none grant '$requiredLinkedAction'.`n" +
+                "Grant access, then rerun:`n" +
+                "  az role assignment create --assignee-object-id $deployingPrincipalObjectId --role Contributor --scope $effectiveEnvironmentResourceId"
+            )
+        }
+
+        if ($rolesGrantingJoin.Count -gt 0) {
+            Write-Host "RBAC preflight passed for linked action '$requiredLinkedAction' on '$effectiveEnvironmentResourceId'."
+        } elseif ($unresolvedRoleChecks.Count -gt 0) {
+            Write-Warning "Could not fully verify linked action '$requiredLinkedAction' because one or more role definitions could not be resolved. Deployment will continue and may fail later with LinkedAuthorizationFailed."
+        }
     } catch {
-        if ($_.Exception.Message -match "No role assignments found for deploying principal") {
+        if (
+            ($_.Exception.Message -match "No role assignments found for deploying principal") -or
+            ($_.Exception.Message -match "none grant 'Microsoft\.App/managedEnvironments/join/action'")
+        ) {
             throw
         }
         Write-Warning "Could not verify managed environment RBAC preflight. Deployment will continue and may fail later with LinkedAuthorizationFailed."
