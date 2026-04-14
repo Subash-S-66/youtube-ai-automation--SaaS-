@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
-    "axios": "^1.13.6",
+    "axios": "^1.15.0",
     "clsx": "^2.1.1",
     "firebase": "^12.10.0",
     "framer-motion": "^12.38.0",
     "lucide-react": "^0.577.0",
-    "next": "16.1.7",
+    "next": "^16.2.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "socket.io-client": "^4.8.3",
@@ -31,7 +31,7 @@
     "@types/react-dom": "^19",
     "@types/socket.io-client": "^3.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.1.7",
+    "eslint-config-next": "^16.2.3",
     "tailwindcss": "^4",
     "typescript": "^5"
   },

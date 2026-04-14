@@ -90,6 +90,81 @@ function Invoke-ExternalCommand {
     }
 }
 
+function Get-CurrentPrincipalObjectId {
+    try {
+        $token = Invoke-ExternalCommand -CommandParts @(
+            "az", "account", "get-access-token",
+            "--resource", "https://management.azure.com/",
+            "--query", "accessToken",
+            "-o", "tsv"
+        ) -CaptureOutput
+        $tokenValue = ($token | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($tokenValue)) {
+            return ""
+        }
+
+        $tokenParts = $tokenValue.Split('.')
+        if ($tokenParts.Count -lt 2) {
+            return ""
+        }
+
+        $payload = $tokenParts[1].Replace('-', '+').Replace('_', '/')
+        switch ($payload.Length % 4) {
+            2 { $payload += "==" }
+            3 { $payload += "=" }
+        }
+
+        $jsonPayload = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload))
+        $claims = $jsonPayload | ConvertFrom-Json
+        return [string]$claims.oid
+    } catch {
+        return ""
+    }
+}
+
+function Invoke-AzureCommandWithLinkedScopeGuidance {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$CommandParts,
+        [string]$DisplayText,
+        [string]$ManagedEnvironmentScope,
+        [string]$PrincipalObjectId
+    )
+
+    try {
+        Invoke-ExternalCommand -CommandParts $CommandParts -DisplayText $DisplayText
+    } catch {
+        $errorText = $_.Exception.Message
+        $hasLinkedAuthorizationError =
+            ($errorText -match "LinkedAuthorizationFailed") -or
+            ($errorText -match "Microsoft\.App/managedEnvironments/join/action")
+
+        if ($hasLinkedAuthorizationError) {
+            $scopeHint = if ([string]::IsNullOrWhiteSpace($ManagedEnvironmentScope)) {
+                "<managed-environment-resource-id>"
+            } else {
+                $ManagedEnvironmentScope
+            }
+
+            $principalHint = if ([string]::IsNullOrWhiteSpace($PrincipalObjectId)) {
+                "<service-principal-object-id>"
+            } else {
+                $PrincipalObjectId
+            }
+
+            throw (
+                "$errorText`n`n" +
+                "Missing linked-scope permission on the Container Apps managed environment.`n" +
+                "Grant the deploying identity a role on this scope, then rerun:`n" +
+                "  az role assignment create --assignee-object-id $principalHint --role Contributor --scope $scopeHint`n`n" +
+                "If role assignment changes are restricted, ask a subscription owner to run the command above."
+            )
+        }
+
+        throw
+    }
+}
+
 function Add-KeyValueIfPresent {
     param(
         [System.Collections.Generic.List[string]]$Target,
@@ -187,6 +262,57 @@ if ([string]::IsNullOrWhiteSpace($resolvedSubscriptionId)) {
         $resolvedSubscriptionId = ($subscriptionIdOutput | Out-String).Trim()
     } catch {
         $resolvedSubscriptionId = ""
+    }
+}
+
+$jobExists = $false
+$existingJob = $null
+try {
+    $existingJobJson = Invoke-ExternalCommand -CommandParts @(
+        "az", "containerapp", "job", "show",
+        "-n", $JobName,
+        "-g", $ResourceGroup
+    ) -CaptureOutput
+    $existingJob = $existingJobJson | ConvertFrom-Json
+    $jobExists = $true
+} catch {
+    $jobExists = $false
+}
+
+$effectiveEnvironmentResourceId = $EnvironmentResourceId
+if ($jobExists -and $existingJob -and -not [string]::IsNullOrWhiteSpace($existingJob.properties.environmentId)) {
+    $effectiveEnvironmentResourceId = $existingJob.properties.environmentId
+}
+
+$deployingPrincipalObjectId = Get-CurrentPrincipalObjectId
+
+if (-not $jobExists -and -not $AllowCreate) {
+    throw "Target job '$JobName' not found in resource group '$ResourceGroup'. Refusing to create a new job unless -AllowCreate is set to true."
+}
+
+if (-not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [string]::IsNullOrWhiteSpace($effectiveEnvironmentResourceId)) {
+    try {
+        $assignmentJson = Invoke-ExternalCommand -CommandParts @(
+            "az", "role", "assignment", "list",
+            "--assignee-object-id", $deployingPrincipalObjectId,
+            "--scope", $effectiveEnvironmentResourceId,
+            "--include-inherited",
+            "--all",
+            "-o", "json"
+        ) -CaptureOutput
+        $assignments = $assignmentJson | ConvertFrom-Json
+        if (-not $assignments -or $assignments.Count -eq 0) {
+            throw (
+                "No role assignments found for deploying principal '$deployingPrincipalObjectId' on managed environment scope '$effectiveEnvironmentResourceId'.`n" +
+                "Grant access, then rerun:`n" +
+                "  az role assignment create --assignee-object-id $deployingPrincipalObjectId --role Contributor --scope $effectiveEnvironmentResourceId"
+            )
+        }
+    } catch {
+        if ($_.Exception.Message -match "No role assignments found for deploying principal") {
+            throw
+        }
+        Write-Warning "Could not verify managed environment RBAC preflight. Deployment will continue and may fail later with LinkedAuthorizationFailed."
     }
 }
 
@@ -327,34 +453,26 @@ $envArgs.Add("TELEGRAM_BOT_TOKEN=secretref:telegram-bot-token")
 $envArgs.Add("TELEGRAM_ALLOWED_CHAT_ID=secretref:telegram-allowed-chat-id")
 $envArgs.Add("RUN_COUNT=1")
 
-$jobExists = $false
-try {
-    Invoke-ExternalCommand -CommandParts @("az", "containerapp", "job", "show", "-n", $JobName, "-g", $ResourceGroup) | Out-Null
-    $jobExists = $true
-} catch {
-    $jobExists = $false
-}
-
 if ($jobExists) {
-    Invoke-ExternalCommand -CommandParts (
+    Invoke-AzureCommandWithLinkedScopeGuidance -CommandParts (
         @(
             "az", "containerapp", "job", "secret", "set",
             "-n", $JobName,
             "-g", $ResourceGroup,
             "--secrets"
         ) + $secretArgs
-    ) -DisplayText "az containerapp job secret set -n $JobName -g $ResourceGroup --secrets <hidden>"
+    ) -DisplayText "az containerapp job secret set -n $JobName -g $ResourceGroup --secrets <hidden>" -ManagedEnvironmentScope $effectiveEnvironmentResourceId -PrincipalObjectId $deployingPrincipalObjectId
 
-    Invoke-ExternalCommand -CommandParts @(
+    Invoke-AzureCommandWithLinkedScopeGuidance -CommandParts @(
         "az", "containerapp", "job", "registry", "set",
         "-n", $JobName,
         "-g", $ResourceGroup,
         "--server", $loginServer,
         "--username", $acrUser,
         "--password", $acrPass
-    ) -DisplayText "az containerapp job registry set -n $JobName -g $ResourceGroup --server $loginServer --username <hidden> --password <hidden>"
+    ) -DisplayText "az containerapp job registry set -n $JobName -g $ResourceGroup --server $loginServer --username <hidden> --password <hidden>" -ManagedEnvironmentScope $effectiveEnvironmentResourceId -PrincipalObjectId $deployingPrincipalObjectId
 
-    Invoke-ExternalCommand -CommandParts (
+    Invoke-AzureCommandWithLinkedScopeGuidance -CommandParts (
         @(
             "az", "containerapp", "job", "update",
             "-n", $JobName,
@@ -368,18 +486,14 @@ if ($jobExists) {
             "--replica-timeout", "$jobReplicaTimeout",
             "--set-env-vars"
         ) + $envArgs
-    ) -DisplayText "az containerapp job update -n $JobName -g $ResourceGroup --image $fullImage --cpu $jobCpu --memory $jobMemory --parallelism $jobParallelism --replica-completion-count $jobReplicaCompletionCount --replica-retry-limit $jobReplicaRetryLimit --replica-timeout $jobReplicaTimeout --set-env-vars <configured>"
+    ) -DisplayText "az containerapp job update -n $JobName -g $ResourceGroup --image $fullImage --cpu $jobCpu --memory $jobMemory --parallelism $jobParallelism --replica-completion-count $jobReplicaCompletionCount --replica-retry-limit $jobReplicaRetryLimit --replica-timeout $jobReplicaTimeout --set-env-vars <configured>" -ManagedEnvironmentScope $effectiveEnvironmentResourceId -PrincipalObjectId $deployingPrincipalObjectId
 } else {
-    if (-not $AllowCreate) {
-        throw "Target job '$JobName' not found in resource group '$ResourceGroup'. Refusing to create a new job unless -AllowCreate is set to true."
-    }
-
-    Invoke-ExternalCommand -CommandParts (
+    Invoke-AzureCommandWithLinkedScopeGuidance -CommandParts (
         @(
             "az", "containerapp", "job", "create",
             "-n", $JobName,
             "-g", $ResourceGroup,
-            "--environment", $EnvironmentResourceId,
+            "--environment", $effectiveEnvironmentResourceId,
             "--trigger-type", "Manual",
             "--image", $fullImage,
             "--cpu", $jobCpu,
@@ -393,7 +507,7 @@ if ($jobExists) {
             "--registry-password", $acrPass,
             "--secrets"
         ) + $secretArgs + @("--env-vars") + $envArgs
-    ) -DisplayText "az containerapp job create -n $JobName -g $ResourceGroup --environment $EnvironmentResourceId --trigger-type Manual --image $fullImage --cpu $jobCpu --memory $jobMemory --parallelism $jobParallelism --replica-completion-count $jobReplicaCompletionCount --replica-retry-limit $jobReplicaRetryLimit --replica-timeout $jobReplicaTimeout --registry-server $loginServer --registry-username <hidden> --registry-password <hidden> --secrets <hidden> --env-vars <configured>"
+    ) -DisplayText "az containerapp job create -n $JobName -g $ResourceGroup --environment $effectiveEnvironmentResourceId --trigger-type Manual --image $fullImage --cpu $jobCpu --memory $jobMemory --parallelism $jobParallelism --replica-completion-count $jobReplicaCompletionCount --replica-retry-limit $jobReplicaRetryLimit --replica-timeout $jobReplicaTimeout --registry-server $loginServer --registry-username <hidden> --registry-password <hidden> --secrets <hidden> --env-vars <configured>" -ManagedEnvironmentScope $effectiveEnvironmentResourceId -PrincipalObjectId $deployingPrincipalObjectId
 }
 
 Write-Host "Azure job ready: $JobName"

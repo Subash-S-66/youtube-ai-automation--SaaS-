@@ -6,10 +6,18 @@ import { RefreshCw } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { authService } from '../../services/authService';
 
+type AdminLayoutUser = {
+  role?: string;
+  plan?: unknown;
+  displayPlan?: unknown;
+  isBetaMode?: boolean;
+  [key: string]: unknown;
+};
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<AdminLayoutUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,7 +38,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         }
         if (!isMounted) return;
         setCurrentUser({ ...me.data.user, plan: me.data.plan, displayPlan: me.data.displayPlan, isBetaMode: me.data.isBetaMode });
-      } catch (error) {
+      } catch {
         if (isMounted) router.replace('/login');
       } finally {
         if (isMounted) setLoading(false);

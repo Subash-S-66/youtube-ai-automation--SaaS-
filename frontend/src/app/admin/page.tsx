@@ -32,6 +32,40 @@ interface UserSummary {
   subscriptionExpiresAt?: string;
 }
 
+interface PlanLimits {
+  max_channels?: number;
+  daily_upload_limit?: number;
+  max_media_items?: number;
+  max_video_items?: number;
+  max_image_items?: number;
+  max_thumbnail_items?: number;
+  max_clip_length_seconds?: number;
+  max_total_video_duration_seconds?: number;
+}
+
+interface PlanFeatures {
+  voice_selection?: boolean;
+  scheduling?: boolean;
+  multi_channel?: boolean;
+  story_mode?: boolean;
+  cta?: boolean;
+  format_selection?: boolean;
+  template_customization?: boolean;
+  custom_media?: boolean;
+}
+
+interface PlanDraft {
+  _id: string;
+  name: string;
+  is_active: boolean;
+  price: number;
+  discountPercentage?: number;
+  priority_weight: number;
+  featuresList?: string[];
+  limits?: PlanLimits;
+  features?: PlanFeatures;
+}
+
 type AdminSection = 'overview' | 'communication' | 'system' | 'plans';
 type SystemPanel = 'core' | 'runtime' | 'policies' | 'recovery';
 type PipelineRunnerType = 'local' | 'azure' | 'remote';
@@ -118,10 +152,10 @@ interface PipelineRuntimeStatus {
 export default function AdminDashboard() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [stats, setStats] = useState<AdminStats | null>(null);
-  const [users, setUsers] = useState<UserSummary[]>([]);
-  const [userPage, setUserPage] = useState(1);
-  const [userTotalPages, setUserTotalPages] = useState(1);
-  const [userSearch, setUserSearch] = useState('');
+  const [, setUsers] = useState<UserSummary[]>([]);
+  const [userPage] = useState(1);
+  const [, setUserTotalPages] = useState(1);
+  const [userSearch] = useState('');
 
   // Tools forms
   const [notifyTitle, setNotifyTitle] = useState('');
@@ -132,7 +166,7 @@ export default function AdminDashboard() {
   const [notifying, setNotifying] = useState(false);
 
   // Plans Config State
-  const [plans, setPlans] = useState<any[]>([]);
+  const [plans, setPlans] = useState<PlanDraft[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const [bannerMessage, setBannerMessage] = useState('');
@@ -175,7 +209,7 @@ export default function AdminDashboard() {
   const [pendingRetryScanLimit, setPendingRetryScanLimit] = useState(100);
   const [savingHistoryRetentionPolicy, setSavingHistoryRetentionPolicy] = useState(false);
   const [savingCleanupPolicy, setSavingCleanupPolicy] = useState(false);
-  const [planDrafts, setPlanDrafts] = useState<any[]>([]);
+  const [planDrafts, setPlanDrafts] = useState<PlanDraft[]>([]);
   const [savingPlans, setSavingPlans] = useState(false);
   const [activeSection, setActiveSection] = useState<AdminSection>('overview');
   const [activeSystemPanel, setActiveSystemPanel] = useState<SystemPanel>('runtime');

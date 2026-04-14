@@ -2,12 +2,19 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import dynamic from 'next/dynamic';
-import { m, AnimatePresence } from 'framer-motion';
+import { m } from 'framer-motion';
 
 
 import { Shield, ArrowRight, User, Lock } from 'lucide-react';
 import { authService } from '../../services/authService';
+
+type LoginError = {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+};
 
 export default function AdminLogin() {
   const [username, setUsername] = useState('');
@@ -26,8 +33,9 @@ export default function AdminLogin() {
         const role = String(data?.data?.role || '').toLowerCase();
         router.push(role === 'helper' ? '/admin/tickets' : '/admin');
       }
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Login failed. Please check your credentials.');
+    } catch (err: unknown) {
+      const message = (err as LoginError)?.response?.data?.message;
+      setError(message || 'Login failed. Please check your credentials.');
       setIsLoading(false);
     }
   };
