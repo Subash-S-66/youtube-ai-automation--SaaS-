@@ -9,7 +9,7 @@ import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, HelpCi
 import { authService } from '../../services/authService';
 import { cn } from '../../lib/utils';
 import InstallPwaButton from '../InstallPwaButton';
-import { getApiBase } from '../../lib/apiBase';
+import { getApiOrigin } from '../../lib/apiBase';
 
 const InAppNotifications = dynamic(() => import('./InAppNotifications'), { ssr: false });
 
@@ -46,10 +46,9 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
     window.addEventListener('api-offline', handleOffline);
     window.addEventListener('api-online', handleOnline);
 
-    const apiBase = getApiBase();
     const checkServer = async () => {
       try {
-        const res = await fetch(`${apiBase}/`, { method: 'GET' });
+        const res = await fetch(`${getApiOrigin()}/health`, { method: 'GET' });
         if (res.ok) {
           setIsBackendOffline(false);
         }

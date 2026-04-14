@@ -91,7 +91,9 @@ api.interceptors.response.use(
     }
 
     if (typeof window !== 'undefined') {
-      if (!status || status >= 500) {
+      const requestPath = String(originalRequest?.url || '');
+      const isPromptGatewayTimeout = status === 504 && requestPath.includes('/prompt/generate');
+      if (!status || (status >= 500 && !isPromptGatewayTimeout)) {
         window.dispatchEvent(new CustomEvent('api-offline'));
       }
     }
