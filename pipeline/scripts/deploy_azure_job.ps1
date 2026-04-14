@@ -13,20 +13,47 @@ param(
 
 )
 
+# Local convenience: if required AZURE_* values are missing, try pipeline config/.env
+$bootstrapEnvPath = Join-Path -Path $PSScriptRoot -ChildPath "..\config\.env"
+$bootstrapEnvMap = @{}
+if (Test-Path $bootstrapEnvPath) {
+    foreach ($line in Get-Content $bootstrapEnvPath) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#")) {
+            continue
+        }
+
+        $parts = $trimmed -split "=", 2
+        if ($parts.Count -ne 2) {
+            continue
+        }
+
+        $bootstrapEnvMap[$parts[0].Trim()] = $parts[1].Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ResourceGroup)) {
+        $ResourceGroup = $bootstrapEnvMap["AZURE_RESOURCE_GROUP"]
+    }
+    if ([string]::IsNullOrWhiteSpace($RegistryName)) {
+        $RegistryName = $bootstrapEnvMap["AZURE_ACR_NAME"]
+    }
+    if ([string]::IsNullOrWhiteSpace($JobName)) {
+        $JobName = $bootstrapEnvMap["AZURE_JOB_NAME"]
+    }
+    if ([string]::IsNullOrWhiteSpace($EnvironmentResourceId)) {
+        $EnvironmentResourceId = $bootstrapEnvMap["AZURE_ENVIRONMENT_RESOURCE_ID"]
+    }
+    if ([string]::IsNullOrWhiteSpace($ImageTag)) {
+        $ImageTag = $bootstrapEnvMap["AZURE_IMAGE_TAG"]
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($ResourceGroup)) {
     throw "ResourceGroup is required. Set AZURE_RESOURCE_GROUP or pass -ResourceGroup explicitly."
 }
 
-if ([string]::IsNullOrWhiteSpace($RegistryName)) {
-    throw "RegistryName is required. Set AZURE_ACR_NAME or pass -RegistryName explicitly."
-}
-
 if ([string]::IsNullOrWhiteSpace($JobName)) {
     throw "JobName is required. Set AZURE_JOB_NAME or pass -JobName explicitly."
-}
-
-if ([string]::IsNullOrWhiteSpace($EnvironmentResourceId)) {
-    throw "EnvironmentResourceId is required. Set AZURE_ENVIRONMENT_RESOURCE_ID or pass -EnvironmentResourceId explicitly."
 }
 
 if ($ImageRepository.Contains(":")) {
@@ -377,6 +404,41 @@ if ($jobExists -and $existingJob -and -not [string]::IsNullOrWhiteSpace($existin
     $effectiveEnvironmentResourceId = $existingJob.properties.environmentId
 }
 
+if ([string]::IsNullOrWhiteSpace($RegistryName) -and $jobExists -and $existingJob) {
+    $existingRegistryServer = [string]$existingJob.properties.configuration.registries[0].server
+    if (-not [string]::IsNullOrWhiteSpace($existingRegistryServer)) {
+        if ($existingRegistryServer.EndsWith(".azurecr.io")) {
+            $RegistryName = $existingRegistryServer.Substring(0, $existingRegistryServer.Length - ".azurecr.io".Length)
+        } else {
+            $RegistryName = $existingRegistryServer
+        }
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($RegistryName)) {
+    try {
+        $acrListJson = Invoke-ExternalCommand -CommandParts @(
+            "az", "acr", "list",
+            "-g", $ResourceGroup,
+            "--query", "[].name",
+            "-o", "json"
+        ) -CaptureOutput
+
+        $acrNames = @($acrListJson | ConvertFrom-Json)
+        if ($acrNames.Count -eq 1) {
+            $RegistryName = [string]$acrNames[0]
+        } elseif ($acrNames.Count -gt 1) {
+            $registryList = ($acrNames | ForEach-Object { [string]$_ }) -join ", "
+            throw "RegistryName is required. Multiple ACR registries were found in resource group '$ResourceGroup': $registryList. Set AZURE_ACR_NAME or pass -RegistryName explicitly."
+        }
+    } catch {
+        if ($_.Exception.Message -match "Multiple ACR registries were found") {
+            throw
+        }
+        Write-Warning "Could not auto-discover ACR registry name from resource group '$ResourceGroup'."
+    }
+}
+
 $deployingPrincipalObjectId = Get-CurrentPrincipalObjectId
 $requiredLinkedAction = "Microsoft.App/managedEnvironments/join/action"
 $strictLinkedScopePreflight = if ([string]::IsNullOrWhiteSpace($env:AZURE_STRICT_LINKED_SCOPE_PREFLIGHT)) {
@@ -384,12 +446,25 @@ $strictLinkedScopePreflight = if ([string]::IsNullOrWhiteSpace($env:AZURE_STRICT
 } else {
     [System.Convert]::ToBoolean($env:AZURE_STRICT_LINKED_SCOPE_PREFLIGHT)
 }
+$buildPushOnly = if ([string]::IsNullOrWhiteSpace($env:AZURE_BUILD_PUSH_ONLY)) {
+    $false
+} else {
+    [System.Convert]::ToBoolean($env:AZURE_BUILD_PUSH_ONLY)
+}
 
-if (-not $jobExists -and -not $AllowCreate) {
+if ([string]::IsNullOrWhiteSpace($RegistryName)) {
+    throw "RegistryName is required. Set AZURE_ACR_NAME in config/.env or pass -RegistryName explicitly."
+}
+
+if (-not $buildPushOnly -and [string]::IsNullOrWhiteSpace($effectiveEnvironmentResourceId)) {
+    throw "EnvironmentResourceId is required. Set AZURE_ENVIRONMENT_RESOURCE_ID in config/.env or pass -EnvironmentResourceId explicitly."
+}
+
+if (-not $buildPushOnly -and -not $jobExists -and -not $AllowCreate) {
     throw "Target job '$JobName' not found in resource group '$ResourceGroup'. Refusing to create a new job unless -AllowCreate is set to true."
 }
 
-if (-not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [string]::IsNullOrWhiteSpace($effectiveEnvironmentResourceId)) {
+if (-not $buildPushOnly -and -not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [string]::IsNullOrWhiteSpace($effectiveEnvironmentResourceId)) {
     try {
         $assignmentJson = $null
         try {
@@ -619,7 +694,7 @@ $envArgs.Add("TELEGRAM_BOT_TOKEN=secretref:telegram-bot-token")
 $envArgs.Add("TELEGRAM_ALLOWED_CHAT_ID=secretref:telegram-allowed-chat-id")
 $envArgs.Add("RUN_COUNT=1")
 
-if ($jobExists) {
+if ($jobExists -and -not $buildPushOnly) {
     # Preflight write operations before image build so RBAC issues fail fast.
     Invoke-AzureCommandWithLinkedScopeGuidance -CommandParts (
         @(
@@ -666,6 +741,14 @@ try {
         Invoke-ExternalCommand -CommandParts @("docker", "build", "-t", $fullImage, ".")
         Invoke-ExternalCommand -CommandParts @("docker", "push", $fullImage)
     }
+}
+
+if ($buildPushOnly) {
+    Write-Warning "AZURE_BUILD_PUSH_ONLY=true: skipping Container Apps Job secret/registry/update operations."
+    Write-Host "Build and push completed only."
+    Write-Host "Image: $fullImage"
+    Write-Host "Tag: $normalizedImageTag"
+    exit 0
 }
 
 if ($jobExists) {

@@ -149,6 +149,7 @@ jobs:
           AZURE_JOB_REPLICA_RETRY_LIMIT: ${{ vars.AZURE_JOB_REPLICA_RETRY_LIMIT || '0' }}
           AZURE_JOB_REPLICA_TIMEOUT: ${{ vars.AZURE_JOB_REPLICA_TIMEOUT || '3600' }}
           AZURE_JOB_ALLOW_CREATE: ${{ vars.AZURE_JOB_ALLOW_CREATE || 'false' }}
+          AZURE_BUILD_PUSH_ONLY: ${{ vars.AZURE_BUILD_PUSH_ONLY || 'false' }}
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
           AZURE_JOB_NAME: ${{ vars.AZURE_JOB_NAME || secrets.AZURE_JOB_NAME }}
