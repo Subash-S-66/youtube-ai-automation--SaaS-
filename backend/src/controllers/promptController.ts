@@ -11,6 +11,7 @@ import type { PromptGenerationOptions } from '../services/promptGenerationServic
 // @access  Private
 export const generatePrompt = asyncHandler(
   async (req: Request<unknown, unknown, GeneratePromptInput>, res: Response) => {
+    const startedAt = Date.now();
     const {
       user_prompt,
       targetDuration,
@@ -50,11 +51,19 @@ export const generatePrompt = asyncHandler(
 
     let generated_prompt = '';
     try {
+      console.log(
+        `[PromptController] generate start user=${req.user.id} promptChars=${String(user_prompt || '').length}`
+      );
       generated_prompt = await generateAIPrompt(user_prompt, promptOptions);
     } catch (error: any) {
       const statusCode = Number(error?.statusCode || error?.response?.status || 0);
       const message = String(error?.message || 'Prompt generation failed');
       const normalized = message.toLowerCase();
+      console.error(
+        `[PromptController] generate failed user=${req.user.id} status=${statusCode || 'n/a'} elapsedMs=${
+          Date.now() - startedAt
+        } message=${message}`
+      );
       if (statusCode >= 400 && statusCode < 600) {
         throw new AppError(message, statusCode);
       }
@@ -86,5 +95,10 @@ export const generatePrompt = asyncHandler(
       promptId: newPrompt._id,
       gemini_prompt: generated_prompt,
     });
+    console.log(
+      `[PromptController] generate success user=${req.user.id} elapsedMs=${Date.now() - startedAt} promptId=${String(
+        newPrompt._id
+      )}`
+    );
   }
 );

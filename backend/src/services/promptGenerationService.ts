@@ -162,6 +162,8 @@ export const generatePromptDirect = async (user_prompt: string): Promise<string>
     console.log('[PromptService] Successfully generated prompt using native-gemini');
     return resultText.trim();
   } catch (error: any) {
+    const rawMessage = String(error?.message || 'unknown error');
+    console.error(`[PromptService] Native Gemini error: ${rawMessage}`);
     const message = `Prompt generation failed (native-gemini): ${error?.message || 'unknown error'}`;
     const normalized = String(error?.message || '').toLowerCase();
     const err: any = new Error(message);
