@@ -132,7 +132,14 @@ function Invoke-AzureCommandWithLinkedScopeGuidance {
     )
 
     try {
-        Invoke-ExternalCommand -CommandParts $CommandParts -DisplayText $DisplayText
+        # Capture command output so linked-scope authorization details are available in exception text.
+        $commandOutput = Invoke-ExternalCommand -CommandParts $CommandParts -CaptureOutput -DisplayText $DisplayText
+        if ($null -ne $commandOutput) {
+            $rendered = ($commandOutput | Out-String).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($rendered)) {
+                Write-Host $rendered
+            }
+        }
     } catch {
         $errorText = $_.Exception.Message
         $hasLinkedAuthorizationError =

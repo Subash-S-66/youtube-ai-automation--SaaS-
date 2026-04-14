@@ -66,6 +66,56 @@ interface PlanDraft {
   features?: PlanFeatures;
 }
 
+type PlanTier = 'free' | 'basic' | 'pro' | 'premium';
+type PlanNumberMap = Record<PlanTier, number>;
+
+interface PlanPayload {
+  is_active: boolean;
+  price: number;
+  discountPercentage: number;
+  priority_weight: number;
+  featuresList: string[];
+  limits: {
+    max_channels: number;
+    daily_upload_limit: number;
+    max_media_items: number;
+    max_video_items: number;
+    max_image_items: number;
+    max_thumbnail_items: number;
+    max_clip_length_seconds: number;
+    max_total_video_duration_seconds: number;
+  };
+  features: {
+    voice_selection: boolean;
+    scheduling: boolean;
+    multi_channel: boolean;
+    story_mode: boolean;
+    cta: boolean;
+    format_selection: boolean;
+    template_customization: boolean;
+    custom_media: boolean;
+  };
+}
+
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+}
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (typeof error === 'object' && error !== null) {
+    const maybeError = error as ApiErrorShape;
+    const message = maybeError.response?.data?.message;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message;
+    }
+  }
+  return fallback;
+};
+
 type AdminSection = 'overview' | 'communication' | 'system' | 'plans';
 type SystemPanel = 'core' | 'runtime' | 'policies' | 'recovery';
 type PipelineRunnerType = 'local' | 'azure' | 'remote';
@@ -167,7 +217,6 @@ export default function AdminDashboard() {
 
   // Plans Config State
   const [plans, setPlans] = useState<PlanDraft[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(true);
@@ -188,17 +237,17 @@ export default function AdminDashboard() {
   const [includeEmbeddedWorkersInRuntimeStatus, setIncludeEmbeddedWorkersInRuntimeStatus] = useState(false);
   const [pipelineWorkerProfile, setPipelineWorkerProfile] = useState<WorkerProfileType>('local');
   const [pipelineWorkerConcurrency, setPipelineWorkerConcurrency] = useState<number | ''>('');
-  const [pipelineConcurrencyByPlan, setPipelineConcurrencyByPlan] = useState({ free: 2, basic: 5, pro: 10, premium: 20 });
-  const [pipelineRetriesByPlan, setPipelineRetriesByPlan] = useState({ free: 2, basic: 3, pro: 3, premium: 5 });
+  const [pipelineConcurrencyByPlan, setPipelineConcurrencyByPlan] = useState<PlanNumberMap>({ free: 2, basic: 5, pro: 10, premium: 20 });
+  const [pipelineRetriesByPlan, setPipelineRetriesByPlan] = useState<PlanNumberMap>({ free: 2, basic: 3, pro: 3, premium: 5 });
   const [pipelineRetryCycles, setPipelineRetryCycles] = useState(2);
   const [pipelineCycleAcrossRunners, setPipelineCycleAcrossRunners] = useState(true);
   const [pipelineRunnerFallbackOrder, setPipelineRunnerFallbackOrder] = useState<Array<'local' | 'azure' | 'remote'>>(['azure', 'remote', 'local']);
-  const [jobHistoryLimitByPlan, setJobHistoryLimitByPlan] = useState({ free: 10, basic: 50, pro: 100, premium: 200 });
+  const [jobHistoryLimitByPlan, setJobHistoryLimitByPlan] = useState<PlanNumberMap>({ free: 10, basic: 50, pro: 100, premium: 200 });
   const [jobHistoryMinAgeDays, setJobHistoryMinAgeDays] = useState(7);
   const [queueWaitTimeoutMinutes, setQueueWaitTimeoutMinutes] = useState(100);
   const [processingHardTimeoutMinutes, setProcessingHardTimeoutMinutes] = useState(100);
   const [updatingConfig, setUpdatingConfig] = useState(false);
-  const [planValueMap, setPlanValueMap] = useState({ free: 0, basic: 1, pro: 2, premium: 4 });
+  const [planValueMap, setPlanValueMap] = useState<PlanNumberMap>({ free: 0, basic: 1, pro: 2, premium: 4 });
   const [savingProration, setSavingProration] = useState(false);
   const [savingPipelineRunner, setSavingPipelineRunner] = useState(false);
   const [savingRemoteRunnerConfig, setSavingRemoteRunnerConfig] = useState(false);
@@ -357,8 +406,8 @@ export default function AdminDashboard() {
       } else {
         setRuntimeStatusError('Failed to load pipeline runtime status.');
       }
-    } catch (err: any) {
-      setRuntimeStatusError(err?.response?.data?.message || 'Failed to load pipeline runtime status.');
+    } catch (err: unknown) {
+      setRuntimeStatusError(getErrorMessage(err, 'Failed to load pipeline runtime status.'));
     } finally {
       if (!silent) {
         setRuntimeStatusLoading(false);
@@ -446,8 +495,8 @@ export default function AdminDashboard() {
   }) => {
     try {
       return await adminService.setGlobalBanner(payload);
-    } catch (err: any) {
-      const errMessage = err?.response?.data?.message || '';
+    } catch (err: unknown) {
+      const errMessage = getErrorMessage(err, '');
       const needsLegacyType = typeof errMessage === 'string' &&
         errMessage.includes('Invalid option: expected one of "info"|"warning"|"critical"');
 
@@ -498,9 +547,9 @@ export default function AdminDashboard() {
       });
       setBannerActive(true);
       alert('Banner updated successfully!');
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
-      const message = (err as any)?.response?.data?.message || 'Failed to update banner.';
+      const message = getErrorMessage(err, 'Failed to update banner.');
       alert(message);
     } finally {
       setBannering(false);
@@ -523,9 +572,9 @@ export default function AdminDashboard() {
         endAt: bannerEnd ? new Date(bannerEnd).toISOString() : null
       });
       alert('Banner turned off.');
-    } catch (err) {
+    } catch (err: unknown) {
       setBannerActive(true);
-      const message = (err as any)?.response?.data?.message || 'Failed to turn off banner.';
+      const message = getErrorMessage(err, 'Failed to turn off banner.');
       alert(message);
     } finally {
       setTogglingBanner(false);
@@ -575,11 +624,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update proration settings.',
+        description: getErrorMessage(err, 'Failed to update proration settings.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -605,11 +654,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update pipeline runner.',
+        description: getErrorMessage(err, 'Failed to update pipeline runner.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -632,11 +681,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update remote worker settings.',
+        description: getErrorMessage(err, 'Failed to update remote worker settings.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -659,11 +708,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update worker runtime controls.',
+        description: getErrorMessage(err, 'Failed to update worker runtime controls.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -685,11 +734,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update queue limits.',
+        description: getErrorMessage(err, 'Failed to update queue limits.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -711,11 +760,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update retry policy.',
+        description: getErrorMessage(err, 'Failed to update retry policy.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -740,11 +789,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to requeue pending jobs.',
+        description: getErrorMessage(err, 'Failed to requeue pending jobs.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -766,11 +815,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update history retention policy.',
+        description: getErrorMessage(err, 'Failed to update history retention policy.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -792,11 +841,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update stuck job cleanup policy.',
+        description: getErrorMessage(err, 'Failed to update stuck job cleanup policy.'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -846,11 +895,11 @@ export default function AdminDashboard() {
     }
   };
 
-  const handlePlanChange = (planId: string, updates: any) => {
+  const handlePlanChange = (planId: string, updates: Partial<PlanDraft>) => {
     setPlanDrafts(prev => prev.map(p => p._id === planId ? { ...p, ...updates } : p));
   };
 
-  const getPlanPayload = (plan: any) => ({
+  const getPlanPayload = (plan: PlanDraft): PlanPayload => ({
     is_active: plan.is_active,
     price: Number(plan.price),
     discountPercentage: Number(plan.discountPercentage || 0),
@@ -900,7 +949,7 @@ export default function AdminDashboard() {
           if (JSON.stringify(draftPayload) === JSON.stringify(originalPayload)) return null;
           return { id: draft._id, data: draftPayload };
         })
-        .filter(Boolean) as Array<{ id: string; data: any }>;
+        .filter(Boolean) as Array<{ id: string; data: PlanPayload }>;
 
       for (const update of updates) {
         await planService.updatePlan(update.id, update.data);
@@ -915,11 +964,11 @@ export default function AdminDashboard() {
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       setModalConfig({
         isOpen: true,
         title: 'Error',
-        description: err.response?.data?.message || 'Failed to update plans',
+        description: getErrorMessage(err, 'Failed to update plans'),
         type: 'error',
         confirmText: 'OK',
         onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
@@ -927,47 +976,6 @@ export default function AdminDashboard() {
     } finally {
       setSavingPlans(false);
     }
-  };
-
-const handleDeleteUser = () => {
-    if (!selectedUserId) return;
-
-    setModalConfig({
-       isOpen: true,
-       title: 'Delete User',
-       description: 'Are you absolutely sure you want to delete this user? This action cannot be undone.',
-       type: 'error',
-       confirmText: 'Delete Permanently',
-       cancelText: 'Cancel',
-       onConfirm: async () => {
-           setModalConfig(prev => ({...prev, isOpen: false}));
-           try {
-             await adminService.deleteUser(selectedUserId);
-             setModalConfig({
-                isOpen: true,
-                title: 'Success',
-                description: 'User deleted successfully.',
-                type: 'success',
-                confirmText: 'OK',
-                onConfirm: () => setModalConfig(prev => ({...prev, isOpen: false}))
-             });
-             setSelectedUserId(null);
-             const usersData = await adminService.getUsers();
-             setUsers(usersData.data);
-           } catch (err) {
-             console.error(err);
-             setModalConfig({
-                isOpen: true,
-                title: 'Error',
-                description: 'Failed to delete user.',
-                type: 'error',
-                confirmText: 'Dismiss',
-                onConfirm: () => setModalConfig(prev => ({...prev, isOpen: false}))
-             });
-           }
-       },
-       onCancel: () => setModalConfig(prev => ({...prev, isOpen: false}))
-    });
   };
 
   useEffect(() => {
@@ -1135,9 +1143,9 @@ const handleDeleteUser = () => {
         } else {
           setRuntimeStatusError('Failed to load pipeline runtime status.');
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (!isMounted) return;
-        setRuntimeStatusError(err?.response?.data?.message || 'Failed to load pipeline runtime status.');
+        setRuntimeStatusError(getErrorMessage(err, 'Failed to load pipeline runtime status.'));
       } finally {
         if (!silent && isMounted) {
           setRuntimeStatusLoading(false);
@@ -1400,7 +1408,7 @@ const handleDeleteUser = () => {
                 <div className={cn('p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between', activeSystemPanel !== 'core' && 'hidden')}>
                   <div>
                     <p className="text-white font-bold">Beta Mode</p>
-                    <p className="text-sm text-slate-400">When enabled, all free users temporarily receive "Basic" plan limits. Does not modify their database record.</p>
+                    <p className="text-sm text-slate-400">When enabled, all free users temporarily receive &quot;Basic&quot; plan limits. Does not modify their database record.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input id="beta-mode-toggle" aria-label="Toggle Beta Mode" type="checkbox" className="sr-only peer" checked={betaMode} onChange={(e) => handleUpdateConfig(e.target.checked)} disabled={updatingConfig} />
@@ -1418,7 +1426,7 @@ const handleDeleteUser = () => {
                           type="number"
                           min="0"
                           step="0.1"
-                          value={(planValueMap as any)[key]}
+                          value={planValueMap[key]}
                           onChange={(e) => setPlanValueMap(prev => ({ ...prev, [key]: Number(e.target.value) }))}
                           className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
                         />
@@ -1764,7 +1772,7 @@ const handleDeleteUser = () => {
                           type="number"
                           min="1"
                           max="100"
-                          value={(pipelineConcurrencyByPlan as any)[plan]}
+                          value={pipelineConcurrencyByPlan[plan]}
                           onChange={(e) => handleConcurrencyLimitChange(plan, e.target.value)}
                           className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
                         />
@@ -1799,7 +1807,7 @@ const handleDeleteUser = () => {
                           type="number"
                           min="1"
                           max="5000"
-                          value={(jobHistoryLimitByPlan as any)[plan]}
+                          value={jobHistoryLimitByPlan[plan]}
                           onChange={(e) => handleHistoryLimitChange(plan, e.target.value)}
                           className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
                         />
@@ -1896,7 +1904,7 @@ const handleDeleteUser = () => {
                           type="number"
                           min="0"
                           max="10"
-                          value={(pipelineRetriesByPlan as any)[plan]}
+                          value={pipelineRetriesByPlan[plan]}
                           onChange={(e) => handleRetryCountChange(plan, e.target.value)}
                           className="w-full bg-[#111827] text-white px-2 py-1 rounded border border-[#1A2235]"
                         />
