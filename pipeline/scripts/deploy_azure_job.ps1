@@ -5,6 +5,7 @@ param(
     [string]$ImageRepository = "clipforge-pipeline-worker",
     [string]$ImageTag = $env:AZURE_IMAGE_TAG,
     [string]$EnvironmentResourceId = $env:AZURE_ENVIRONMENT_RESOURCE_ID,
+    [bool]$AllowCreate = $false,
     [int]$Parallelism = 2,
     [int]$ReplicaCompletionCount = 1,
     [int]$ReplicaRetryLimit = 0,
@@ -13,19 +14,19 @@ param(
 )
 
 if ([string]::IsNullOrWhiteSpace($ResourceGroup)) {
-    $ResourceGroup = "subash-rg"
+    throw "ResourceGroup is required. Set AZURE_RESOURCE_GROUP or pass -ResourceGroup explicitly."
 }
 
 if ([string]::IsNullOrWhiteSpace($RegistryName)) {
-    $RegistryName = "subash"
+    throw "RegistryName is required. Set AZURE_ACR_NAME or pass -RegistryName explicitly."
 }
 
 if ([string]::IsNullOrWhiteSpace($JobName)) {
-    $JobName = "clipforge"
+    throw "JobName is required. Set AZURE_JOB_NAME or pass -JobName explicitly."
 }
 
 if ([string]::IsNullOrWhiteSpace($EnvironmentResourceId)) {
-    $EnvironmentResourceId = "/subscriptions/f508189d-6f3f-42e0-9ddd-2e3d5455e9e6/resourceGroups/ISL-centralindia/providers/Microsoft.App/managedEnvironments/isl-collage-env"
+    throw "EnvironmentResourceId is required. Set AZURE_ENVIRONMENT_RESOURCE_ID or pass -EnvironmentResourceId explicitly."
 }
 
 if ($ImageRepository.Contains(":")) {
@@ -369,6 +370,10 @@ if ($jobExists) {
         ) + $envArgs
     ) -DisplayText "az containerapp job update -n $JobName -g $ResourceGroup --image $fullImage --cpu $jobCpu --memory $jobMemory --parallelism $jobParallelism --replica-completion-count $jobReplicaCompletionCount --replica-retry-limit $jobReplicaRetryLimit --replica-timeout $jobReplicaTimeout --set-env-vars <configured>"
 } else {
+    if (-not $AllowCreate) {
+        throw "Target job '$JobName' not found in resource group '$ResourceGroup'. Refusing to create a new job unless -AllowCreate is set to true."
+    }
+
     Invoke-ExternalCommand -CommandParts (
         @(
             "az", "containerapp", "job", "create",

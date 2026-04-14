@@ -290,6 +290,10 @@ PYTHONPATH=pipeline/src python -m pytest -q tests
 
 ## Production Deployment
 
+GitHub Actions CI/CD setup guide (DigitalOcean backend + Azure worker):
+
+- `deploy/GITHUB_ACTIONS_AZURE_CICD.md`
+
 Recommended split:
 
 1. Frontend on Vercel.

@@ -36,6 +36,14 @@ export default function PricePage() {
       priceCurrency: 'USD',
       price: '10',
       availability: 'https://schema.org/InStock',
+      shippingDetails: {
+        '@type': 'OfferShippingDetails',
+        doesNotShip: true,
+      },
+      hasMerchantReturnPolicy: {
+        '@type': 'MerchantReturnPolicy',
+        returnPolicyCategory: 'https://schema.org/MerchantReturnNotPermitted',
+      },
     },
   };
 

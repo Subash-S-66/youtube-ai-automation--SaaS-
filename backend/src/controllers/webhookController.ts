@@ -4,6 +4,7 @@ import JobModel from '../models/Job';
 import User from '../models/User';
 import crypto from 'crypto';
 import { applyUserJobHistoryRetention } from '../services/jobHistoryRetentionPolicyService';
+import { decrementChannelVideosOnHold, resolveJobChannelId } from '../services/channelHoldService';
 
 const appendRecentTopic = async (userId: string, topic: string): Promise<void> => {
   const chosenTopic = String(topic || '').trim(); // FIXED: Normalize chosen topic before storing in history.
@@ -83,6 +84,44 @@ const resolveSettlementCounts = (params: {
     consumeCount,
     releaseCount: Math.max(0, requestedCount - consumeCount),
   };
+};
+
+const settleGlobalAndChannelHolds = async (params: {
+  userId: string;
+  requestedCount: number;
+  consumeCount: number;
+  releaseCount: number;
+  jobRecord: Record<string, any> | null | undefined;
+  source: string;
+}): Promise<void> => {
+  const userId = String(params.userId || '').trim();
+  if (!userId) {
+    return;
+  }
+
+  const requestedCount = Math.max(1, Math.floor(Number(params.requestedCount || 1)));
+  const consumeCount = Math.max(0, Math.min(requestedCount, Math.floor(Number(params.consumeCount || 0))));
+  const releaseCount = Math.max(0, Math.min(requestedCount, Math.floor(Number(params.releaseCount || 0))));
+
+  const { consumeReservedCredits, releaseReservedCredits, reconcileUserHoldCounters } = await import('../services/uploadLimitService.js');
+
+  if (consumeCount > 0) {
+    await consumeReservedCredits(userId, consumeCount).catch(console.error);
+  }
+  if (releaseCount > 0) {
+    await releaseReservedCredits(userId, releaseCount).catch(console.error);
+  }
+
+  const channelId = resolveJobChannelId(params.jobRecord || null);
+  if (channelId) {
+    await decrementChannelVideosOnHold(userId, channelId, requestedCount).catch((error) => {
+      console.warn(`[Webhook] Failed to decrement channel hold (${params.source}) for user ${userId}, channel ${channelId}:`, error);
+    });
+  }
+
+  await reconcileUserHoldCounters(userId).catch((error) => {
+    console.warn(`[Webhook] Failed to reconcile hold counters (${params.source}) for user ${userId}:`, error);
+  });
 };
 
 // @desc    Receive job status updates from Python pipeline
@@ -169,7 +208,6 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
   }
 
   // Update status if it's changing
-  const { consumeReservedCredits, releaseReservedCredits } = await import('../services/uploadLimitService.js');
   const uploadDisabled = (job as any)?.pipelineConfig?.upload === false;
   const requiresUpload = !uploadDisabled && Boolean(
     (job as any)?.pipelineConfig?.upload === true ||
@@ -266,12 +304,14 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       if (successSettlement.consumeCount > 0) {
-         await consumeReservedCredits(job.userId.toString(), successSettlement.consumeCount).catch(console.error);
-       }
-       if (successSettlement.releaseCount > 0) {
-         await releaseReservedCredits(job.userId.toString(), successSettlement.releaseCount).catch(console.error);
-       }
+       await settleGlobalAndChannelHolds({
+         userId: updatedJob.userId.toString(),
+         requestedCount,
+         consumeCount: successSettlement.consumeCount,
+         releaseCount: successSettlement.releaseCount,
+         jobRecord: updatedJob as any,
+         source: 'job-status:success',
+       });
        await appendRecentTopic(updatedJob.userId.toString(), String((updatedJob as any).chosenSubTopic || '')).catch(console.error); // FIXED: Update user recent topics after webhook-confirmed success.
        await applyUserJobHistoryRetention(updatedJob.userId.toString()).catch((error) => {
          console.warn(`[Webhook] Failed to apply job history retention for user ${updatedJob.userId}:`, error);
@@ -312,12 +352,14 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       if (failureSettlement.consumeCount > 0) {
-         await consumeReservedCredits(job.userId.toString(), failureSettlement.consumeCount).catch(console.error);
-       }
-       if (failureSettlement.releaseCount > 0) {
-         await releaseReservedCredits(job.userId.toString(), failureSettlement.releaseCount).catch(console.error);
-       }
+       await settleGlobalAndChannelHolds({
+         userId: updatedJob.userId.toString(),
+         requestedCount,
+         consumeCount: failureSettlement.consumeCount,
+         releaseCount: failureSettlement.releaseCount,
+         jobRecord: updatedJob as any,
+         source: 'job-status:failed',
+       });
        await applyUserJobHistoryRetention(updatedJob.userId.toString()).catch((error) => {
          console.warn(`[Webhook] Failed to apply job history retention for user ${updatedJob.userId}:`, error);
        });
@@ -355,12 +397,14 @@ export const handleJobStatusWebhook = asyncHandler(async (req: Request, res: Res
        { new: true }
      );
      if (updatedJob) {
-       if (rejectedSettlement.consumeCount > 0) {
-         await consumeReservedCredits(job.userId.toString(), rejectedSettlement.consumeCount).catch(console.error);
-       }
-       if (rejectedSettlement.releaseCount > 0) {
-         await releaseReservedCredits(job.userId.toString(), rejectedSettlement.releaseCount).catch(console.error);
-       }
+       await settleGlobalAndChannelHolds({
+         userId: updatedJob.userId.toString(),
+         requestedCount,
+         consumeCount: rejectedSettlement.consumeCount,
+         releaseCount: rejectedSettlement.releaseCount,
+         jobRecord: updatedJob as any,
+         source: 'job-status:youtube_rejected',
+       });
        await applyUserJobHistoryRetention(updatedJob.userId.toString()).catch((error) => {
          console.warn(`[Webhook] Failed to apply job history retention for user ${updatedJob.userId}:`, error);
        });
@@ -592,13 +636,14 @@ export const handlePipelineCompleteWebhook = asyncHandler(async (req: Request, r
   );
 
   if (finalized) {
-    const { consumeReservedCredits, releaseReservedCredits } = await import('../services/uploadLimitService.js');
-    if (settlement.consumeCount > 0) {
-      await consumeReservedCredits(job.userId.toString(), settlement.consumeCount).catch(console.error);
-    }
-    if (settlement.releaseCount > 0) {
-      await releaseReservedCredits(job.userId.toString(), settlement.releaseCount).catch(console.error);
-    }
+    await settleGlobalAndChannelHolds({
+      userId: finalized.userId.toString(),
+      requestedCount,
+      consumeCount: settlement.consumeCount,
+      releaseCount: settlement.releaseCount,
+      jobRecord: finalized as any,
+      source: 'pipeline-complete:finalized',
+    });
     if (nextStatus === 'success') {
       await appendRecentTopic(finalized.userId.toString(), String((finalized as any).chosenSubTopic || '')).catch(console.error);
     }

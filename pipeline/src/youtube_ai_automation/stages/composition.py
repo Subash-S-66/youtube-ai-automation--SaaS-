@@ -54,9 +54,28 @@ def compose_scenes(
         )
         logger.info("composition", f"render completed output={video_path}")
     except Exception as exc:
-        warnings.append(f"render_error:{str(exc)[:180]}")
-        logger.error("composition", f"render failed: {str(exc)[:180]}")
-        return CompositionStageResult(video_path="", subtitle_path=str(subtitle_path), warnings=warnings)
+        primary_error = str(exc)
+        warnings.append(f"render_error:{primary_error[:180]}")
+        logger.warn("composition", f"primary render failed, retrying safe fallback: {primary_error[:160]}")
+
+        # Safe fallback: render with generated background only so upload can continue
+        # even when downloaded media is corrupted or incompatible.
+        fallback_video_path = output_dir / "final_full_fallback.mp4"
+        try:
+            render_vertical_video(
+                media_paths=[],
+                audio_path=Path(audio_path),
+                subtitle_path=subtitle_path if subtitle_path.exists() else None,
+                output_path=fallback_video_path,
+                target_duration_seconds=max(1.0, float(target_duration)),
+            )
+            warnings.append("render_media_fallback_applied")
+            video_path = fallback_video_path
+            logger.info("composition", f"fallback render completed output={video_path}")
+        except Exception as fallback_exc:
+            warnings.append(f"render_fallback_error:{str(fallback_exc)[:180]}")
+            logger.error("composition", f"render fallback failed: {str(fallback_exc)[:180]}")
+            return CompositionStageResult(video_path="", subtitle_path=str(subtitle_path), warnings=warnings)
 
     return CompositionStageResult(video_path=str(video_path), subtitle_path=str(subtitle_path), warnings=warnings)
 

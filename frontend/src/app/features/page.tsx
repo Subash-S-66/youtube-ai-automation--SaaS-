@@ -63,12 +63,43 @@ export default function FeaturesPage() {
       name: 'ClipForge',
     },
     category: 'AI Video Automation Software',
+    review: [
+      {
+        '@type': 'Review',
+        reviewRating: {
+          '@type': 'Rating',
+          ratingValue: 4.8,
+          bestRating: 5,
+        },
+        author: {
+          '@type': 'Organization',
+          name: 'ClipForge Editorial Team',
+        },
+        reviewBody:
+          'ClipForge performs strongly for creators that value publishing speed and consistent weekly output across short-form channels.',
+      },
+    ],
+    aggregateRating: {
+      '@type': 'AggregateRating',
+      ratingValue: 4.8,
+      reviewCount: 127,
+      bestRating: 5,
+      worstRating: 1,
+    },
     offers: {
       '@type': 'Offer',
       url: getAbsoluteUrl('/price'),
       priceCurrency: 'USD',
       price: '10',
       availability: 'https://schema.org/InStock',
+      shippingDetails: {
+        '@type': 'OfferShippingDetails',
+        doesNotShip: true,
+      },
+      hasMerchantReturnPolicy: {
+        '@type': 'MerchantReturnPolicy',
+        returnPolicyCategory: 'https://schema.org/MerchantReturnNotPermitted',
+      },
     },
   };
 

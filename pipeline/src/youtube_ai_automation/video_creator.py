@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import shutil
 import subprocess
 import tempfile
 import random
@@ -274,6 +275,25 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 
 
+def _format_ffmpeg_process_error(args: list[str], proc: subprocess.CompletedProcess[str]) -> str:
+    cmd_preview = " ".join(str(part) for part in args[:20])
+    if len(args) > 20:
+        cmd_preview += " ..."
+
+    stderr_text = (proc.stderr or "").strip()
+    stdout_text = (proc.stdout or "").strip()
+
+    if stderr_text:
+        if len(stderr_text) > 1600:
+            err_excerpt = f"{stderr_text[:800]}\n...\n{stderr_text[-800:]}"
+        else:
+            err_excerpt = stderr_text
+    else:
+        err_excerpt = stdout_text[-400:] if stdout_text else "<no stderr/stdout output>"
+
+    return f"ffmpeg failed (exit={proc.returncode}) cmd={cmd_preview} | {err_excerpt}"
+
+
 def _run_ffmpeg(args: list[str]) -> None:
     # Diagnostic: check local-file -i arguments only (skip ffmpeg virtual/stream inputs).
     def _is_virtual_input(input_arg: str, arg_index: int) -> bool:
@@ -303,7 +323,7 @@ def _run_ffmpeg(args: list[str]) -> None:
 
     proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed: {proc.stderr[-600:]}")
+        raise RuntimeError(_format_ffmpeg_process_error(args, proc))
 
 
 def _probe_duration_seconds(path: Path) -> float:
@@ -509,53 +529,75 @@ def render_vertical_video(
 
         for idx, media in enumerate(usable_media, start=1):
             seg = tmp / f"seg_{idx:04d}.mp4"
-            if _is_image(media):
-                seg_duration = image_duration
-                frames = max(1, int(round(seg_duration * 30)))
-                zoom_speeds = [0.0006, 0.0008, 0.0010, 0.0012]
-                zoom_speed = random.choice(zoom_speeds)
-                zoom_mode = random.choice(["in", "out"])
-                if zoom_mode == "out":
-                    zoom_expr = f"if(eq(on,1),1.18,max(1.00,zoom-{zoom_speed:.4f}))"
+            try:
+                if _is_image(media):
+                    seg_duration = image_duration
+                    frames = max(1, int(round(seg_duration * 30)))
+                    zoom_speeds = [0.0006, 0.0008, 0.0010, 0.0012]
+                    zoom_speed = random.choice(zoom_speeds)
+                    zoom_mode = random.choice(["in", "out"])
+                    if zoom_mode == "out":
+                        zoom_expr = f"if(eq(on,1),1.18,max(1.00,zoom-{zoom_speed:.4f}))"
+                    else:
+                        zoom_expr = f"if(eq(on,1),1.00,min(1.20,zoom+{zoom_speed:.4f}))"
+                    pan_x = random.choice(["iw/2-(iw/zoom/2)", "0", "iw-(iw/zoom)"])
+                    pan_y = random.choice(["ih/2-(ih/zoom/2)", "0", "ih-(ih/zoom)"])
+                    _run_ffmpeg([
+                        "ffmpeg", "-y",
+                        "-loop", "1",
+                        "-t", f"{seg_duration:.2f}",
+                        "-i", str(media),
+                        "-vf",
+                        (
+                            f"scale=1200:2133:force_original_aspect_ratio=increase,"
+                            f"zoompan=z='{zoom_expr}':x='{pan_x}':y='{pan_y}':"  # FIXED: Apply dynamic pan path instead of fixed center pan.
+                            f"d={frames}:s=1080x1920:fps=30,"
+                            "format=yuv420p"
+                        ),
+                        "-r", "30",
+                        "-an",
+                        "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p",
+                        str(seg),
+                    ])
                 else:
-                    zoom_expr = f"if(eq(on,1),1.00,min(1.20,zoom+{zoom_speed:.4f}))"
-                pan_x = random.choice(["iw/2-(iw/zoom/2)", "0", "iw-(iw/zoom)"])
-                pan_y = random.choice(["ih/2-(ih/zoom/2)", "0", "ih-(ih/zoom)"])
-                _run_ffmpeg([
-                    "ffmpeg", "-y",
-                    "-loop", "1",
-                    "-t", f"{seg_duration:.2f}",
-                    "-i", str(media),
-                    "-vf",
-                    (
-                        f"scale=1200:2133:force_original_aspect_ratio=increase,"
-                        f"zoompan=z='{zoom_expr}':x='{pan_x}':y='{pan_y}':"  # FIXED: Apply dynamic pan path instead of fixed center pan.
-                        f"d={frames}:s=1080x1920:fps=30,"
-                        "format=yuv420p"
-                    ),
-                    "-r", "30",
-                    "-an",
-                    "-c:v", "libx264",
-                    "-pix_fmt", "yuv420p",
-                    str(seg),
-                ])
-            else:
-                seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
-                video_idx += 1
-                _run_ffmpeg([
-                    "ffmpeg", "-y",
-                    "-stream_loop", "-1",
-                    "-t", f"{seg_duration:.2f}",
-                    "-i", str(media),
-                    "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p",
-                    "-r", "30",
-                    "-an",
-                    "-c:v", "libx264",
-                    "-pix_fmt", "yuv420p",
-                    str(seg),
-                ])
-            segments.append(seg)
-            segment_durations.append(seg_duration)
+                    seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
+                    video_idx += 1
+                    _run_ffmpeg([
+                        "ffmpeg", "-y",
+                        "-stream_loop", "-1",
+                        "-t", f"{seg_duration:.2f}",
+                        "-i", str(media),
+                        "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p",
+                        "-r", "30",
+                        "-an",
+                        "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p",
+                        str(seg),
+                    ])
+            except Exception as exc:
+                print(f"[VideoCreator] WARNING: skipping unusable media segment '{media.name}': {str(exc)[:240]}")
+                continue
+
+            if seg.exists():
+                segments.append(seg)
+                segment_durations.append(seg_duration)
+
+        if not segments:
+            emergency_segment = tmp / "seg_fallback_0001.mp4"
+            _run_ffmpeg([
+                "ffmpeg", "-y",
+                "-f", "lavfi",
+                "-i", "color=c=0x0B1020:s=1080x1920:r=30",
+                "-t", f"{duration:.2f}",
+                "-an",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                str(emergency_segment),
+            ])
+            segments = [emergency_segment]
+            segment_durations = [duration]
+            print("[VideoCreator] WARNING: all media segments failed; using emergency background segment.")
 
         visual_track = tmp / "visual_track.mp4"
         if len(segments) == 1:
@@ -611,7 +653,23 @@ def render_vertical_video(
                 "-pix_fmt", "yuv420p",
                 str(visual_track),
             ])
-            _run_ffmpeg(cmd)
+            try:
+                _run_ffmpeg(cmd)
+            except Exception as exc:
+                fallback_duration = max(duration, sum(segment_durations))
+                print(
+                    f"[VideoCreator] WARNING: xfade composition failed; using first segment loop fallback: {str(exc)[:220]}"
+                )
+                _run_ffmpeg([
+                    "ffmpeg", "-y",
+                    "-stream_loop", "-1",
+                    "-t", f"{fallback_duration:.2f}",
+                    "-i", str(segments[0]),
+                    "-an",
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    str(visual_track),
+                ])
 
         # Guarantee visual timeline is long enough; prevents accidental early cuts
         # when stock clips are fewer than target duration.
@@ -715,10 +773,5 @@ def render_vertical_video(
                     return output_path
                 print("[VideoCreator] All caption rendering methods failed - outputting video without captions.")
 
-        _run_ffmpeg([
-            "ffmpeg", "-y",
-            "-i", str(muxed_no_sub),
-            "-c", "copy",
-            str(output_path),
-        ])
+        shutil.copy2(muxed_no_sub, output_path)
         return output_path

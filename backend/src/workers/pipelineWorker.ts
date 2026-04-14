@@ -38,6 +38,7 @@ import {
   consumeReservedCredits,
   getConsumedUploadsLast24hForChannel,
   getCurrentUsageDayStartUtc,
+  reconcileUserHoldCounters,
   releaseReservedCredits,
 } from '../services/uploadLimitService';
 import { applyUserJobHistoryRetention } from '../services/jobHistoryRetentionPolicyService';
@@ -2101,6 +2102,10 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
             console.error(`Failed to decrement channel holds for user ${userId}:`, err);
           });
         }
+
+        await reconcileUserHoldCounters(userId).catch((err) => {
+          console.warn(`[PipelineWorker] Failed to reconcile global holds for user ${userId}:`, err);
+        });
 
         await applyUserJobHistoryRetention(userId).catch((err) => {
           console.warn(`[PipelineWorker] Failed to apply job history retention for user ${userId}:`, err);

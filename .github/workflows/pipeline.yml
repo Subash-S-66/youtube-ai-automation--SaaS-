@@ -31,16 +31,20 @@ jobs:
       - name: Validate Azure Deployment Secrets
         shell: bash
         env:
-          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
           AZURE_ENVIRONMENT_RESOURCE_ID: ${{ secrets.AZURE_ENVIRONMENT_RESOURCE_ID }}
+          AZURE_JOB_NAME: ${{ vars.AZURE_JOB_NAME || secrets.AZURE_JOB_NAME }}
           ENV_FILE_BASE64: ${{ secrets.ENV_FILE_BASE64 }}
           YOUTUBE_CLIENT_SECRET_JSON_BASE64: ${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}
           YOUTUBE_TOKEN_JSON_BASE64: ${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}
         run: |
           missing=()
-          for key in AZURE_CREDENTIALS AZURE_RESOURCE_GROUP AZURE_ACR_NAME AZURE_ENVIRONMENT_RESOURCE_ID ENV_FILE_BASE64 YOUTUBE_CLIENT_SECRET_JSON_BASE64 YOUTUBE_TOKEN_JSON_BASE64; do
+          for key in AZURE_SUBSCRIPTION_ID AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_RESOURCE_GROUP AZURE_ACR_NAME AZURE_ENVIRONMENT_RESOURCE_ID AZURE_JOB_NAME ENV_FILE_BASE64 YOUTUBE_CLIENT_SECRET_JSON_BASE64 YOUTUBE_TOKEN_JSON_BASE64; do
             if [ -z "${!key}" ]; then
               missing+=("$key")
             fi
@@ -68,10 +72,20 @@ jobs:
           PYTHONPATH: pipeline/src
         run: python -m pytest -q tests
 
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+      - name: Azure CLI Login (Service Principal)
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          az login --service-principal \
+            --username "$AZURE_CLIENT_ID" \
+            --password "$AZURE_CLIENT_SECRET" \
+            --tenant "$AZURE_TENANT_ID" \
+            --output none
+          az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 
       - name: Prepare Config Files
         shell: bash
@@ -109,23 +123,42 @@ jobs:
               path.write_bytes(decoded)
           PY
 
+      - name: Compute Pinned Image Tag
+        id: image_tag
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::12}"
+          image_tag="$(date +%Y%m%d-%H%M%S)-${GITHUB_RUN_NUMBER}-${short_sha}"
+          if [ "$image_tag" = "latest" ]; then
+            echo "Refusing to deploy with latest image tag." >&2
+            exit 1
+          fi
+          echo "value=$image_tag" >> "$GITHUB_OUTPUT"
+
       - name: Deploy Azure Container Apps Job
         shell: pwsh
         working-directory: ./pipeline
         env:
-          AZURE_JOB_CPU: "1"
-          AZURE_JOB_MEMORY: "2Gi"
-          AZURE_JOB_PARALLELISM: "2"
-          AZURE_JOB_REPLICA_COMPLETION_COUNT: "1"
-          AZURE_JOB_REPLICA_RETRY_LIMIT: "0"
-          AZURE_JOB_REPLICA_TIMEOUT: "3600"
+          AZURE_JOB_CPU: ${{ vars.AZURE_JOB_CPU || '1' }}
+          AZURE_JOB_MEMORY: ${{ vars.AZURE_JOB_MEMORY || '2Gi' }}
+          AZURE_JOB_PARALLELISM: ${{ vars.AZURE_JOB_PARALLELISM || '2' }}
+          AZURE_JOB_REPLICA_COMPLETION_COUNT: ${{ vars.AZURE_JOB_REPLICA_COMPLETION_COUNT || '1' }}
+          AZURE_JOB_REPLICA_RETRY_LIMIT: ${{ vars.AZURE_JOB_REPLICA_RETRY_LIMIT || '0' }}
+          AZURE_JOB_REPLICA_TIMEOUT: ${{ vars.AZURE_JOB_REPLICA_TIMEOUT || '3600' }}
+          AZURE_JOB_ALLOW_CREATE: ${{ vars.AZURE_JOB_ALLOW_CREATE || 'false' }}
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
-          AZURE_JOB_NAME: "clipforge"
+          AZURE_JOB_NAME: ${{ vars.AZURE_JOB_NAME || secrets.AZURE_JOB_NAME }}
+          AZURE_JOB_CONTAINER_NAME: ${{ vars.AZURE_JOB_CONTAINER_NAME || secrets.AZURE_JOB_CONTAINER_NAME || '' }}
+          AZURE_ARM_API_VERSION: ${{ secrets.AZURE_ARM_API_VERSION || '2023-05-01' }}
+          AZURE_IMAGE_TAG: ${{ steps.image_tag.outputs.value }}
           AZURE_ENVIRONMENT_RESOURCE_ID: ${{ secrets.AZURE_ENVIRONMENT_RESOURCE_ID }}
         run: |
+          $allowCreate = [System.Convert]::ToBoolean($env:AZURE_JOB_ALLOW_CREATE)
           ./scripts/deploy_azure_job.ps1 `
             -ResourceGroup $env:AZURE_RESOURCE_GROUP `
             -RegistryName $env:AZURE_ACR_NAME `
             -JobName $env:AZURE_JOB_NAME `
-            -EnvironmentResourceId $env:AZURE_ENVIRONMENT_RESOURCE_ID
+            -ImageTag $env:AZURE_IMAGE_TAG `
+            -EnvironmentResourceId $env:AZURE_ENVIRONMENT_RESOURCE_ID `
+            -AllowCreate:$allowCreate
