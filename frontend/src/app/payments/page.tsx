@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
-import { m, AnimatePresence } from 'framer-motion';
+import { m } from 'framer-motion';
 
 
 import { CreditCard, CheckCircle2, RefreshCw, Zap, Sparkles } from 'lucide-react';
@@ -22,6 +21,43 @@ interface Plan {
   features: string[];
   recommended?: boolean;
 }
+
+interface PaymentUserData {
+  plan?: string;
+  displayPlan?: string;
+  uploadLimitPerDay?: number;
+  uploadsUsedToday?: number;
+  cancelAtPeriodEnd?: boolean;
+  subscriptionStatus?: string;
+  subscriptionExpiresAt?: string;
+  user?: {
+    subscriptionStatus?: string;
+    subscriptionExpiresAt?: string;
+  };
+}
+
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+  message?: string;
+}
+
+const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as ApiErrorShape;
+    const apiMessage = err.response?.data?.message;
+    if (typeof apiMessage === 'string' && apiMessage.trim().length > 0) {
+      return apiMessage;
+    }
+    if (typeof err.message === 'string' && err.message.trim().length > 0) {
+      return err.message;
+    }
+  }
+  return fallback;
+};
 
 const PLANS: Plan[] = [
   {
@@ -56,7 +92,7 @@ const PLANS: Plan[] = [
 ];
 
 export default function PaymentsPage() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<PaymentUserData | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -68,8 +104,8 @@ export default function PaymentsPage() {
       try {
         const userData = await authService.getMe();
         setUser(userData.data);
-      } catch (err) {
-        authService.handleAuthError(err);
+      } catch (error) {
+        authService.handleAuthError(error);
       } finally {
         setLoading(false);
       }
@@ -90,12 +126,17 @@ export default function PaymentsPage() {
       await openRazorpayCheckout(order, {
         onSuccess: async (rzpResponse: RazorpaySuccessResponse) => {
           try {
-            await paymentService.confirmPayment(rzpResponse as any);
+            const confirmationPayload: Record<string, string> = {
+              razorpay_payment_id: rzpResponse.razorpay_payment_id,
+              razorpay_order_id: rzpResponse.razorpay_order_id,
+              razorpay_signature: rzpResponse.razorpay_signature,
+            };
+            await paymentService.confirmPayment(confirmationPayload);
             const userData = await authService.getMe();
             setUser(userData.data);
             setMessage({ text: 'Subscription upgraded successfully! Your limits have been updated.', type: 'success' });
-          } catch (err: any) {
-            setMessage({ text: err.response?.data?.message || 'Payment verification failed. Please contact support.', type: 'error' });
+          } catch (error: unknown) {
+            setMessage({ text: getApiErrorMessage(error, 'Payment verification failed. Please contact support.'), type: 'error' });
           } finally {
             setProcessing(null);
           }
@@ -108,8 +149,8 @@ export default function PaymentsPage() {
           setProcessing(null);
         },
       });
-    } catch (err: any) {
-      setMessage({ text: err.response?.data?.message || 'Failed to start checkout', type: 'error' });
+    } catch (error: unknown) {
+      setMessage({ text: getApiErrorMessage(error, 'Failed to start checkout'), type: 'error' });
       setProcessing(null);
     }
   };
@@ -317,8 +358,8 @@ export default function PaymentsPage() {
             const userData = await authService.getMe();
             setUser(userData.data);
             setMessage({ text: 'Plan converted successfully using remaining days.', type: 'success' });
-          } catch (err: any) {
-            setMessage({ text: err.response?.data?.message || 'Failed to convert plan', type: 'error' });
+          } catch (error: unknown) {
+            setMessage({ text: getApiErrorMessage(error, 'Failed to convert plan'), type: 'error' });
           } finally {
             setUpgradeModalOpen(false);
           }

@@ -754,6 +754,7 @@ export default function MediaLibraryPage() {
                    >
                      {mediaItem.type === 'image' ? (
                        <>
+                         {/* eslint-disable-next-line @next/next/no-img-element */}
                          <img
                            src={getMediaUrl(mediaItem.path)}
                            alt={mediaItem.originalName}
@@ -1027,6 +1028,7 @@ export default function MediaLibraryPage() {
                        dragOverId === img._id && "ring-2 ring-[#FF4FD8] ring-offset-2 ring-offset-[#0B0F1A] scale-[1.04]"
                      )}
                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={getMediaUrl(img.path)}
                         alt={img.originalName}
@@ -1133,13 +1135,16 @@ export default function MediaLibraryPage() {
               style={{ left: 0, top: 0, transform: 'translate(-50%, -50%)' }}
             >
               {isImage ? (
-                <img
-                  src={getMediaUrl(item.path)}
-                  alt={item.originalName}
-                  className="h-24 w-16 object-cover rounded-lg border border-[#1A2235] shadow-2xl"
-                  loading="lazy"
-                  decoding="async"
-                />
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={getMediaUrl(item.path)}
+                    alt={item.originalName}
+                    className="h-24 w-16 object-cover rounded-lg border border-[#1A2235] shadow-2xl"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </>
               ) : (
                 <div className="h-24 w-16 bg-[#111827] rounded-lg border border-[#1A2235] shadow-2xl flex items-center justify-center text-[10px] text-slate-200">
                   Video
@@ -1181,13 +1186,16 @@ export default function MediaLibraryPage() {
                     (() => {
                       const item = images[previewIndex % images.length];
                       return (
-                        <img
-                          src={getMediaUrl(item.path)}
-                          alt={item.originalName}
-                          className="w-full h-full object-cover"
-                          loading="lazy"
-                          decoding="async"
-                        />
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={getMediaUrl(item.path)}
+                            alt={item.originalName}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        </>
                       );
                     })()
                   )}
@@ -1208,13 +1216,16 @@ export default function MediaLibraryPage() {
                       if (!mediaItem) return null;
                       if (mediaItem.type === 'image') {
                         return (
-                          <img
-                            src={getMediaUrl(mediaItem.path)}
-                            alt={mediaItem.originalName}
-                            className="w-full h-full object-cover"
-                            loading="lazy"
-                            decoding="async"
-                          />
+                          <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={getMediaUrl(mediaItem.path)}
+                              alt={mediaItem.originalName}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                              decoding="async"
+                            />
+                          </>
                         );
                       }
                       return (

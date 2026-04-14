@@ -488,14 +488,25 @@ if (-not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [st
         ) {
             throw
         }
-        if ($strictLinkedScopePreflight) {
+
+        $isRbacReadDenied =
+            ($_.Exception.Message -match "Microsoft\.Authorization/roleAssignments/read") -or
+            ($_.Exception.Message -match "Microsoft\.Authorization/roleDefinitions/read")
+
+        if ($isRbacReadDenied) {
+            Write-Warning (
+                "RBAC preflight introspection is unavailable because the deploying identity cannot read role assignments/definitions on '$effectiveEnvironmentResourceId'. " +
+                "Continuing with write-probe preflight (job secret/registry operations), which will still fail-fast on missing linked-scope permission."
+            )
+        } elseif ($strictLinkedScopePreflight) {
             throw (
                 "Could not verify managed environment RBAC preflight. " +
                 "Set AZURE_STRICT_LINKED_SCOPE_PREFLIGHT=false only if you intentionally want best-effort preflight.`n" +
                 $_.Exception.Message
             )
+        } else {
+            Write-Warning "Could not verify managed environment RBAC preflight. Deployment will continue and may fail later with LinkedAuthorizationFailed."
         }
-        Write-Warning "Could not verify managed environment RBAC preflight. Deployment will continue and may fail later with LinkedAuthorizationFailed."
     }
 }
 
