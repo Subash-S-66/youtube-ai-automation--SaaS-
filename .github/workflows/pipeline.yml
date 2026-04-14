@@ -32,6 +32,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Validate Azure Deployment Secrets
+        id: validate_azure_inputs
         shell: bash
         env:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -41,13 +42,14 @@ jobs:
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
           AZURE_ENVIRONMENT_RESOURCE_ID: ${{ secrets.AZURE_ENVIRONMENT_RESOURCE_ID }}
-          AZURE_JOB_NAME: ${{ vars.AZURE_JOB_NAME || secrets.AZURE_JOB_NAME }}
+          AZURE_JOB_NAME_VAR: ${{ vars.AZURE_JOB_NAME }}
+          AZURE_JOB_NAME_SECRET: ${{ secrets.AZURE_JOB_NAME }}
           ENV_FILE_BASE64: ${{ secrets.ENV_FILE_BASE64 }}
           YOUTUBE_CLIENT_SECRET_JSON_BASE64: ${{ secrets.YOUTUBE_CLIENT_SECRET_JSON_BASE64 }}
           YOUTUBE_TOKEN_JSON_BASE64: ${{ secrets.YOUTUBE_TOKEN_JSON_BASE64 }}
         run: |
           missing=()
-          for key in AZURE_SUBSCRIPTION_ID AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_RESOURCE_GROUP AZURE_ACR_NAME AZURE_ENVIRONMENT_RESOURCE_ID AZURE_JOB_NAME ENV_FILE_BASE64 YOUTUBE_CLIENT_SECRET_JSON_BASE64 YOUTUBE_TOKEN_JSON_BASE64; do
+          for key in AZURE_SUBSCRIPTION_ID AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_RESOURCE_GROUP AZURE_ACR_NAME AZURE_ENVIRONMENT_RESOURCE_ID ENV_FILE_BASE64 YOUTUBE_CLIENT_SECRET_JSON_BASE64 YOUTUBE_TOKEN_JSON_BASE64; do
             if [ -z "${!key}" ]; then
               missing+=("$key")
             fi
@@ -58,11 +60,36 @@ jobs:
             exit 1
           fi
 
-          job_name="$AZURE_JOB_NAME"
-          if [ ${#job_name} -lt 2 ] || [ ${#job_name} -gt 32 ] || [[ "$job_name" == *"--"* ]] || [[ ! "$job_name" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]]; then
-            echo "Invalid AZURE_JOB_NAME '$job_name'. Expected 2-32 chars, lower-case alphanumeric or '-', start with a letter, end with alphanumeric, and no '--'." >&2
+          is_valid_job_name() {
+            local value="$1"
+            [ ${#value} -ge 2 ] && [ ${#value} -le 32 ] && [[ "$value" != *"--"* ]] && [[ "$value" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]]
+          }
+
+          job_name_var="${AZURE_JOB_NAME_VAR:-}"
+          job_name_secret="${AZURE_JOB_NAME_SECRET:-}"
+          job_name=""
+
+          if [ -n "$job_name_var" ] && is_valid_job_name "$job_name_var"; then
+            job_name="$job_name_var"
+          elif [ -n "$job_name_secret" ] && is_valid_job_name "$job_name_secret"; then
+            if [ -n "$job_name_var" ] && ! is_valid_job_name "$job_name_var"; then
+              echo "vars.AZURE_JOB_NAME is invalid. Falling back to secrets.AZURE_JOB_NAME."
+            fi
+            job_name="$job_name_secret"
+          else
+            if [ -z "$job_name_var" ] && [ -z "$job_name_secret" ]; then
+              echo "Missing required AZURE_JOB_NAME. Set either vars.AZURE_JOB_NAME or secrets.AZURE_JOB_NAME." >&2
+            elif [ -n "$job_name_var" ] && ! is_valid_job_name "$job_name_var"; then
+              echo "Invalid vars.AZURE_JOB_NAME. Expected 2-32 chars, lower-case alphanumeric or '-', start with a letter, end with alphanumeric, and no '--'." >&2
+            elif [ -n "$job_name_secret" ] && ! is_valid_job_name "$job_name_secret"; then
+              echo "Invalid secrets.AZURE_JOB_NAME. Expected 2-32 chars, lower-case alphanumeric or '-', start with a letter, end with alphanumeric, and no '--'." >&2
+            else
+              echo "Unable to resolve a valid AZURE_JOB_NAME from vars/secrets." >&2
+            fi
             exit 1
           fi
+
+          echo "azure_job_name=$job_name" >> "$GITHUB_OUTPUT"
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -158,7 +185,7 @@ jobs:
           AZURE_BUILD_PUSH_ONLY: ${{ vars.AZURE_BUILD_PUSH_ONLY || 'false' }}
           AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
           AZURE_ACR_NAME: ${{ secrets.AZURE_ACR_NAME }}
-          AZURE_JOB_NAME: ${{ vars.AZURE_JOB_NAME || secrets.AZURE_JOB_NAME }}
+          AZURE_JOB_NAME: ${{ steps.validate_azure_inputs.outputs.azure_job_name }}
           AZURE_JOB_CONTAINER_NAME: ${{ vars.AZURE_JOB_CONTAINER_NAME || secrets.AZURE_JOB_CONTAINER_NAME || '' }}
           AZURE_ARM_API_VERSION: ${{ secrets.AZURE_ARM_API_VERSION || '2023-05-01' }}
           AZURE_IMAGE_TAG: ${{ steps.image_tag.outputs.value }}
