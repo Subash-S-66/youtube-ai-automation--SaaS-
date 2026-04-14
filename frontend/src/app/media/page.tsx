@@ -1,7 +1,7 @@
 'use client';
 import NextImage from 'next/image';
 import Link from 'next/link';
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { m } from 'framer-motion';
 import { Upload, Trash2, Video, Image as ImageIcon, Film, RefreshCw, AlertCircle, Eye } from 'lucide-react';
 import DashboardLayout from '../../components/layout/DashboardLayout';
@@ -20,13 +20,83 @@ interface MediaPolicy {
   maxTotalVideoDurationSeconds: number;
 }
 
+type MediaKind = 'video' | 'image' | 'thumbnail';
+
+interface MediaItem {
+  _id: string;
+  type: MediaKind;
+  path: string;
+  originalName: string;
+  duration?: number;
+  imageDuration?: number;
+  trimStart?: number;
+  trimEnd?: number;
+}
+
+interface SequenceItem {
+  _id: string;
+  media?: MediaItem | null;
+}
+
+interface MediaUser {
+  planFeatures?: {
+    custom_media?: boolean;
+  };
+  [key: string]: unknown;
+}
+
+interface AuthMeResponse {
+  data?: MediaUser;
+}
+
+interface MediaResponse {
+  data?: MediaItem[];
+  policy?: MediaPolicy | null;
+}
+
+interface SequenceResponse {
+  data?: SequenceItem[];
+}
+
+interface UploadMediaResponse {
+  data?: {
+    _id?: string;
+  };
+}
+
+interface AddToSequenceResponse {
+  data?: SequenceItem;
+}
+
+interface ApiErrorShape {
+  response?: {
+    data?: {
+      message?: string;
+    };
+  };
+  message?: string;
+}
+
+const getApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (typeof error === 'object' && error !== null) {
+    const err = error as ApiErrorShape;
+    const responseMessage = err.response?.data?.message;
+    if (typeof responseMessage === 'string' && responseMessage.trim().length > 0) {
+      return responseMessage;
+    }
+    if (typeof err.message === 'string' && err.message.trim().length > 0) {
+      return err.message;
+    }
+  }
+  return fallback;
+};
+
 export default function MediaLibraryPage() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<MediaUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [media, setMedia] = useState<any[]>([]);
-  const [sequenceItems, setSequenceItems] = useState<any[]>([]);
+  const [media, setMedia] = useState<MediaItem[]>([]);
+  const [sequenceItems, setSequenceItems] = useState<SequenceItem[]>([]);
   const [mediaPolicy, setMediaPolicy] = useState<MediaPolicy | null>(null);
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const autoAddToSequenceRef = useRef<boolean>(false);
@@ -52,20 +122,17 @@ export default function MediaLibraryPage() {
   const dragPosRef = useRef<{ y: number } | null>(null);
   const autoScrollRafRef = useRef<number | null>(null);
   const durationSaveTimers = useRef<Record<string, number>>({});
-  const videos = media.filter(m => m.type === 'video');
-  const images = media.filter(m => m.type === 'image');
-  const thumbnails = media.filter(m => m.type === 'thumbnail');
-
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const videos = media.filter((m) => m.type === 'video');
+  const images = media.filter((m) => m.type === 'image');
+  const thumbnails = media.filter((m) => m.type === 'thumbnail');
 
   const fetchData = useCallback(async () => {
     try {
-      const userData = await authService.getMe();
-      setUser(userData.data);
+      const userData = await authService.getMe() as AuthMeResponse;
+      const currentUser = userData?.data ?? null;
+      setUser(currentUser);
 
-      const canUseCustomMedia = Boolean(userData?.data?.planFeatures?.custom_media);
+      const canUseCustomMedia = Boolean(currentUser?.planFeatures?.custom_media);
       if (!canUseCustomMedia) {
         setMedia([]);
         setSequenceItems([]);
@@ -76,25 +143,28 @@ export default function MediaLibraryPage() {
       const [mediaData, sequenceData] = await Promise.all([
         mediaService.getMedia(),
         mediaService.getSequence(),
-      ]);
+      ]) as [MediaResponse, SequenceResponse];
 
       setMedia(mediaData.data || []);
       setMediaPolicy(mediaData.policy || null);
       setSequenceItems(sequenceData.data || []);
-    } catch (err) {
-      console.error("Error loading media data:", err);
+    } catch (error) {
+      console.error('Error loading media data:', error);
       // Optional: authService.logout() if needed
     } finally {
       setLoading(false);
     }
   }, []);
 
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setError(null);
-    setUploading(true);
 
     try {
       // Basic validation
@@ -110,20 +180,19 @@ export default function MediaLibraryPage() {
         duration = await getVideoDuration(file);
       }
 
-      const created = await mediaService.uploadMedia(file, duration, uploadType === 'thumbnail' ? 'thumbnail' : undefined);
+      const created = await mediaService.uploadMedia(file, duration, uploadType === 'thumbnail' ? 'thumbnail' : undefined) as UploadMediaResponse;
       const newMediaId = created?.data?._id;
       if (autoAddToSequenceRef.current && newMediaId && uploadType !== 'thumbnail') {
         await mediaService.addToSequence(newMediaId);
       }
       await fetchData();
-    } catch (err: any) {
-      setError(err.response?.data?.message || err.message || "Failed to upload media");
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error, 'Failed to upload media'));
     } finally {
-      setUploading(false);
       autoAddToSequenceRef.current = false;
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [uploadType, fetchData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [uploadType, fetchData]);
 
   const getVideoDuration = (file: File): Promise<number> => {
     return new Promise((resolve) => {
@@ -142,8 +211,8 @@ export default function MediaLibraryPage() {
     try {
       await mediaService.deleteMedia(id);
       await fetchData();
-    } catch (err: any) {
-      setError(err.response?.data?.message || "Failed to delete media");
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error, 'Failed to delete media'));
     }
   }, [fetchData]);
 
@@ -198,14 +267,17 @@ export default function MediaLibraryPage() {
     }
   }, [previewIndex, loopPreview, getPreviewLength]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const scheduleNextImage = (durationSec: number) => {
+  const scheduleNextImage = useCallback((durationSec: number) => {
     clearPreviewTimer();
     previewTimerRef.current = window.setTimeout(() => {
       advancePreview();
     }, Math.max(1, durationSec) * 1000) as unknown as number;
-  };
+  }, [advancePreview]);
 
-  const sequenceList = sequenceItems.filter(item => item?.media);
+  const sequenceList = useMemo(
+    () => sequenceItems.filter((item) => item?.media),
+    [sequenceItems]
+  );
   const mixedList = sequenceList;
 
   useEffect(() => {
@@ -214,8 +286,8 @@ export default function MediaLibraryPage() {
       const item = images[previewIndex % images.length];
       scheduleNextImage(item?.imageDuration || 3);
     }
-    if (previewType === 'sequence' && sequenceItems.filter(item => item?.media).length > 0) {
-      const seq = sequenceList[previewIndex % sequenceItems.filter(item => item?.media).length];
+    if (previewType === 'sequence' && sequenceList.length > 0) {
+      const seq = sequenceList[previewIndex % sequenceList.length];
       const mediaItem = seq?.media;
       if (mediaItem?.type === 'image') {
         scheduleNextImage(mediaItem?.imageDuration || 3);
@@ -224,43 +296,30 @@ export default function MediaLibraryPage() {
     return () => {
       if (previewType === 'images' || previewType === 'sequence') clearPreviewTimer();
     };
-  }, [previewType, previewRunning, previewIndex, images, sequenceList]);
-
-  const handleReorder = useCallback(async (type: 'video' | 'image', newOrder: any[]) => {
-    setMedia(prev => {
-      const others = prev.filter(m => m.type !== type);
-      return [...newOrder, ...others];
-    });
-    try {
-      await mediaService.reorderMedia(type, newOrder.map(m => m._id));
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to reorder media');
-      await fetchData();
-    }
-  }, [fetchData]);
+  }, [previewType, previewRunning, previewIndex, images, sequenceList, scheduleNextImage]);
 
   const handleDurationChange = useCallback((id: string, value: number) => {
-    setMedia(prev => prev.map(m => (m._id === id ? { ...m, imageDuration: value } : m)));
+    setMedia((prev) => prev.map((m) => (m._id === id ? { ...m, imageDuration: value } : m)));
     const existing = durationSaveTimers.current[id];
     if (existing) window.clearTimeout(existing);
     durationSaveTimers.current[id] = window.setTimeout(async () => {
       try {
         await mediaService.updateMedia(id, { imageDuration: value });
-      } catch (err: any) {
-        setError(err.response?.data?.message || 'Failed to update image duration');
+      } catch (error: unknown) {
+        setError(getApiErrorMessage(error, 'Failed to update image duration'));
       }
     }, 500) as unknown as number;
   }, []);
 
   const handleVideoTrimChange = useCallback((id: string, field: 'trimStart' | 'trimEnd', value: number) => {
-    setMedia(prev => prev.map(m => (m._id === id ? { ...m, [field]: value } : m)));
+    setMedia((prev) => prev.map((m) => (m._id === id ? { ...m, [field]: value } : m)));
     const existing = durationSaveTimers.current[id];
     if (existing) window.clearTimeout(existing);
     durationSaveTimers.current[id] = window.setTimeout(async () => {
       try {
         await mediaService.updateMedia(id, { [field]: value });
-      } catch (err: any) {
-        setError(err.response?.data?.message || `Failed to update video ${field}`);
+      } catch (error: unknown) {
+        setError(getApiErrorMessage(error, `Failed to update video ${field}`));
       }
     }, 500) as unknown as number;
   }, []);
@@ -273,12 +332,12 @@ export default function MediaLibraryPage() {
   const maxMediaItems = mediaPolicy?.maxMediaItems ?? 0;
 
 
-  const handleMixedReorder = useCallback(async (newOrder: any[]) => {
+  const handleMixedReorder = useCallback(async (newOrder: SequenceItem[]) => {
     try {
       setSequenceItems(newOrder);
-      await mediaService.reorderSequence(newOrder.map((m: any) => m._id));
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to reorder media');
+      await mediaService.reorderSequence(newOrder.map((m) => m._id));
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error, 'Failed to reorder media'));
       await fetchData();
     }
   }, [fetchData]);
@@ -295,14 +354,14 @@ export default function MediaLibraryPage() {
 
   const addToSequence = useCallback(async (mediaId: string) => {
     try {
-      const result = await mediaService.addToSequence(mediaId);
+      const result = await mediaService.addToSequence(mediaId) as AddToSequenceResponse;
       if (result?.data) {
-        setSequenceItems(prev => [...prev, result.data]);
+        setSequenceItems((prev) => [...prev, result.data as SequenceItem]);
       } else {
         await fetchData();
       }
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to add to sequence');
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error, 'Failed to add to sequence'));
     }
   }, [fetchData]);
 
@@ -390,7 +449,7 @@ export default function MediaLibraryPage() {
       }
       document.body.style.userSelect = '';
     };
-  }, [pointerDragId]);
+  }, [pointerDragId, addToSequence]);
 
   useEffect(() => {
     if (!draggingId) return;
@@ -409,9 +468,10 @@ export default function MediaLibraryPage() {
       window.scrollBy(0, e.deltaY);
       e.preventDefault();
     };
-    const onMouseWheel = (e: any) => {
+    const onMouseWheel = (e: Event) => {
       if (!draggingId) return;
-      const delta = e.wheelDelta ? -e.wheelDelta : e.detail ? e.detail * 40 : 0;
+      const wheelEvent = e as Event & { wheelDelta?: number; detail?: number };
+      const delta = wheelEvent.wheelDelta ? -wheelEvent.wheelDelta : wheelEvent.detail ? wheelEvent.detail * 40 : 0;
       window.scrollBy(0, delta);
       e.preventDefault();
     };
@@ -458,13 +518,13 @@ export default function MediaLibraryPage() {
   const removeSequenceItem = async (seqId: string) => {
     try {
       await mediaService.deleteSequenceItem(seqId);
-      setSequenceItems(prev => prev.filter(s => s._id !== seqId));
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to remove from sequence');
+      setSequenceItems((prev) => prev.filter((s) => s._id !== seqId));
+    } catch (error: unknown) {
+      setError(getApiErrorMessage(error, 'Failed to remove from sequence'));
     }
   };
 
-  const mediaById = new Map(media.map(m => [m._id, m]));
+  const mediaById = new Map(media.map((m) => [m._id, m]));
 
   if (loading) {
     return (

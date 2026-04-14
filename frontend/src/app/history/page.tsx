@@ -47,6 +47,17 @@ interface UserResult {
   data: Record<string, unknown>;
 }
 
+const RUNTIME_STAGES = new Set([
+  'processing',
+  'dispatch',
+  'content_load',
+  'content_generation',
+  'payload_build',
+  'token_validation',
+  'pipeline_runtime',
+  'upload_confirmation_pending',
+]);
+
 export default function HistoryPage() {
   const [user, setUser] = useState<Record<string, unknown> | null>(null);
   const [jobs, setJobs] = useState<HistoryJob[]>([]);
@@ -62,26 +73,15 @@ export default function HistoryPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const jobsRef = useRef<HistoryJob[]>([]);
 
-  const runtimeStages = new Set([
-    'processing',
-    'dispatch',
-    'content_load',
-    'content_generation',
-    'payload_build',
-    'token_validation',
-    'pipeline_runtime',
-    'upload_confirmation_pending',
-  ]);
-
-  const isRuntimeInFlight = (job: HistoryJob) => {
+  const isRuntimeInFlight = useCallback((job: HistoryJob) => {
     const progressValue = typeof job.progress === 'number'
       ? job.progress
       : (typeof job.progress === 'object' ? Number(job.progress?.progress || 0) : 0);
     const stage = String(typeof job.progress === 'object' ? (job.progress?.stage || '') : '').toLowerCase();
-    return Number.isFinite(progressValue) && progressValue >= 0 && progressValue < 100 && runtimeStages.has(stage);
-  };
+    return Number.isFinite(progressValue) && progressValue >= 0 && progressValue < 100 && RUNTIME_STAGES.has(stage);
+  }, []);
 
-  const isActiveJob = (job: HistoryJob) => {
+  const isActiveJob = useCallback((job: HistoryJob) => {
     const status = String(job?.status || '').toLowerCase();
     if (['queued', 'pending', 'processing', 'running'].includes(status)) {
       return true;
@@ -90,7 +90,7 @@ export default function HistoryPage() {
       return false;
     }
     return isRuntimeInFlight(job);
-  };
+  }, [isRuntimeInFlight]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -183,7 +183,7 @@ export default function HistoryPage() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [debouncedSearch]);
+  }, [debouncedSearch, isActiveJob, user]);
 
   const handleManualRefresh = async () => {
     setListLoading(true);

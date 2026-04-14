@@ -391,14 +391,31 @@ if (-not $jobExists -and -not $AllowCreate) {
 
 if (-not [string]::IsNullOrWhiteSpace($deployingPrincipalObjectId) -and -not [string]::IsNullOrWhiteSpace($effectiveEnvironmentResourceId)) {
     try {
-        $assignmentJson = Invoke-ExternalCommand -CommandParts @(
-            "az", "role", "assignment", "list",
-            "--assignee-object-id", $deployingPrincipalObjectId,
-            "--scope", $effectiveEnvironmentResourceId,
-            "--include-inherited",
-            "--all",
-            "-o", "json"
-        ) -CaptureOutput
+        $assignmentJson = $null
+        try {
+            $assignmentJson = Invoke-ExternalCommand -CommandParts @(
+                "az", "role", "assignment", "list",
+                "--assignee-object-id", $deployingPrincipalObjectId,
+                "--scope", $effectiveEnvironmentResourceId,
+                "--include-inherited",
+                "--all",
+                "-o", "json"
+            ) -CaptureOutput
+        } catch {
+            if ($_.Exception.Message -match "group or scope are not required when --all is used") {
+                # Some az cli builds reject --scope with --all. Retry with scoped listing only.
+                $assignmentJson = Invoke-ExternalCommand -CommandParts @(
+                    "az", "role", "assignment", "list",
+                    "--assignee-object-id", $deployingPrincipalObjectId,
+                    "--scope", $effectiveEnvironmentResourceId,
+                    "--include-inherited",
+                    "-o", "json"
+                ) -CaptureOutput
+            } else {
+                throw
+            }
+        }
+
         $assignments = @($assignmentJson | ConvertFrom-Json)
         if (-not $assignments -or $assignments.Count -eq 0) {
             throw (
