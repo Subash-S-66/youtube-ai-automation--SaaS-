@@ -190,6 +190,7 @@ interface PipelineResponse {
 interface ApiErrorShape {
   message?: string;
   response?: {
+    status?: number;
     data?: {
       message?: string;
       warning?: string;
