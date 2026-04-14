@@ -23,6 +23,32 @@ from youtube_ai_automation.main import _setup_logging
 LOGGER = logging.getLogger("run_local")
 
 
+def _resolve_pipeline_timeout_seconds() -> int:
+    candidates: list[int] = []
+
+    raw_seconds = str(os.getenv("PIPELINE_TIMEOUT_SECONDS", "")).strip()
+    if raw_seconds:
+        try:
+            parsed_seconds = int(float(raw_seconds))
+            if parsed_seconds > 0:
+                candidates.append(parsed_seconds)
+        except Exception:
+            pass
+
+    raw_timeout_ms = str(os.getenv("PIPELINE_EXECUTION_TIMEOUT_MS", "")).strip()
+    if raw_timeout_ms:
+        try:
+            parsed_ms = int(float(raw_timeout_ms))
+            if parsed_ms > 0:
+                candidates.append(max(1, int((parsed_ms + 999) / 1000)))
+        except Exception:
+            pass
+
+    if not candidates:
+        return 480
+    return max(30, min(candidates))
+
+
 def main(argv: list[str] | None = None) -> dict:
     _setup_logging()
     parser = build_cli_parser()
@@ -42,7 +68,8 @@ def main(argv: list[str] | None = None) -> dict:
         count = resolve_count(args)
         upload = str(os.getenv("UPLOAD", "true")).strip().lower() in {"1", "true", "yes", "on"}
         publish_at = os.getenv("PUBLISH_AT", "").strip() or None
-        timeout_seconds = int(os.getenv("PIPELINE_TIMEOUT_SECONDS", "480"))
+        timeout_seconds = _resolve_pipeline_timeout_seconds()
+        LOGGER.info("[%s][RUNNER] effective timeout_seconds=%s", job_id, timeout_seconds)
         use_orchestrator = str(os.getenv("PIPELINE_ORCHESTRATOR_V2", "true")).strip().lower() in {"1", "true", "yes"}
 
         result = execute_pipeline(

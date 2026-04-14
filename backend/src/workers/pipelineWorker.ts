@@ -1490,6 +1490,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
         { name: "FFMPEG_COMMAND_TIMEOUT_SECONDS", value: String(effectiveFfmpegCommandTimeoutSeconds) },
         { name: "COMPOSITION_HEARTBEAT_SECONDS", value: String(effectiveCompositionHeartbeatSeconds) },
         { name: "PIPELINE_EXECUTION_TIMEOUT_MS", value: String(effectivePipelineExecutionTimeoutMs) },
+        { name: "PIPELINE_TIMEOUT_SECONDS", value: String(Math.max(30, Math.floor(effectivePipelineExecutionTimeoutMs / 1000))) },
         { name: "GEMINI_AUDIO_ENABLED", value: "true" },
         { name: "GEMINI_AUDIO_ONLY", value: "true" },
         { name: "FORCE_GOOGLE_AUDIO_ONLY", value: "true" },

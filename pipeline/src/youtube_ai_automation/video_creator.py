@@ -573,6 +573,50 @@ def render_vertical_video(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     duration = max(1.0, float(target_duration_seconds))
     command_timeout_seconds = _resolve_ffmpeg_timeout_seconds(ffmpeg_timeout_seconds)
+
+    def _stage_timeout(
+        *,
+        expected_duration_seconds: float | None,
+        multiplier: float,
+        cushion_seconds: float,
+        floor_ratio: float,
+        hard_ceiling_seconds: float | None = None,
+    ) -> float:
+        cap = max(5.0, float(command_timeout_seconds))
+        candidate = cap
+        if expected_duration_seconds is not None and expected_duration_seconds > 0:
+            candidate = min(candidate, float(expected_duration_seconds) * multiplier + cushion_seconds)
+        if hard_ceiling_seconds is not None and hard_ceiling_seconds > 0:
+            candidate = min(candidate, float(hard_ceiling_seconds))
+        adaptive_floor = max(12.0, cap * max(0.05, float(floor_ratio)))
+        candidate = max(adaptive_floor, candidate)
+        return min(cap, candidate)
+
+    transition_timeout_seconds = _stage_timeout(
+        expected_duration_seconds=duration,
+        multiplier=4.0,
+        cushion_seconds=40.0,
+        floor_ratio=0.25,
+        hard_ceiling_seconds=240.0,
+    )
+
+    finalize_timeout_seconds = _stage_timeout(
+        expected_duration_seconds=duration,
+        multiplier=3.6,
+        cushion_seconds=32.0,
+        floor_ratio=0.2,
+        hard_ceiling_seconds=210.0,
+    )
+
+    print(
+        (
+            f"[VideoCreator] timeout profile command={int(command_timeout_seconds)}s "
+            f"segment=adaptive transition={int(transition_timeout_seconds)}s "
+            f"finalize={int(finalize_timeout_seconds)}s"
+        ),
+        flush=True,
+    )
+
     print(
         (
             f"[VideoCreator] render start media_count={len(media_paths)} "
@@ -613,6 +657,13 @@ def render_vertical_video(
             try:
                 if _is_image(media):
                     seg_duration = image_duration
+                    segment_timeout_seconds = _stage_timeout(
+                        expected_duration_seconds=seg_duration,
+                        multiplier=8.0,
+                        cushion_seconds=16.0,
+                        floor_ratio=0.08,
+                        hard_ceiling_seconds=75.0,
+                    )
                     frames = max(1, int(round(seg_duration * 30)))
                     zoom_speeds = [0.0006, 0.0008, 0.0010, 0.0012]
                     zoom_speed = random.choice(zoom_speeds)
@@ -640,9 +691,16 @@ def render_vertical_video(
                         "-c:v", "libx264",
                         "-pix_fmt", "yuv420p",
                         str(seg),
-                    ], timeout_seconds=command_timeout_seconds)
+                    ], timeout_seconds=segment_timeout_seconds)
                 else:
                     seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
+                    segment_timeout_seconds = _stage_timeout(
+                        expected_duration_seconds=seg_duration,
+                        multiplier=7.0,
+                        cushion_seconds=18.0,
+                        floor_ratio=0.08,
+                        hard_ceiling_seconds=90.0,
+                    )
                     video_idx += 1
                     _run_ffmpeg([
                         "ffmpeg", "-y",
@@ -655,7 +713,7 @@ def render_vertical_video(
                         "-c:v", "libx264",
                         "-pix_fmt", "yuv420p",
                         str(seg),
-                    ], timeout_seconds=command_timeout_seconds)
+                    ], timeout_seconds=segment_timeout_seconds)
             except Exception as exc:
                 print(f"[VideoCreator] WARNING: skipping unusable media segment '{media.name}': {str(exc)[:240]}")
                 continue
@@ -690,7 +748,7 @@ def render_vertical_video(
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
                 str(visual_track),
-            ], timeout_seconds=command_timeout_seconds)
+            ], timeout_seconds=finalize_timeout_seconds)
         else:
             # Join animation: cross-fade transitions between segments.
             transition_styles = [
@@ -737,7 +795,7 @@ def render_vertical_video(
                 str(visual_track),
             ])
             try:
-                _run_ffmpeg(cmd, timeout_seconds=command_timeout_seconds)
+                _run_ffmpeg(cmd, timeout_seconds=transition_timeout_seconds)
             except Exception as exc:
                 fallback_duration = max(duration, sum(segment_durations))
                 print(
@@ -752,7 +810,7 @@ def render_vertical_video(
                     "-c:v", "libx264",
                     "-pix_fmt", "yuv420p",
                     str(visual_track),
-                ], timeout_seconds=command_timeout_seconds)
+                ], timeout_seconds=finalize_timeout_seconds)
 
         print("[VideoCreator] visual composition completed", flush=True)
 
@@ -770,7 +828,7 @@ def render_vertical_video(
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             str(visual_padded),
-        ], timeout_seconds=command_timeout_seconds)
+        ], timeout_seconds=finalize_timeout_seconds)
 
         # Optional: blend background music under narration with sidechain ducking.
         final_audio_input = audio_path
@@ -801,7 +859,7 @@ def render_vertical_video(
                         "-t", f"{final_duration:.2f}",
                         "-c:a", "pcm_s16le",
                         str(mixed_audio),
-                    ], timeout_seconds=command_timeout_seconds)
+                    ], timeout_seconds=finalize_timeout_seconds)
                     final_audio_input = mixed_audio
                 except Exception:
                     final_audio_input = audio_path
@@ -818,7 +876,7 @@ def render_vertical_video(
             "-c:a", "aac",
             "-t", f"{final_duration:.2f}",  # FIXED: Trim/match output to audio duration without silence padding.
             str(muxed_no_sub),
-        ], timeout_seconds=command_timeout_seconds)
+        ], timeout_seconds=finalize_timeout_seconds)
 
         print(f"[VideoCreator] audio mux completed final_duration={final_duration:.2f}s", flush=True)
 
@@ -843,7 +901,7 @@ def render_vertical_video(
                         "-pix_fmt", "yuv420p",
                         "-c:a", "copy",
                         str(output_path),
-                    ], timeout_seconds=command_timeout_seconds)
+                    ], timeout_seconds=finalize_timeout_seconds)
                     subtitle_burned = True
                     print("[VideoCreator] subtitle burn completed", flush=True)
                     return output_path
