@@ -1100,7 +1100,8 @@ function Dashboard() {
         promptRes?.data?.id ||
         '';
       const promptWarning = String(promptRes?.warning || promptRes?.data?.warning || '').trim();
-      if (promptWarning) {
+      const isTransientPromptFallbackWarning = /ai prompt service was unavailable/i.test(promptWarning);
+      if (promptWarning && !isTransientPromptFallbackWarning) {
         setMessage({ text: promptWarning, type: 'warning' });
       }
       if (!promptId) {
