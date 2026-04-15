@@ -459,22 +459,24 @@ def _allocate_mixed_clip_durations(video_count: int, total_for_videos: float) ->
     """
     if video_count <= 0:
         return []
-    base = [float(random.choice([2, 3, 4, 5, 6, 7, 8])) for _ in range(video_count)]
+    min_clip_seconds = 3.0
+    max_clip_seconds = 8.0
+    base = [float(random.choice([3, 4, 5, 6, 7, 8])) for _ in range(video_count)]
     base_sum = max(1.0, sum(base))
     scale = max(0.4, float(total_for_videos) / base_sum)
-    scaled = [max(2.0, min(8.0, round(v * scale, 2))) for v in base]
+    scaled = [max(min_clip_seconds, min(max_clip_seconds, round(v * scale, 2))) for v in base]
 
-    target = max(2.0 * video_count, float(total_for_videos))
+    target = max(min_clip_seconds * video_count, float(total_for_videos))
     current = sum(scaled)
     idx = 0
     # Fine-tune to get closer to target while preserving 2..8 bounds.
     while abs(current - target) > 0.15 and idx < 400:
         i = idx % video_count
-        if current < target and scaled[i] < 8.0:
-            scaled[i] = round(min(8.0, scaled[i] + 0.1), 2)
+        if current < target and scaled[i] < max_clip_seconds:
+            scaled[i] = round(min(max_clip_seconds, scaled[i] + 0.1), 2)
             current += 0.1
-        elif current > target and scaled[i] > 2.0:
-            scaled[i] = round(max(2.0, scaled[i] - 0.1), 2)
+        elif current > target and scaled[i] > min_clip_seconds:
+            scaled[i] = round(max(min_clip_seconds, scaled[i] - 0.1), 2)
             current -= 0.1
         idx += 1
     return scaled
@@ -635,6 +637,16 @@ def render_vertical_video(
     )
 
     usable_media = [p for p in media_paths if p.exists() and (_is_image(p) or _is_video(p))]
+    # Avoid replaying the same asset multiple times when upstream downloader returns duplicates.
+    unique_media: list[Path] = []
+    seen_media_keys: set[str] = set()
+    for media in usable_media:
+        key = str(media.resolve())
+        if key in seen_media_keys:
+            continue
+        seen_media_keys.add(key)
+        unique_media.append(media)
+    usable_media = unique_media
     usable_images = sum(1 for p in usable_media if _is_image(p))
     usable_videos = sum(1 for p in usable_media if _is_video(p))
     print(
@@ -735,7 +747,7 @@ def render_vertical_video(
                 else:
                     seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
                     segment_timeout_seconds = min(
-                        16.0,
+                        20.0,
                         _stage_timeout(
                             expected_duration_seconds=seg_duration,
                             multiplier=5.0,
@@ -745,18 +757,35 @@ def render_vertical_video(
                         )
                     )
                     video_idx += 1
-                    _run_ffmpeg([
-                        "ffmpeg", "-y",
-                        "-stream_loop", "-1",
-                        "-t", f"{seg_duration:.2f}",
-                        "-i", str(media),
-                        "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p",
-                        "-r", "30",
-                        "-an",
-                        "-c:v", "libx264",
-                        "-pix_fmt", "yuv420p",
-                        str(seg),
-                    ], timeout_seconds=segment_timeout_seconds)
+                    try:
+                        _run_ffmpeg([
+                            "ffmpeg", "-y",
+                            "-stream_loop", "-1",
+                            "-t", f"{seg_duration:.2f}",
+                            "-i", str(media),
+                            "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p",
+                            "-r", "30",
+                            "-an",
+                            "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p",
+                            str(seg),
+                        ], timeout_seconds=segment_timeout_seconds)
+                    except Exception as video_seg_exc:
+                        print(
+                            f"[VideoCreator] video segment strict crop failed for '{media.name}', retrying simple fit/pad: {str(video_seg_exc)[:180]}",
+                            flush=True,
+                        )
+                        _run_ffmpeg([
+                            "ffmpeg", "-y",
+                            "-stream_loop", "-1",
+                            "-t", f"{seg_duration:.2f}",
+                            "-i", str(media),
+                            "-vf", "fps=30,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                            "-an",
+                            "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p",
+                            str(seg),
+                        ], timeout_seconds=max(12.0, min(18.0, segment_timeout_seconds)))
             except Exception as exc:
                 print(f"[VideoCreator] WARNING: skipping unusable media segment '{media.name}': {str(exc)[:240]}")
                 continue
@@ -820,8 +849,8 @@ def render_vertical_video(
                 out_label = f"[v{i}]"
                 prev_seg_duration = max(0.35, float(segment_durations[i - 1]))
                 next_seg_duration = max(0.35, float(segment_durations[i]))
-                max_safe_duration = min(prev_seg_duration, next_seg_duration) * 0.35
-                transition_duration = max(0.18, min(0.42, max_safe_duration))
+                max_safe_duration = min(prev_seg_duration, next_seg_duration) * 0.22
+                transition_duration = max(0.12, min(0.30, max_safe_duration))
 
                 style_pool = [style for style in transition_styles if style != last_transition] or transition_styles
                 transition_name = random.choice(style_pool)
