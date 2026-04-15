@@ -120,6 +120,19 @@ def _resolve_caption_anchor(position: str) -> tuple[int, int]:
 
 def _normalize_caption_animation(animation: str) -> str:
     normalized = str(animation or "fade").strip().lower()
+    compact = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+
+    # Safety: any shade/fade phrasing should resolve to fade-in/out,
+    # even if UI/clients send free-form labels (e.g. "Shade In/Out").
+    if "shade" in normalized or "fade" in normalized:
+        return "fade"
+
+    # Normalize common slide phrasing from human-readable labels.
+    if "slide" in normalized and "left" in normalized:
+        return "slide_left"
+    if "slide" in normalized and "right" in normalized:
+        return "slide_right"
+
     aliases = {
         "fade": "fade",
         "fade_in_out": "fade",
@@ -138,7 +151,7 @@ def _normalize_caption_animation(animation: str) -> str:
         "static": "none",
         "off": "none",
     }
-    return aliases.get(normalized, "fade")
+    return aliases.get(compact, aliases.get(normalized, "fade"))
 
 
 def _build_caption_animation_override(caption_animation: str, chunk_duration: float, caption_position: str) -> str:
@@ -275,6 +288,7 @@ _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 DEFAULT_FFMPEG_COMMAND_TIMEOUT_SECONDS = 360.0
 MIN_OVERRIDE_FFMPEG_TIMEOUT_SECONDS = 10.0
+MAX_XFADE_SEGMENTS = 8
 
 
 def _parse_positive_float_env(name: str, fallback: float, minimum: float) -> float:
@@ -709,6 +723,23 @@ def render_vertical_video(
                     pan_x = random.choice(["iw/2-(iw/zoom/2)", "0", "iw-(iw/zoom)"])
                     pan_y = random.choice(["ih/2-(ih/zoom/2)", "0", "ih-(ih/zoom)"])
                     try:
+                        # Fast-path for reliability: avoid heavy zoompan by default on constrained workers.
+                        _run_ffmpeg([
+                            "ffmpeg", "-y",
+                            "-loop", "1",
+                            "-t", f"{seg_duration:.2f}",
+                            "-i", str(media),
+                            "-vf", "fps=30,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                            "-an",
+                            "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p",
+                            str(seg),
+                        ], timeout_seconds=max(10.0, min(14.0, segment_timeout_seconds)))
+                    except Exception as image_simple_exc:
+                        print(
+                            f"[VideoCreator] image simple render failed for '{media.name}', retrying zoompan fallback: {str(image_simple_exc)[:180]}",
+                            flush=True,
+                        )
                         _run_ffmpeg([
                             "ffmpeg", "-y",
                             "-loop", "1",
@@ -727,23 +758,6 @@ def render_vertical_video(
                             "-pix_fmt", "yuv420p",
                             str(seg),
                         ], timeout_seconds=segment_timeout_seconds)
-                    except Exception as image_zoom_exc:
-                        print(
-                            f"[VideoCreator] image zoompan failed for '{media.name}', retrying simple scale/pad: {str(image_zoom_exc)[:180]}",
-                            flush=True,
-                        )
-                        _run_ffmpeg([
-                            "ffmpeg", "-y",
-                            "-loop", "1",
-                            "-t", f"{seg_duration:.2f}",
-                            "-i", str(media),
-                            "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-                            "-r", "30",
-                            "-an",
-                            "-c:v", "libx264",
-                            "-pix_fmt", "yuv420p",
-                            str(seg),
-                        ], timeout_seconds=max(10.0, min(14.0, segment_timeout_seconds)))
                 else:
                     seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
                     segment_timeout_seconds = min(
@@ -826,6 +840,137 @@ def render_vertical_video(
                 str(visual_track),
             ], timeout_seconds=finalize_timeout_seconds)
         else:
+            if len(segments) > MAX_XFADE_SEGMENTS:
+                print(
+                    f"[VideoCreator] joining strategy=concat (segments={len(segments)} > {MAX_XFADE_SEGMENTS})",
+                    flush=True,
+                )
+                concat_list = tmp / "segments_concat.txt"
+                concat_lines: list[str] = []
+                for seg in segments:
+                    safe_seg = str(seg).replace("'", "'\\''")
+                    concat_lines.append(f"file '{safe_seg}'")
+                concat_list.write_text("\n".join(concat_lines), encoding="utf-8")
+                _run_ffmpeg([
+                    "ffmpeg", "-y",
+                    "-f", "concat",
+                    "-safe", "0",
+                    "-i", str(concat_list),
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    str(visual_track),
+                ], timeout_seconds=finalize_timeout_seconds)
+                print("[VideoCreator] visual composition completed", flush=True)
+                # Continue with shared audio/subtitle pipeline.
+                audio_duration = _probe_duration_seconds(audio_path)
+                final_duration = audio_duration if audio_duration > 0 else duration
+                visual_padded = tmp / "visual_padded.mp4"
+                _run_ffmpeg([
+                    "ffmpeg", "-y",
+                    "-stream_loop", "-1",
+                    "-t", f"{final_duration:.2f}",
+                    "-i", str(visual_track),
+                    "-an",
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    str(visual_padded),
+                ], timeout_seconds=finalize_timeout_seconds)
+
+                final_audio_input = audio_path
+                background_music_raw = str(os.getenv("BACKGROUND_MUSIC_PATH", "") or "").strip()
+                if background_music_raw:
+                    background_music_path = Path(background_music_raw)
+                    if background_music_path.exists() and background_music_path.is_file():
+                        mixed_audio = tmp / "mixed_audio.wav"
+                        try:
+                            bg_volume = float(os.getenv("BACKGROUND_MUSIC_VOLUME", "0.12") or 0.12)
+                        except Exception:
+                            bg_volume = 0.12
+                        bg_volume = max(0.0, min(0.6, bg_volume))
+                        try:
+                            print(f"[VideoCreator] background music mix enabled volume={bg_volume:.3f}", flush=True)
+                            _run_ffmpeg([
+                                "ffmpeg", "-y",
+                                "-i", str(audio_path),
+                                "-stream_loop", "-1",
+                                "-i", str(background_music_path),
+                                "-filter_complex",
+                                (
+                                    f"[0:a]aresample=44100,volume=1.0[a_voice];"
+                                    f"[1:a]aresample=44100,atrim=0:{final_duration:.2f},volume={bg_volume:.3f}[a_bed];"
+                                    "[a_bed][a_voice]sidechaincompress=threshold=0.045:ratio=10:attack=15:release=220[ducked];"
+                                    "[ducked][a_voice]amix=inputs=2:weights=1 1:normalize=0[a_mix]"
+                                ),
+                                "-map", "[a_mix]",
+                                "-t", f"{final_duration:.2f}",
+                                "-c:a", "pcm_s16le",
+                                str(mixed_audio),
+                            ], timeout_seconds=finalize_timeout_seconds)
+                            final_audio_input = mixed_audio
+                        except Exception:
+                            final_audio_input = audio_path
+
+                muxed_no_sub = tmp / "muxed_no_sub.mp4"
+                _run_ffmpeg([
+                    "ffmpeg", "-y",
+                    "-i", str(visual_padded),
+                    "-i", str(final_audio_input),
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-t", f"{final_duration:.2f}",
+                    str(muxed_no_sub),
+                ], timeout_seconds=finalize_timeout_seconds)
+
+                print(f"[VideoCreator] audio mux completed final_duration={final_duration:.2f}s", flush=True)
+
+                if subtitle_path and subtitle_path.exists():
+                    print("[VideoCreator] subtitle burn start", flush=True)
+                    escaped_subtitle_path = _escape_subtitle_filter_path(subtitle_path)
+                    if subtitle_path.suffix.lower() == ".ass":
+                        subtitle_filters = [
+                            f"ass={escaped_subtitle_path}",
+                            f"subtitles={escaped_subtitle_path}:charenc=UTF-8",
+                            f"ass='{escaped_subtitle_path}'",
+                            f"subtitles='{escaped_subtitle_path}':charenc=UTF-8",
+                        ]
+                    else:
+                        subtitle_filters = [
+                            f"subtitles={escaped_subtitle_path}:charenc=UTF-8",
+                            f"subtitles='{escaped_subtitle_path}':charenc=UTF-8",
+                        ]
+                    subtitle_burn_errors: list[str] = []
+                    subtitle_burned = False
+                    for subtitle_filter in subtitle_filters:
+                        try:
+                            _run_ffmpeg([
+                                "ffmpeg", "-y",
+                                "-i", str(muxed_no_sub),
+                                "-vf", subtitle_filter,
+                                "-c:v", "libx264",
+                                "-pix_fmt", "yuv420p",
+                                "-c:a", "copy",
+                                str(output_path),
+                            ], timeout_seconds=finalize_timeout_seconds)
+                            subtitle_burned = True
+                            print("[VideoCreator] subtitle burn completed", flush=True)
+                            return output_path
+                        except Exception as exc:
+                            subtitle_burn_errors.append(f"[{subtitle_filter[:30]}]: {str(exc)[:100]}")
+                            continue
+                    if not subtitle_burned:
+                        if subtitle_path.suffix.lower() == ".ass":
+                            print("[VideoCreator] Trying drawtext fallback for captions...")
+                            if _burn_captions_drawtext(muxed_no_sub, output_path, subtitle_path, command_timeout_seconds):
+                                print("[VideoCreator] drawtext caption fallback succeeded.")
+                                return output_path
+
+                shutil.copy2(muxed_no_sub, output_path)
+                print(f"[VideoCreator] render completed output={output_path}", flush=True)
+                return output_path
+
             # Join animation: cross-fade transitions between segments.
             transition_styles = [
                 "fade",
@@ -874,20 +1019,42 @@ def render_vertical_video(
                 print(f"[VideoCreator] joining segments count={len(segments)} transitions={len(segments) - 1}", flush=True)
                 _run_ffmpeg(cmd, timeout_seconds=transition_timeout_seconds)
             except Exception as exc:
-                fallback_duration = max(duration, sum(segment_durations))
                 print(
-                    f"[VideoCreator] WARNING: xfade composition failed; using first segment loop fallback: {str(exc)[:220]}"
+                    f"[VideoCreator] WARNING: xfade composition failed; trying concat fallback: {str(exc)[:220]}"
                 )
-                _run_ffmpeg([
-                    "ffmpeg", "-y",
-                    "-stream_loop", "-1",
-                    "-t", f"{fallback_duration:.2f}",
-                    "-i", str(segments[0]),
-                    "-an",
-                    "-c:v", "libx264",
-                    "-pix_fmt", "yuv420p",
-                    str(visual_track),
-                ], timeout_seconds=finalize_timeout_seconds)
+                try:
+                    concat_list = tmp / "segments_concat_xfade_fallback.txt"
+                    concat_lines: list[str] = []
+                    for seg in segments:
+                        safe_seg = str(seg).replace("'", "'\\''")
+                        concat_lines.append(f"file '{safe_seg}'")
+                    concat_list.write_text("\n".join(concat_lines), encoding="utf-8")
+                    _run_ffmpeg([
+                        "ffmpeg", "-y",
+                        "-f", "concat",
+                        "-safe", "0",
+                        "-i", str(concat_list),
+                        "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p",
+                        str(visual_track),
+                    ], timeout_seconds=finalize_timeout_seconds)
+                    print("[VideoCreator] concat fallback succeeded after xfade failure", flush=True)
+                except Exception as concat_exc:
+                    fallback_duration = max(duration, sum(segment_durations))
+                    print(
+                        f"[VideoCreator] WARNING: concat fallback failed; using first segment loop fallback: {str(concat_exc)[:220]}",
+                        flush=True,
+                    )
+                    _run_ffmpeg([
+                        "ffmpeg", "-y",
+                        "-stream_loop", "-1",
+                        "-t", f"{fallback_duration:.2f}",
+                        "-i", str(segments[0]),
+                        "-an",
+                        "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p",
+                        str(visual_track),
+                    ], timeout_seconds=finalize_timeout_seconds)
 
         print("[VideoCreator] visual composition completed", flush=True)
 

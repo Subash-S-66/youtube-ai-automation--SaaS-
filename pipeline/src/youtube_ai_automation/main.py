@@ -1580,6 +1580,15 @@ def run_prepared_pipeline(
     if caption_position not in {"top", "middle", "bottom"}:
         caption_position = "bottom"
     raw_caption_animation = str(template_config.get("captionAnimation", "fade")).strip().lower() or "fade"
+    compact_caption_animation = re.sub(r"[^a-z0-9]+", "_", raw_caption_animation).strip("_")
+    if "shade" in raw_caption_animation or "fade" in raw_caption_animation:
+        caption_animation = "fade"
+    elif "slide" in raw_caption_animation and "left" in raw_caption_animation:
+        caption_animation = "slide_left"
+    elif "slide" in raw_caption_animation and "right" in raw_caption_animation:
+        caption_animation = "slide_right"
+    else:
+        caption_animation = ""
     caption_animation_aliases = {
         "fade": "fade",
         "fade_in_out": "fade",
@@ -1598,7 +1607,8 @@ def run_prepared_pipeline(
         "static": "none",
         "off": "none",
     }
-    caption_animation = caption_animation_aliases.get(raw_caption_animation, "fade")
+    if not caption_animation:
+        caption_animation = caption_animation_aliases.get(compact_caption_animation, caption_animation_aliases.get(raw_caption_animation, "fade"))
     try:
         max_words_per_caption = int(template_config.get("maxWordsPerCaption", 4) or 4)
     except Exception:
