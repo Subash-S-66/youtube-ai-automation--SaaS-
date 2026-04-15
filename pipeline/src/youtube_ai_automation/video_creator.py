@@ -677,7 +677,7 @@ def render_vertical_video(
                 if _is_image(media):
                     seg_duration = image_duration
                     segment_timeout_seconds = min(
-                        12.0,
+                        18.0,
                         _stage_timeout(
                             expected_duration_seconds=seg_duration,
                             multiplier=4.5,
@@ -696,28 +696,46 @@ def render_vertical_video(
                         zoom_expr = f"if(eq(on,1),1.00,min(1.20,zoom+{zoom_speed:.4f}))"
                     pan_x = random.choice(["iw/2-(iw/zoom/2)", "0", "iw-(iw/zoom)"])
                     pan_y = random.choice(["ih/2-(ih/zoom/2)", "0", "ih-(ih/zoom)"])
-                    _run_ffmpeg([
-                        "ffmpeg", "-y",
-                        "-loop", "1",
-                        "-t", f"{seg_duration:.2f}",
-                        "-i", str(media),
-                        "-vf",
-                        (
-                            f"scale=1200:2133:force_original_aspect_ratio=increase,"
-                            f"zoompan=z='{zoom_expr}':x='{pan_x}':y='{pan_y}':"  # FIXED: Apply dynamic pan path instead of fixed center pan.
-                            f"d={frames}:s=1080x1920:fps=30,"
-                            "format=yuv420p"
-                        ),
-                        "-r", "30",
-                        "-an",
-                        "-c:v", "libx264",
-                        "-pix_fmt", "yuv420p",
-                        str(seg),
-                    ], timeout_seconds=segment_timeout_seconds)
+                    try:
+                        _run_ffmpeg([
+                            "ffmpeg", "-y",
+                            "-loop", "1",
+                            "-t", f"{seg_duration:.2f}",
+                            "-i", str(media),
+                            "-vf",
+                            (
+                                f"scale=1200:2133:force_original_aspect_ratio=increase,"
+                                f"zoompan=z='{zoom_expr}':x='{pan_x}':y='{pan_y}':"
+                                f"d={frames}:s=1080x1920:fps=30,"
+                                "format=yuv420p"
+                            ),
+                            "-r", "30",
+                            "-an",
+                            "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p",
+                            str(seg),
+                        ], timeout_seconds=segment_timeout_seconds)
+                    except Exception as image_zoom_exc:
+                        print(
+                            f"[VideoCreator] image zoompan failed for '{media.name}', retrying simple scale/pad: {str(image_zoom_exc)[:180]}",
+                            flush=True,
+                        )
+                        _run_ffmpeg([
+                            "ffmpeg", "-y",
+                            "-loop", "1",
+                            "-t", f"{seg_duration:.2f}",
+                            "-i", str(media),
+                            "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
+                            "-r", "30",
+                            "-an",
+                            "-c:v", "libx264",
+                            "-pix_fmt", "yuv420p",
+                            str(seg),
+                        ], timeout_seconds=max(10.0, min(14.0, segment_timeout_seconds)))
                 else:
                     seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
                     segment_timeout_seconds = min(
-                        12.0,
+                        16.0,
                         _stage_timeout(
                             expected_duration_seconds=seg_duration,
                             multiplier=5.0,
@@ -911,16 +929,22 @@ def render_vertical_video(
 
         print(f"[VideoCreator] audio mux completed final_duration={final_duration:.2f}s", flush=True)
 
-        if subtitle_path and subtitle_path.exists() and subtitle_path.suffix.lower() == ".ass":
+        if subtitle_path and subtitle_path.exists():
             print("[VideoCreator] subtitle burn start", flush=True)
             escaped_subtitle_path = _escape_subtitle_filter_path(subtitle_path)
-            # Try ass= first, then subtitles=, with quoted variants for paths with spaces.
-            subtitle_filters = [
-                f"ass={escaped_subtitle_path}",
-                f"subtitles={escaped_subtitle_path}:charenc=UTF-8",
-                f"ass='{escaped_subtitle_path}'",
-                f"subtitles='{escaped_subtitle_path}':charenc=UTF-8",
-            ]
+            if subtitle_path.suffix.lower() == ".ass":
+                # Try ass= first, then subtitles=, with quoted variants for paths with spaces.
+                subtitle_filters = [
+                    f"ass={escaped_subtitle_path}",
+                    f"subtitles={escaped_subtitle_path}:charenc=UTF-8",
+                    f"ass='{escaped_subtitle_path}'",
+                    f"subtitles='{escaped_subtitle_path}':charenc=UTF-8",
+                ]
+            else:
+                subtitle_filters = [
+                    f"subtitles={escaped_subtitle_path}:charenc=UTF-8",
+                    f"subtitles='{escaped_subtitle_path}':charenc=UTF-8",
+                ]
             subtitle_burn_errors: list[str] = []
             subtitle_burned = False
             for subtitle_filter in subtitle_filters:
@@ -945,10 +969,11 @@ def render_vertical_video(
                     f"[VideoCreator] WARNING: libass subtitle burn failed ({len(subtitle_burn_errors)} attempts). "
                     f"First error: {subtitle_burn_errors[0] if subtitle_burn_errors else 'unknown'}"
                 )
-                print("[VideoCreator] Trying drawtext fallback for captions...")
-                if _burn_captions_drawtext(muxed_no_sub, output_path, subtitle_path, command_timeout_seconds):
-                    print("[VideoCreator] drawtext caption fallback succeeded.")
-                    return output_path
+                if subtitle_path.suffix.lower() == ".ass":
+                    print("[VideoCreator] Trying drawtext fallback for captions...")
+                    if _burn_captions_drawtext(muxed_no_sub, output_path, subtitle_path, command_timeout_seconds):
+                        print("[VideoCreator] drawtext caption fallback succeeded.")
+                        return output_path
                 print("[VideoCreator] All caption rendering methods failed - outputting video without captions.")
 
         shutil.copy2(muxed_no_sub, output_path)
