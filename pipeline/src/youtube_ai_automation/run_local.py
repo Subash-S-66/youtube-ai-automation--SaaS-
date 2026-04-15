@@ -24,29 +24,25 @@ LOGGER = logging.getLogger("run_local")
 
 
 def _resolve_pipeline_timeout_seconds() -> int:
-    candidates: list[int] = []
+    raw_timeout_ms = str(os.getenv("PIPELINE_EXECUTION_TIMEOUT_MS", "")).strip()
+    if raw_timeout_ms:
+        try:
+            parsed_ms = int(float(raw_timeout_ms))
+            if parsed_ms > 0:
+                return max(30, int((parsed_ms + 999) / 1000))
+        except Exception:
+            pass
 
     raw_seconds = str(os.getenv("PIPELINE_TIMEOUT_SECONDS", "")).strip()
     if raw_seconds:
         try:
             parsed_seconds = int(float(raw_seconds))
             if parsed_seconds > 0:
-                candidates.append(parsed_seconds)
+                return max(30, parsed_seconds)
         except Exception:
             pass
 
-    raw_timeout_ms = str(os.getenv("PIPELINE_EXECUTION_TIMEOUT_MS", "")).strip()
-    if raw_timeout_ms:
-        try:
-            parsed_ms = int(float(raw_timeout_ms))
-            if parsed_ms > 0:
-                candidates.append(max(1, int((parsed_ms + 999) / 1000)))
-        except Exception:
-            pass
-
-    if not candidates:
-        return 480
-    return max(30, min(candidates))
+    return 480
 
 
 def main(argv: list[str] | None = None) -> dict:

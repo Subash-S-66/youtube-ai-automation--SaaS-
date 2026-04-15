@@ -154,6 +154,12 @@ const AZURE_AUTH_FAILURE_COOLDOWN_MS = clampInt(
   60 * 60 * 1000
 );
 
+const AZURE_EXECUTION_TIMEOUT_GRACE_MS = clampInt(
+  parsePositiveInt(process.env.AZURE_EXECUTION_TIMEOUT_GRACE_MS, 90_000),
+  0,
+  5 * 60 * 1000
+);
+
 let azureAuthFailureCache: {
   expiresAt: number;
   reason: string;
@@ -1720,6 +1726,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
          const pollIntervalMs = 10000;
          const pollStart = Date.now();
          const jobTimeoutMs = Math.max(effectivePipelineExecutionTimeoutMs, 5 * 60 * 1000);
+         const pollTimeoutMs = jobTimeoutMs + AZURE_EXECUTION_TIMEOUT_GRACE_MS;
          let lastLoggedStatus = '';
          let lastStatusLogAt = 0;
          let finalStatusMarker = 'PENDING_WEBHOOK';
@@ -1754,7 +1761,7 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
              ? `https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions/${encodeURIComponent(executionName)}?api-version=${armApiVersion}`
              : `https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_RESOURCE_GROUP}/providers/Microsoft.App/jobs/${AZURE_JOB_NAME}/executions?api-version=${armApiVersion}`;
 
-           while (Date.now() - pollStart < jobTimeoutMs) {
+           while (Date.now() - pollStart < pollTimeoutMs) {
              await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
 
              try {
@@ -1811,8 +1818,11 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
              }
            }
 
-           if (Date.now() - pollStart >= jobTimeoutMs) {
-             await appendLogSafe(jobId, `\n[Azure] Job timed out after ${jobTimeoutMs}ms. Attempting execution stop...`);
+           if (Date.now() - pollStart >= pollTimeoutMs) {
+             await appendLogSafe(
+               jobId,
+               `\n[Azure] Job timed out after ${jobTimeoutMs}ms (+${AZURE_EXECUTION_TIMEOUT_GRACE_MS}ms grace). Attempting execution stop...`
+             );
              if (executionName) {
                try {
                  const stopResult = await stopAzureJobExecution(String(AZURE_JOB_NAME || ''), executionName);

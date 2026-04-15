@@ -8,6 +8,7 @@ export const MAX_COMPOSITION_HEARTBEAT_SECONDS = 600;
 
 export const MIN_PIPELINE_EXECUTION_TIMEOUT_MINUTES = 0.5;
 export const MAX_PIPELINE_EXECUTION_TIMEOUT_MINUTES = 240;
+export const DEFAULT_PIPELINE_EXECUTION_TIMEOUT_MINUTES = 15;
 
 const LEGACY_PIPELINE_TIMEOUT_BASE_MINUTES = 10;
 const LEGACY_PIPELINE_TIMEOUT_PER_VIDEO_MINUTES = 5;
@@ -57,6 +58,22 @@ export const sanitizePipelineExecutionTimeoutMinutes = (value: unknown): number 
   );
 };
 
+export const resolveDefaultPipelineExecutionTimeoutMinutes = (): number => {
+  const envCandidates = [
+    process.env.PIPELINE_EXECUTION_TIMEOUT_MINUTES,
+    process.env.PIPELINE_EXECUTION_TIMEOUT_DEFAULT_MINUTES,
+  ];
+
+  for (const candidate of envCandidates) {
+    const normalized = sanitizePipelineExecutionTimeoutMinutes(candidate);
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+
+  return DEFAULT_PIPELINE_EXECUTION_TIMEOUT_MINUTES;
+};
+
 export const getLegacyPipelineExecutionTimeoutMinutes = (videoCount: unknown): number => {
   const count = Math.max(1, Math.floor(Number(videoCount) || 1));
   return LEGACY_PIPELINE_TIMEOUT_BASE_MINUTES + (count - 1) * LEGACY_PIPELINE_TIMEOUT_PER_VIDEO_MINUTES;
@@ -70,7 +87,10 @@ export const resolvePipelineExecutionTimeoutMinutes = (
   if (configured !== null) {
     return configured;
   }
-  return getLegacyPipelineExecutionTimeoutMinutes(videoCount);
+
+  const defaultConfigured = resolveDefaultPipelineExecutionTimeoutMinutes();
+  const legacyDerived = getLegacyPipelineExecutionTimeoutMinutes(videoCount);
+  return Math.max(defaultConfigured, legacyDerived);
 };
 
 export const resolvePipelineExecutionTimeoutMs = (

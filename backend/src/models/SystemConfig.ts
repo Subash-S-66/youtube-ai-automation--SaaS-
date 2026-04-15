@@ -103,7 +103,7 @@ const SystemConfigSchema = new Schema<ISystemConfig>(
     },
     pipelineExecutionTimeoutMinutes: {
       type: Number,
-      default: null,
+      default: 15,
       min: 0.5,
       max: 240,
     },

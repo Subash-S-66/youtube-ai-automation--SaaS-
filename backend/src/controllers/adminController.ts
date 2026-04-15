@@ -38,6 +38,7 @@ import { getConfiguredGeminiModel, getGeminiModelCatalog } from '../services/gem
 import {
   DEFAULT_COMPOSITION_HEARTBEAT_SECONDS,
   DEFAULT_FFMPEG_COMMAND_TIMEOUT_SECONDS,
+  resolveDefaultPipelineExecutionTimeoutMinutes,
   resolvePipelineExecutionTimeoutMs,
   sanitizeCompositionHeartbeatSeconds,
   sanitizeFfmpegCommandTimeoutSeconds,
@@ -783,7 +784,7 @@ export const getSystemConfig = asyncHandler(async (req: Request, res: Response) 
       pipelineRunnerPinned: false,
       ffmpegCommandTimeoutSeconds: sanitizeFfmpegCommandTimeoutSeconds(undefined),
       compositionHeartbeatSeconds: sanitizeCompositionHeartbeatSeconds(undefined),
-      pipelineExecutionTimeoutMinutes: sanitizePipelineExecutionTimeoutMinutes(undefined),
+      pipelineExecutionTimeoutMinutes: resolveDefaultPipelineExecutionTimeoutMinutes(),
       runEmbeddedWorker: false,
       autoStartEmbeddedWorkerWhenMissing: false,
       includeEmbeddedWorkersInRuntimeStatus: false,
@@ -900,7 +901,9 @@ export const getPipelineRuntimeStatus = asyncHandler(async (req: Request, res: R
   );
   const ffmpegCommandTimeoutSeconds = sanitizeFfmpegCommandTimeoutSeconds(config?.ffmpegCommandTimeoutSeconds);
   const compositionHeartbeatSeconds = sanitizeCompositionHeartbeatSeconds(config?.compositionHeartbeatSeconds);
-  const pipelineExecutionTimeoutMinutes = sanitizePipelineExecutionTimeoutMinutes(config?.pipelineExecutionTimeoutMinutes);
+  const pipelineExecutionTimeoutMinutes =
+    sanitizePipelineExecutionTimeoutMinutes(config?.pipelineExecutionTimeoutMinutes)
+    ?? resolveDefaultPipelineExecutionTimeoutMinutes();
   const dedicatedWorkersByRunner = heartbeatSummary.byRunnerSource.dedicated;
   const embeddedWorkersByRunner = heartbeatSummary.byRunnerSource.embedded;
 

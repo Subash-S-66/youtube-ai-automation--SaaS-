@@ -11,6 +11,7 @@ import {
   sanitizeJobHistoryMinAgeDays,
 } from '../services/jobHistoryRetentionPolicyService';
 import {
+  resolveDefaultPipelineExecutionTimeoutMinutes,
   sanitizeCompositionHeartbeatSeconds,
   sanitizeFfmpegCommandTimeoutSeconds,
   sanitizePipelineExecutionTimeoutMinutes,
@@ -69,7 +70,7 @@ export const ensureSystemConfigSingleton = async (): Promise<void> => {
       pipelineRunnerPinned: false,
       ffmpegCommandTimeoutSeconds: sanitizeFfmpegCommandTimeoutSeconds(undefined),
       compositionHeartbeatSeconds: sanitizeCompositionHeartbeatSeconds(undefined),
-      pipelineExecutionTimeoutMinutes: sanitizePipelineExecutionTimeoutMinutes(undefined),
+      pipelineExecutionTimeoutMinutes: resolveDefaultPipelineExecutionTimeoutMinutes(),
       runEmbeddedWorker: false,
       autoStartEmbeddedWorkerWhenMissing: false,
       includeEmbeddedWorkersInRuntimeStatus: false,
@@ -101,7 +102,8 @@ export const ensureSystemConfigSingleton = async (): Promise<void> => {
         pipelineRunnerPinned: parseBooleanConfig((latest as any).pipelineRunnerPinned, false),
         ffmpegCommandTimeoutSeconds: sanitizeFfmpegCommandTimeoutSeconds((latest as any).ffmpegCommandTimeoutSeconds),
         compositionHeartbeatSeconds: sanitizeCompositionHeartbeatSeconds((latest as any).compositionHeartbeatSeconds),
-        pipelineExecutionTimeoutMinutes: sanitizePipelineExecutionTimeoutMinutes((latest as any).pipelineExecutionTimeoutMinutes),
+        pipelineExecutionTimeoutMinutes: sanitizePipelineExecutionTimeoutMinutes((latest as any).pipelineExecutionTimeoutMinutes)
+          ?? resolveDefaultPipelineExecutionTimeoutMinutes(),
         runEmbeddedWorker: parseBooleanConfig((latest as any).runEmbeddedWorker, false),
         autoStartEmbeddedWorkerWhenMissing: parseBooleanConfig((latest as any).autoStartEmbeddedWorkerWhenMissing, false),
         includeEmbeddedWorkersInRuntimeStatus: parseBooleanConfig((latest as any).includeEmbeddedWorkersInRuntimeStatus, false),

@@ -274,6 +274,7 @@ def create_subtitles_from_script(
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 DEFAULT_FFMPEG_COMMAND_TIMEOUT_SECONDS = 360.0
+MIN_OVERRIDE_FFMPEG_TIMEOUT_SECONDS = 10.0
 
 
 def _parse_positive_float_env(name: str, fallback: float, minimum: float) -> float:
@@ -292,7 +293,7 @@ def _parse_positive_float_env(name: str, fallback: float, minimum: float) -> flo
 def _resolve_ffmpeg_timeout_seconds(override: float | None = None) -> float:
     if override is not None:
         try:
-            return max(30.0, float(override))
+            return max(MIN_OVERRIDE_FFMPEG_TIMEOUT_SECONDS, float(override))
         except Exception:
             pass
     return _parse_positive_float_env(
@@ -334,6 +335,14 @@ def _prepare_ffmpeg_args(args: list[str]) -> list[str]:
             insert_at += 1
         if "-hide_banner" not in prepared:
             prepared.insert(insert_at, "-hide_banner")
+
+        # Keep renders responsive on shared/low-CPU workers by default.
+        if "-preset" not in prepared:
+            for idx in range(len(prepared) - 1):
+                if prepared[idx] == "-c:v" and str(prepared[idx + 1]).lower() == "libx264":
+                    prepared.insert(idx + 2, "-preset")
+                    prepared.insert(idx + 3, "veryfast")
+                    break
     return prepared
 
 
@@ -594,18 +603,18 @@ def render_vertical_video(
 
     transition_timeout_seconds = _stage_timeout(
         expected_duration_seconds=duration,
-        multiplier=4.0,
-        cushion_seconds=40.0,
-        floor_ratio=0.25,
-        hard_ceiling_seconds=240.0,
+        multiplier=1.8,
+        cushion_seconds=16.0,
+        floor_ratio=0.12,
+        hard_ceiling_seconds=90.0,
     )
 
     finalize_timeout_seconds = _stage_timeout(
         expected_duration_seconds=duration,
-        multiplier=3.6,
-        cushion_seconds=32.0,
-        floor_ratio=0.2,
-        hard_ceiling_seconds=210.0,
+        multiplier=2.1,
+        cushion_seconds=20.0,
+        floor_ratio=0.1,
+        hard_ceiling_seconds=100.0,
     )
 
     print(
@@ -659,10 +668,10 @@ def render_vertical_video(
                     seg_duration = image_duration
                     segment_timeout_seconds = _stage_timeout(
                         expected_duration_seconds=seg_duration,
-                        multiplier=8.0,
-                        cushion_seconds=16.0,
+                        multiplier=4.5,
+                        cushion_seconds=8.0,
                         floor_ratio=0.08,
-                        hard_ceiling_seconds=75.0,
+                        hard_ceiling_seconds=24.0,
                     )
                     frames = max(1, int(round(seg_duration * 30)))
                     zoom_speeds = [0.0006, 0.0008, 0.0010, 0.0012]
@@ -696,10 +705,10 @@ def render_vertical_video(
                     seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
                     segment_timeout_seconds = _stage_timeout(
                         expected_duration_seconds=seg_duration,
-                        multiplier=7.0,
-                        cushion_seconds=18.0,
+                        multiplier=5.0,
+                        cushion_seconds=10.0,
                         floor_ratio=0.08,
-                        hard_ceiling_seconds=90.0,
+                        hard_ceiling_seconds=30.0,
                     )
                     video_idx += 1
                     _run_ffmpeg([

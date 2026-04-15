@@ -120,11 +120,17 @@ def run_orchestrated_pipeline(
     def timeout_guard() -> bool:
         return (time.time() - start) > max(60, int(timeout_seconds))
 
-    script_result = safe_execute(
+    def run_stage(stage_name: str, runner, fallback):
+        stage_started = time.time()
+        result = safe_execute(stage_name, runner, fallback, logger)
+        elapsed = time.time() - stage_started
+        logger.info(stage_name, f"stage completed in {elapsed:.2f}s")
+        return result
+
+    script_result = run_stage(
         "script",
         lambda: generate_script(payload, logger),
         lambda exc: ScriptStageResult(lines=[], provider_used="none", warnings=[f"script_stage_exception:{str(exc)[:140]}"], hard_failed=True),
-        logger,
     )
     warnings.extend(script_result.warnings)
     if script_result.hard_failed or not script_result.lines:
@@ -146,11 +152,10 @@ def run_orchestrated_pipeline(
     if timeout_guard():
         warnings.append("timeout_guard_triggered_after_script")
 
-    audio_result = safe_execute(
+    audio_result = run_stage(
         "audio",
         lambda: generate_audio(script_result.lines, output_dir, target_duration, logger),
         lambda exc: AudioStageResult(path="", duration=0.0, warnings=[f"audio_stage_exception:{str(exc)[:140]}"]),
-        logger,
     )
     warnings.extend(audio_result.warnings)
     if timeout_guard():
@@ -161,7 +166,7 @@ def run_orchestrated_pipeline(
     if timeout_guard():
         media_result = MediaStageResult(media_paths=[], warnings=["timeout_guard_skipped_media"])
     else:
-        media_result = safe_execute(
+        media_result = run_stage(
             "media",
             lambda: fetch_media(
                 job_id=job_id,
@@ -174,13 +179,21 @@ def run_orchestrated_pipeline(
                 content_type=content_type,
             ),
             lambda exc: MediaStageResult(media_paths=[], warnings=[f"media_stage_exception:{str(exc)[:140]}"]),
-            logger,
         )
     warnings.extend(media_result.warnings)
 
     composition_result = CompositionStageResult(video_path="", subtitle_path="", warnings=[])
     if str(mode).lower() == "full" and not timeout_guard():
-        composition_result = safe_execute(
+        elapsed_before_composition = time.time() - start
+        timeout_window_seconds = max(60, int(timeout_seconds))
+        remaining_budget_seconds = max(0.0, timeout_window_seconds - elapsed_before_composition)
+        composition_budget_seconds = max(12.0, remaining_budget_seconds - 8.0)
+        logger.info(
+            "composition",
+            f"pipeline timeout window={timeout_window_seconds}s elapsed={elapsed_before_composition:.2f}s remaining={remaining_budget_seconds:.2f}s budget={composition_budget_seconds:.2f}s",
+        )
+
+        composition_result = run_stage(
             "composition",
             lambda: compose_scenes(
                 lines=script_result.lines,
@@ -189,9 +202,9 @@ def run_orchestrated_pipeline(
                 output_dir=output_dir,
                 target_duration=float(target_duration),
                 logger=logger,
+                max_render_budget_seconds=composition_budget_seconds,
             ),
             lambda exc: CompositionStageResult(video_path="", subtitle_path="", warnings=[f"composition_stage_exception:{str(exc)[:140]}"]),
-            logger,
         )
         warnings.extend(composition_result.warnings)
     elif str(mode).lower() == "full":
