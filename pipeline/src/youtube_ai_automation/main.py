@@ -2087,6 +2087,12 @@ def run_full_pipeline(
     has_custom_media = len(media_paths) > 0
     requested_content_type = str(video_config.get("contentType", video_config.get("content_type", "clips"))).strip().lower() or "clips"
 
+    _log_job_stage(
+        payload,
+        "media",
+        f"media planning content_type={requested_content_type} scene_queries={len(scene_queries)} custom_media={len(media_paths)}",
+    )
+
     # Always auto-download stock media when no custom media is provided by user.
     if scene_queries and not has_custom_media:
         _log_job_stage(payload, "media", f"auto media download started for {len(scene_queries)} scene queries")
@@ -2098,6 +2104,14 @@ def run_full_pipeline(
         media_fetch_budget_s = 8 * 60.0
         min_clips_to_proceed = min(planned_clips, 22)
         min_images_to_proceed = min(planned_images, 22)
+
+        LOGGER.info(
+            "auto_media_download_plan clips=%s images=%s target_seconds=%.2f scene_queries=%s",
+            planned_clips,
+            planned_images,
+            float(target_duration),
+            len(scene_queries),
+        )
 
         stock_dir = CLIPS_DIR / "stock_video"
         clip_queries = _extend_scene_queries(scene_queries, max(1, planned_clips))
@@ -2154,12 +2168,21 @@ def run_full_pipeline(
                 except Exception as exc:
                     LOGGER.warning("stock_video_fallback_fetch_failed attempt=%s reason=%s", attempt_idx, str(exc)[:200])
                     fetched = []
+            LOGGER.info(
+                "stock_video_fetch_progress attempt=%s batch=%s downloaded_this_round=%s total_downloaded=%s planned=%s",
+                attempt_idx,
+                len(batch_queries),
+                len(fetched),
+                len(stock_paths) + len(fetched),
+                planned_clips,
+            )
             for path in fetched:
                 key = str(path.resolve())
                 if key in seen_video_paths:
                     continue
                 seen_video_paths.add(key)
                 stock_paths.append(path)
+                LOGGER.info("stock_video_downloaded file=%s total=%s/%s", path.name, len(stock_paths), planned_clips)
             if len(stock_paths) >= min_clips_to_proceed:
                 break
             if len(stock_paths) < planned_clips:
@@ -2172,6 +2195,7 @@ def run_full_pipeline(
                 time.sleep(min(3, attempt_idx))
         if stock_paths:
             media_paths.extend(stock_paths)
+        LOGGER.info("auto_media_video_summary downloaded=%s planned=%s", len(stock_paths), planned_clips)
         LOGGER.info(
             json.dumps(
                 {
@@ -2237,6 +2261,13 @@ def run_full_pipeline(
                             image_downloads.append(path)
                     except Exception as fallback_exc:
                         LOGGER.warning("stock_image_fallback_failed query=%s error=%s", query, str(fallback_exc)[:180])
+                    LOGGER.info(
+                        "stock_image_fetch_progress attempt=%s query_index=%s downloaded_total=%s planned=%s",
+                        attempt_idx,
+                        idx,
+                        len(image_downloads),
+                        planned_images,
+                    )
             if len(image_downloads) >= min_images_to_proceed:
                 break
             if len(image_downloads) < planned_images:
@@ -2249,6 +2280,7 @@ def run_full_pipeline(
                 time.sleep(min(3, attempt_idx))
         if image_downloads:
             media_paths.extend(image_downloads)
+        LOGGER.info("auto_media_image_summary downloaded=%s planned=%s", len(image_downloads), planned_images)
         LOGGER.info(
             json.dumps(
                 {
@@ -2275,6 +2307,12 @@ def run_full_pipeline(
         if fallback_media:
             media_paths.extend(fallback_media)
             LOGGER.info(
+                "local_fallback_media_selected clips=%s images=%s total=%s",
+                len(local_videos[:16]),
+                len(local_images[:8]),
+                len(fallback_media),
+            )
+            LOGGER.info(
                 json.dumps(
                     {"event": "auto_media_fallback_local", "videos": len(local_videos[:16]), "images": len(local_images[:8])},
                     ensure_ascii=False,
@@ -2291,6 +2329,15 @@ def run_full_pipeline(
 
     LOGGER.info("Stage: Rendering vertical video")
     _log_job_stage(payload, "render", f"render start media_count={len(media_paths)}")
+    clip_count = sum(1 for mp in media_paths if mp.suffix.lower() in {".mp4", ".mov", ".avi", ".webm", ".mkv"})
+    image_count = sum(1 for mp in media_paths if mp.suffix.lower() not in {".mp4", ".mov", ".avi", ".webm", ".mkv"})
+    LOGGER.info(
+        "render_input_summary media_count=%s clips=%s images=%s target_duration=%.2f",
+        len(media_paths),
+        clip_count,
+        image_count,
+        float(target_duration),
+    )
     output_video_path = output_dir / "final_full.mp4"
     actual_audio_duration = get_audio_duration_seconds(audio_path)  # FIXED: Probe real narration duration for exact audio-visual sync.
     if actual_audio_duration <= 0:

@@ -635,6 +635,12 @@ def render_vertical_video(
     )
 
     usable_media = [p for p in media_paths if p.exists() and (_is_image(p) or _is_video(p))]
+    usable_images = sum(1 for p in usable_media if _is_image(p))
+    usable_videos = sum(1 for p in usable_media if _is_video(p))
+    print(
+        f"[VideoCreator] input summary usable_media={len(usable_media)} clips={usable_videos} images={usable_images}",
+        flush=True,
+    )
     if not usable_media:
         # Fallback visual when no media is provided.
         visual_fallback = output_path.parent / "visual_fallback.mp4"
@@ -664,14 +670,21 @@ def render_vertical_video(
         for idx, media in enumerate(usable_media, start=1):
             seg = tmp / f"seg_{idx:04d}.mp4"
             try:
+                print(
+                    f"[VideoCreator] segment start {idx}/{len(usable_media)} file={media.name} type={'image' if _is_image(media) else 'video'}",
+                    flush=True,
+                )
                 if _is_image(media):
                     seg_duration = image_duration
-                    segment_timeout_seconds = _stage_timeout(
-                        expected_duration_seconds=seg_duration,
-                        multiplier=4.5,
-                        cushion_seconds=8.0,
-                        floor_ratio=0.08,
-                        hard_ceiling_seconds=24.0,
+                    segment_timeout_seconds = min(
+                        12.0,
+                        _stage_timeout(
+                            expected_duration_seconds=seg_duration,
+                            multiplier=4.5,
+                            cushion_seconds=8.0,
+                            floor_ratio=0.08,
+                            hard_ceiling_seconds=24.0,
+                        )
                     )
                     frames = max(1, int(round(seg_duration * 30)))
                     zoom_speeds = [0.0006, 0.0008, 0.0010, 0.0012]
@@ -703,12 +716,15 @@ def render_vertical_video(
                     ], timeout_seconds=segment_timeout_seconds)
                 else:
                     seg_duration = clip_durations[video_idx] if video_idx < len(clip_durations) else 3.0
-                    segment_timeout_seconds = _stage_timeout(
-                        expected_duration_seconds=seg_duration,
-                        multiplier=5.0,
-                        cushion_seconds=10.0,
-                        floor_ratio=0.08,
-                        hard_ceiling_seconds=30.0,
+                    segment_timeout_seconds = min(
+                        12.0,
+                        _stage_timeout(
+                            expected_duration_seconds=seg_duration,
+                            multiplier=5.0,
+                            cushion_seconds=10.0,
+                            floor_ratio=0.08,
+                            hard_ceiling_seconds=30.0,
+                        )
                     )
                     video_idx += 1
                     _run_ffmpeg([
@@ -730,6 +746,10 @@ def render_vertical_video(
             if seg.exists():
                 segments.append(seg)
                 segment_durations.append(seg_duration)
+                print(
+                    f"[VideoCreator] segment ready {len(segments)}/{len(usable_media)} source={media.name} duration={seg_duration:.2f}s",
+                    flush=True,
+                )
 
         if not segments:
             emergency_segment = tmp / "seg_fallback_0001.mp4"
@@ -804,6 +824,7 @@ def render_vertical_video(
                 str(visual_track),
             ])
             try:
+                print(f"[VideoCreator] joining segments count={len(segments)} transitions={len(segments) - 1}", flush=True)
                 _run_ffmpeg(cmd, timeout_seconds=transition_timeout_seconds)
             except Exception as exc:
                 fallback_duration = max(duration, sum(segment_durations))
@@ -852,6 +873,7 @@ def render_vertical_video(
                     bg_volume = 0.12
                 bg_volume = max(0.0, min(0.6, bg_volume))
                 try:
+                    print(f"[VideoCreator] background music mix enabled volume={bg_volume:.3f}", flush=True)
                     _run_ffmpeg([
                         "ffmpeg", "-y",
                         "-i", str(audio_path),
@@ -890,6 +912,7 @@ def render_vertical_video(
         print(f"[VideoCreator] audio mux completed final_duration={final_duration:.2f}s", flush=True)
 
         if subtitle_path and subtitle_path.exists() and subtitle_path.suffix.lower() == ".ass":
+            print("[VideoCreator] subtitle burn start", flush=True)
             escaped_subtitle_path = _escape_subtitle_filter_path(subtitle_path)
             # Try ass= first, then subtitles=, with quoted variants for paths with spaces.
             subtitle_filters = [
