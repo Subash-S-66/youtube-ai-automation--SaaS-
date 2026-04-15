@@ -490,6 +490,17 @@ def _compute_target_scene_count(audio_seconds: float, scene_duration: float) -> 
     return min(base, 20)
 
 
+def _interleave_media_paths(video_paths: list[Path], image_paths: list[Path]) -> list[Path]:
+    interleaved: list[Path] = []
+    max_len = max(len(video_paths), len(image_paths))
+    for idx in range(max_len):
+        if idx < len(video_paths):
+            interleaved.append(video_paths[idx])
+        if idx < len(image_paths):
+            interleaved.append(image_paths[idx])
+    return interleaved
+
+
 def _extend_scene_queries(scene_queries: list[str], target_count: int) -> list[str]:
     if not scene_queries:
         return []
@@ -807,42 +818,39 @@ def _build_video_from_content(
         )
 
     def _fetch_mixed_media(scene_queries: list[str], output_dir: Path) -> list[Path]:
-        """Alternate clip -> image -> clip -> image for true mixed content."""  # FIXED: Enforce deterministic mixed-mode alternation.
+        """Fetch both clip and image for each query and interleave the results."""  # FIXED: Keep mixed mode visually balanced.
         mixed: list[Path] = []  # FIXED: Preserve alternation sequence in output list.
         for idx, query in enumerate(scene_queries):
-            if idx % 2 == 0:
-                # Even index -> video clip
-                try:
-                    clips = download_scene_videos(
-                        scenes=[query],
-                        output_dir=output_dir / "clips",
-                        pexels_key=PEXELS_API_KEY,
-                        pexels_keys=PEXELS_API_KEYS,
-                        pixabay_key=PIXABAY_API_KEY,
-                        pixabay_keys=PIXABAY_API_KEYS,
-                        scene_duration=4.0,
-                        min_resolution=720,
-                        used_clips_file=_runtime_used_clips_file(USED_CLIPS_FILE),
-                        clips_per_scene_min=1,
-                        clips_per_scene_max=1,
-                        job_id=str(os.getenv("JOB_ID", "")).strip(),
-                    )
-                    mixed.extend(clips)
-                except Exception as exc:
-                    LOGGER.warning("Failed to fetch mixed clip for query '%s': %s", query, exc)  # FIXED: Keep mixed flow robust on clip fetch errors.
-            else:
-                # Odd index -> image
-                try:
-                    imgs = fetch_images(
-                        query=query,
-                        output_dir=output_dir / "images",
-                        count=1,
-                        pexels_key=PEXELS_API_KEY,
-                        pixabay_key=PIXABAY_API_KEY,
-                    )
-                    mixed.extend(imgs)
-                except Exception as exc:
-                    LOGGER.warning("Failed to fetch mixed image for query '%s': %s", query, exc)  # FIXED: Keep mixed flow robust on image fetch errors.
+            fetched_clips: list[Path] = []
+            fetched_images: list[Path] = []
+            try:
+                fetched_clips = download_scene_videos(
+                    scenes=[query],
+                    output_dir=output_dir / "clips",
+                    pexels_key=PEXELS_API_KEY,
+                    pexels_keys=PEXELS_API_KEYS,
+                    pixabay_key=PIXABAY_API_KEY,
+                    pixabay_keys=PIXABAY_API_KEYS,
+                    scene_duration=4.0,
+                    min_resolution=720,
+                    used_clips_file=_runtime_used_clips_file(USED_CLIPS_FILE),
+                    clips_per_scene_min=1,
+                    clips_per_scene_max=2,
+                    job_id=str(os.getenv("JOB_ID", "")).strip(),
+                )
+            except Exception as exc:
+                LOGGER.warning("Failed to fetch mixed clip for query '%s': %s", query, exc)  # FIXED: Keep mixed flow robust on clip fetch errors.
+            try:
+                fetched_images = fetch_images(
+                    query=query,
+                    output_dir=output_dir / "images",
+                    count=1,
+                    pexels_key=PEXELS_API_KEY,
+                    pixabay_key=PIXABAY_API_KEY,
+                )
+            except Exception as exc:
+                LOGGER.warning("Failed to fetch mixed image for query '%s': %s", query, exc)  # FIXED: Keep mixed flow robust on image fetch errors.
+            mixed.extend(_interleave_media_paths(fetched_clips, fetched_images))
         return mixed
 
     # Load custom media from backend-provided secure URLs.
@@ -859,8 +867,7 @@ def _build_video_from_content(
     elif content_type == "clips":
         videos.extend(downloaded_custom_videos)  # FIXED: Use only clip assets in clips mode.
     else:
-        videos.extend(downloaded_custom_videos)  # FIXED: Keep both asset types available in mixed/default modes.
-        videos.extend(downloaded_custom_images)  # FIXED: Keep both asset types available in mixed/default modes.
+        videos.extend(_interleave_media_paths(downloaded_custom_videos, downloaded_custom_images))  # FIXED: Keep both asset types interleaved in mixed/default modes.
     LOGGER.info(
         "custom_media_download_summary videos=%s images=%s",
         len(downloaded_custom_videos),
@@ -2143,7 +2150,7 @@ def run_full_pipeline(
                     scene_duration=scene_duration,
                     min_resolution=360,
                     clips_per_scene_min=1,
-                    clips_per_scene_max=1,
+                    clips_per_scene_max=2,
                     job_id=str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip(),
                 )
             except Exception as exc:
@@ -2162,7 +2169,7 @@ def run_full_pipeline(
                         scene_duration=scene_duration,
                         min_resolution=240,
                         clips_per_scene_min=1,
-                        clips_per_scene_max=1,
+                        clips_per_scene_max=2,
                         job_id=str(payload.get("jobId", "") or payload.get("job_id", "") or os.getenv("JOB_ID", "")).strip(),
                     )
                 except Exception as exc:
@@ -2193,7 +2200,7 @@ def run_full_pipeline(
                     planned_clips,
                 )
                 time.sleep(min(3, attempt_idx))
-        if stock_paths:
+        if stock_paths and requested_content_type != "mixed":
             media_paths.extend(stock_paths)
         LOGGER.info("auto_media_video_summary downloaded=%s planned=%s", len(stock_paths), planned_clips)
         LOGGER.info(
@@ -2278,9 +2285,19 @@ def run_full_pipeline(
                     planned_images,
                 )
                 time.sleep(min(3, attempt_idx))
-        if image_downloads:
+        if image_downloads and requested_content_type != "mixed":
             media_paths.extend(image_downloads)
         LOGGER.info("auto_media_image_summary downloaded=%s planned=%s", len(image_downloads), planned_images)
+
+        if requested_content_type == "mixed" and (stock_paths or image_downloads):
+            mixed_media = _interleave_media_paths(stock_paths, image_downloads)
+            media_paths.extend(mixed_media)
+            LOGGER.info(
+                "mixed_media_interleaved clips=%s images=%s total=%s",
+                len(stock_paths),
+                len(image_downloads),
+                len(mixed_media),
+            )
         LOGGER.info(
             json.dumps(
                 {

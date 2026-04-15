@@ -455,23 +455,23 @@ def _is_video(path: Path) -> bool:
 
 def _allocate_mixed_clip_durations(video_count: int, total_for_videos: float) -> list[float]:
     """
-    Allocate per-clip durations with mixed values in [2, 6] seconds.
+    Allocate per-clip durations with mixed values in [2, 8] seconds.
     """
     if video_count <= 0:
         return []
-    base = [float(random.choice([2, 3, 4, 5, 6])) for _ in range(video_count)]
+    base = [float(random.choice([2, 3, 4, 5, 6, 7, 8])) for _ in range(video_count)]
     base_sum = max(1.0, sum(base))
     scale = max(0.4, float(total_for_videos) / base_sum)
-    scaled = [max(2.0, min(6.0, round(v * scale, 2))) for v in base]
+    scaled = [max(2.0, min(8.0, round(v * scale, 2))) for v in base]
 
     target = max(2.0 * video_count, float(total_for_videos))
     current = sum(scaled)
     idx = 0
-    # Fine-tune to get closer to target while preserving 2..6 bounds.
+    # Fine-tune to get closer to target while preserving 2..8 bounds.
     while abs(current - target) > 0.15 and idx < 400:
         i = idx % video_count
-        if current < target and scaled[i] < 6.0:
-            scaled[i] = round(min(6.0, scaled[i] + 0.1), 2)
+        if current < target and scaled[i] < 8.0:
+            scaled[i] = round(min(8.0, scaled[i] + 0.1), 2)
             current += 0.1
         elif current > target and scaled[i] > 2.0:
             scaled[i] = round(max(2.0, scaled[i] - 0.1), 2)

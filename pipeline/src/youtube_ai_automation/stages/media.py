@@ -91,59 +91,37 @@ def fetch_media(
         mixed: list[Path] = []
         seen_paths: set[str] = set()
         for idx, query in enumerate(queries, start=1):
-            if (idx - 1) % 2 == 0:
-                try:
-                    clips = _download_videos([query])
-                    for item in clips:
-                        key = str(item)
-                        if key in seen_paths:
-                            continue
-                        seen_paths.add(key)
-                        mixed.append(item)
-                    if clips:
-                        continue
-                except Exception as exc:
-                    warnings.append(f"media_clip_error:{str(exc)[:180]}")
-                    logger.warn("media", f"mixed clip fetch failed for '{query}': {str(exc)[:120]}")
-            else:
-                scene_dir = image_dir / f"scene_{idx:03d}"
-                try:
-                    fetched = fetch_images(
-                        query=query,
-                        output_dir=scene_dir,
-                        count=1,
-                        pexels_key=image_pexels_key,
-                        pixabay_key=image_pixabay_key,
-                    )
-                    for item in fetched:
-                        key = str(item)
-                        if key in seen_paths:
-                            continue
-                        seen_paths.add(key)
-                        mixed.append(item)
-                    if fetched:
-                        continue
-                except Exception as exc:
-                    warnings.append(f"media_image_error:{str(exc)[:180]}")
-                    logger.warn("media", f"mixed image fetch failed for '{query}': {str(exc)[:120]}")
-
+            clip_items: list[Path] = []
+            image_items: list[Path] = []
             try:
-                fallback_clips = _download_videos([query])
-                for item in fallback_clips:
-                    key = str(item)
-                    if key in seen_paths:
-                        continue
-                    seen_paths.add(key)
-                    mixed.append(item)
-                if fallback_clips:
-                    continue
-            except Exception as clip_exc:
-                warnings.append(f"media_clip_error:{str(clip_exc)[:180]}")
-                logger.warn("media", f"mixed clip fallback failed for '{query}': {str(clip_exc)[:120]}")
+                clip_items = _download_videos([query])
+            except Exception as exc:
+                warnings.append(f"media_clip_error:{str(exc)[:180]}")
+                logger.warn("media", f"mixed clip fetch failed for '{query}': {str(exc)[:120]}")
+            scene_dir = image_dir / f"scene_{idx:03d}"
+            try:
+                image_items = fetch_images(
+                    query=query,
+                    output_dir=scene_dir,
+                    count=1,
+                    pexels_key=image_pexels_key,
+                    pixabay_key=image_pixabay_key,
+                )
+            except Exception as exc:
+                warnings.append(f"media_image_error:{str(exc)[:180]}")
+                logger.warn("media", f"mixed image fetch failed for '{query}': {str(exc)[:120]}")
 
-            placeholder = create_placeholder_video(output_dir / f"mixed_fallback_{idx:03d}.mp4", duration_seconds=3.0)
-            if placeholder:
-                mixed.append(placeholder)
+            for item in clip_items + image_items:
+                key = str(item)
+                if key in seen_paths:
+                    continue
+                seen_paths.add(key)
+                mixed.append(item)
+
+            if not clip_items and not image_items:
+                placeholder = create_placeholder_video(output_dir / f"mixed_fallback_{idx:03d}.mp4", duration_seconds=3.0)
+                if placeholder:
+                    mixed.append(placeholder)
         return mixed
 
     media_paths: list[Path] = []
