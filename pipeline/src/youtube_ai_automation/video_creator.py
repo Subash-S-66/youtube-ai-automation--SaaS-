@@ -973,14 +973,7 @@ def render_vertical_video(
 
             # Join animation: cross-fade transitions between segments.
             transition_styles = [
-                "fade",
-                "slideleft",
-                "slideright",
-                "wipeleft",
-                "wiperight",
-                "smoothleft",
-                "smoothright",
-                "circlecrop",
+                "fadeblack",
             ]
             cmd = ["ffmpeg", "-y"]
             for seg in segments:
@@ -997,8 +990,7 @@ def render_vertical_video(
                 max_safe_duration = min(prev_seg_duration, next_seg_duration) * 0.22
                 transition_duration = max(0.12, min(0.30, max_safe_duration))
 
-                style_pool = [style for style in transition_styles if style != last_transition] or transition_styles
-                transition_name = random.choice(style_pool)
+                transition_name = transition_styles[0]
                 offset = max(0.0, cumulative - transition_duration)
                 filters.append(
                     f"{previous_label}[{i}:v]xfade=transition={transition_name}:duration={transition_duration:.2f}:offset={offset:.2f}{out_label}"
