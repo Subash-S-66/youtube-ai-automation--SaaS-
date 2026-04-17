@@ -141,6 +141,7 @@ interface MediaRecord {
   imageDuration?: number;
   trimStart?: number;
   trimEnd?: number;
+  createdAt?: string;
 }
 
 interface SequenceRecord {
@@ -274,6 +275,7 @@ function Dashboard() {
 
   const [pendingPromptId, setPendingPromptId] = useState<string | null>(null);
   const [pendingPromptContent, setPendingPromptContent] = useState<string | null>(null);
+  const channelSelectionHydratedRef = useRef(false);
 
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -529,6 +531,7 @@ function Dashboard() {
           const initialChannelId = (preferredChannelId && validChannels.some((channel) => channel?.channelId === preferredChannelId))
             ? preferredChannelId
             : (validChannels[0]?.channelId || '');
+          channelSelectionHydratedRef.current = true;
           if (initialChannelId) {
             setSelectedChannelId(initialChannelId);
             const cached = userData.data?.user?.lastChannelInputs?.[initialChannelId];
@@ -765,6 +768,9 @@ function Dashboard() {
   }, [user]);
 
   useEffect(() => {
+    if (!channelSelectionHydratedRef.current) {
+      return;
+    }
     if (!user?.isYoutubeConnected) {
       if (selectedChannelId) {
         setSelectedChannelId('');
@@ -856,6 +862,14 @@ function Dashboard() {
     const clipDuration = Math.max(0, (trimEnd || 0) - (trimStart || 0));
     return acc + clipDuration;
   }, 0));
+  const recentUploads = [...mediaList]
+    .filter((item) => item?.type === 'video' || item?.type === 'image')
+    .sort((left, right) => {
+      const leftTime = new Date(left.createdAt || 0).getTime();
+      const rightTime = new Date(right.createdAt || 0).getTime();
+      return rightTime - leftTime;
+    })
+    .slice(0, 5);
 
   useEffect(() => {
     if (!canUseStoryMode && storyMode) {
@@ -1563,6 +1577,42 @@ function Dashboard() {
                         />
                       </m.div>
                     )}
+
+                      <div className="sm:col-span-2 bg-[#0B0F1A] rounded-xl border border-[#1A2235] p-3">
+                        <div className="flex items-center justify-between mb-3">
+                          <div>
+                            <p className="text-sm font-semibold text-white">Recent uploads</p>
+                            <p className="text-[11px] text-slate-500">Your latest media stays visible while you pick a topic.</p>
+                          </div>
+                          <span className="text-[11px] text-slate-400">{recentUploads.length} shown</span>
+                        </div>
+                        {recentUploads.length > 0 ? (
+                          <div className="grid grid-cols-1 gap-2 max-h-44 overflow-y-auto pr-1">
+                            {recentUploads.map((item) => {
+                              const isVideo = item.type === 'video';
+                              const durationLabel = isVideo
+                                ? `${Math.max(1, Math.round(item.duration || 0))}s`
+                                : `${Math.max(1, Math.round(item.imageDuration || 3))}s`;
+                              return (
+                                <div key={item._id} className="flex items-center justify-between gap-3 rounded-lg border border-[#1A2235] bg-[#111827] px-3 py-2">
+                                  <div className="min-w-0">
+                                    <p className="text-sm text-slate-200 truncate">{item.originalName || 'Untitled upload'}</p>
+                                    <p className="text-[11px] text-slate-500">Added {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'recently'}</p>
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className={cn("text-[10px] uppercase tracking-wide px-2 py-1 rounded-full border", isVideo ? "border-[#7C5CFF]/40 text-[#B9A7FF]" : "border-[#00D4FF]/40 text-[#8BE7FF]")}>{item.type}</span>
+                                    <span className="text-[11px] text-slate-400">{durationLabel}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-dashed border-[#1A2235] bg-[#111827]/50 px-3 py-4 text-sm text-slate-500">
+                            No uploads yet. Add media in the Media Library to see it here.
+                          </div>
+                        )}
+                      </div>
                   </m.div>
                 )}
               </AnimatePresence>

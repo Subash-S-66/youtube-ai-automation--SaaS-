@@ -95,6 +95,18 @@ def _extract_scenes(payload: dict[str, Any], script_lines: list[str]) -> list[st
     return build_visual_queries(raw_scenes, max_queries=10)
 
 
+def _resolve_template_config(payload: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(payload.get("videoConfig"), dict):
+        video_cfg = payload.get("videoConfig", {})
+        if isinstance(video_cfg.get("templateConfig"), dict):
+            return video_cfg.get("templateConfig", {})
+    if isinstance(payload.get("settings"), dict):
+        settings = payload.get("settings", {})
+        if isinstance(settings.get("templateConfig"), dict):
+            return settings.get("templateConfig", {})
+    return {}
+
+
 def run_orchestrated_pipeline(
     *,
     payload: dict[str, Any],
@@ -161,6 +173,18 @@ def run_orchestrated_pipeline(
     if timeout_guard():
         warnings.append("timeout_guard_triggered_after_audio")
 
+    template_config = _resolve_template_config(payload)
+    subtitle_color = str(template_config.get("subtitleColor", "#FFFFFF") or "#FFFFFF").strip() or "#FFFFFF"
+    caption_position = str(template_config.get("captionPosition", "bottom") or "bottom").strip().lower() or "bottom"
+    if caption_position not in {"top", "middle", "bottom"}:
+        caption_position = "bottom"
+    caption_animation = str(template_config.get("captionAnimation", "fade") or "fade").strip().lower() or "fade"
+    max_words_per_caption_raw = template_config.get("maxWordsPerCaption", 3)
+    try:
+        max_words_per_caption = max(1, min(8, int(float(max_words_per_caption_raw))))
+    except Exception:
+        max_words_per_caption = 3
+
     scenes = _extract_scenes(payload, script_result.lines)
     logger.info("media", f"content_type={content_type}")
     if timeout_guard():
@@ -199,10 +223,16 @@ def run_orchestrated_pipeline(
                 lines=script_result.lines,
                 media_paths=media_result.media_paths,
                 audio_path=audio_result.path,
+                audio_duration_seconds=float(audio_result.duration or 0.0) if audio_result.duration else None,
                 output_dir=output_dir,
                 target_duration=float(target_duration),
                 logger=logger,
                 max_render_budget_seconds=composition_budget_seconds,
+                font_style=str(template_config.get("fontStyle", "Anton") or "Anton").strip() or "Anton",
+                subtitle_color=subtitle_color,
+                caption_position=caption_position,
+                caption_animation=caption_animation,
+                max_words_per_caption=max_words_per_caption,
             ),
             lambda exc: CompositionStageResult(video_path="", subtitle_path="", warnings=[f"composition_stage_exception:{str(exc)[:140]}"]),
         )

@@ -105,10 +105,16 @@ def compose_scenes(
     lines: list[str],
     media_paths: list[str],
     audio_path: str,
+    audio_duration_seconds: float | None,
     output_dir: Path,
     target_duration: float,
     logger: StageLogger,
     max_render_budget_seconds: float | None = None,
+    font_style: str = "Anton",
+    subtitle_color: str = "#FFFFFF",
+    caption_position: str = "bottom",
+    caption_animation: str = "fade",
+    max_words_per_caption: int = 3,
 ) -> CompositionStageResult:
     warnings: list[str] = []
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -138,9 +144,14 @@ def compose_scenes(
     try:
         create_subtitles_from_script(
             script=script,
-            estimated_duration_seconds=max(1.0, float(target_duration)),
+            estimated_duration_seconds=max(1.0, float(audio_duration_seconds or target_duration)),
             subtitle_path=subtitle_path,
+            max_words=max(1, min(8, int(max_words_per_caption))),
             line_mode=True,
+            font_style=font_style,
+            subtitle_color=subtitle_color,
+            caption_position=caption_position,
+            caption_animation=caption_animation,
         )
     except Exception as exc:
         warnings.append(f"subtitle_error:{str(exc)[:140]}")

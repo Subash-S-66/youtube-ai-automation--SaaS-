@@ -61,18 +61,52 @@ def _normalize_token(token: str) -> str:
     return re.sub(r"[^a-z0-9]", "", token.lower())
 
 
-def _inject_highlight_ass(text: str, highlight_words: set[str]) -> str:
+def _parse_hex_rgb(hex_color: str) -> tuple[int, int, int] | None:
+    raw = str(hex_color or "").strip().lstrip("#")
+    if len(raw) != 6:
+        return None
+    try:
+        return int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16)
+    except Exception:
+        return None
+
+
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    r, g, b = rgb
+    return f"#{max(0, min(255, r)):02X}{max(0, min(255, g)):02X}{max(0, min(255, b)):02X}"
+
+
+def _derive_highlight_hex(subtitle_color: str) -> str:
+    rgb = _parse_hex_rgb(subtitle_color)
+    if rgb is None:
+        return "#00CCFF"
+
+    r, g, b = rgb
+    luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+    blend = 0.42 if luminance < 0.6 else -0.18
+    if blend >= 0:
+        mixed = tuple(int(round(channel + (255 - channel) * blend)) for channel in rgb)
+    else:
+        factor = 1.0 + blend
+        mixed = tuple(int(round(channel * factor)) for channel in rgb)
+    if mixed == rgb:
+        mixed = tuple(min(255, channel + 36) for channel in rgb)
+    return _rgb_to_hex(mixed)
+
+
+def _inject_highlight_ass(text: str, highlight_words: set[str], highlight_color: str) -> str:
     if not highlight_words:
         return text.upper()
     lines = text.split(r"\N")
     out_lines: list[str] = []
+    ass_color = _hex_to_ass_color(highlight_color)
     for line in lines:
         out_tokens: list[str] = []
         for token in line.split():
             base = _normalize_token(token)
             token_upper = token.upper()
             if base and base in highlight_words:
-                out_tokens.append(r"{\c&H00CCFF&\b1}" + token_upper + r"{\rCaption}")
+                out_tokens.append(r"{\c" + ass_color + r"\b1}" + token_upper + r"{\rCaption}")
             else:
                 out_tokens.append(token_upper)
         out_lines.append(" ".join(out_tokens))
@@ -240,6 +274,7 @@ def create_subtitles_from_script(
     chunks = _split_caption_units(script=script, max_words=max_words, line_mode=line_mode)
     total_words = len(words)
     normalized_highlight = {_normalize_token(item) for item in (highlight_words or []) if item}
+    highlight_color = _derive_highlight_hex(subtitle_color)
 
     subtitle_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -268,7 +303,7 @@ def create_subtitles_from_script(
         current = end
         text = " ".join(chunk)
         text = _wrap_caption_text(text, max_words)
-        text = _inject_highlight_ass(text, normalized_highlight)
+        text = _inject_highlight_ass(text, normalized_highlight, highlight_color)
         text = text.replace("\n", " ")
         animation_directives = _build_caption_animation_override(
             caption_animation=caption_animation,
