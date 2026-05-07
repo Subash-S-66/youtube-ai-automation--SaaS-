@@ -11,7 +11,14 @@ const sanitizeOrigin = (value: string) => {
   return `https://${compact}`;
 };
 
-const getDefaultApiOrigin = () => 'http://localhost:5000';
+// In development prefer a localhost backend to avoid accidentally using a
+// production URL that may be present in the environment. In production we
+// allow `NEXT_PUBLIC_API_URL` to control the origin; if it's unset we
+// fall back to same-origin (empty string) so callers use relative paths.
+const getDefaultApiOrigin = () => {
+  if (process.env.NODE_ENV === 'development') return 'http://localhost:5000';
+  return process.env.NEXT_PUBLIC_API_URL || '';
+};
 
 export const getApiOrigin = () => {
   const raw = sanitizeOrigin(process.env.NEXT_PUBLIC_API_URL || '') || getDefaultApiOrigin();

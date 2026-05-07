@@ -17,8 +17,6 @@ const NOINDEX_PREFIXES = [
   '/forgot-password',
 ];
 
-const BILLING_PATHS = ['/payments', '/subscription', '/pricing'];
-
 const getRequestHost = (request: NextRequest): string => {
   const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
   const host = forwardedHost || request.headers.get('host') || request.nextUrl.host;
@@ -48,7 +46,7 @@ const shouldNoIndexPath = (pathname: string): boolean => {
 };
 
 const shouldAllowPaymentFeature = (pathname: string): boolean => {
-  return BILLING_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  return true;
 };
 
 const applySecurityHeaders = (

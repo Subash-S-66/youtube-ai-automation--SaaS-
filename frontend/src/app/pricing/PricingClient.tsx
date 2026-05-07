@@ -101,31 +101,13 @@ export default function PricingClient() {
     try {
       const res = await paymentService.createCheckoutSession(planId);
       const order = res?.data;
-      if (!order?.orderId) {
-        throw new Error('Invalid checkout response');
+      const paymentLink = res?.data;
+      const shortUrl = paymentLink?.shortUrl || paymentLink?.short_url || paymentLink?.url;
+      if (typeof shortUrl !== 'string' || !shortUrl) {
+        throw new Error('Invalid Razorpay redirect URL');
       }
 
-      await openRazorpayCheckout(order, {
-        onSuccess: async (rzpResponse: RazorpaySuccessResponse) => {
-          try {
-            await paymentService.confirmPayment(rzpResponse as any);
-            const userData = await authService.getMe();
-            setUser(userData.data);
-            setMessage({ text: 'Subscription upgraded successfully! Your limits have been updated.', type: 'success' });
-          } catch (err: any) {
-            setMessage({ text: err.response?.data?.message || 'Payment verification failed. Please contact support.', type: 'error' });
-          } finally {
-            setUpgrading(null);
-          }
-        },
-        onDismiss: () => {
-          setUpgrading(null);
-        },
-        onFailure: (error) => {
-          setMessage({ text: error.message || 'Payment failed', type: 'error' });
-          setUpgrading(null);
-        },
-      });
+      window.location.assign(shortUrl);
     } catch (err: any) {
       // Handle the generic placeholder case or error cleanly
       setMessage({ text: err.response?.data?.message || 'Upgrade API not fully configured for this plan yet.', type: 'error' });

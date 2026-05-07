@@ -7,7 +7,6 @@ import { m } from 'framer-motion';
 import { CreditCard, CheckCircle2, RefreshCw, Zap, Sparkles } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { paymentService } from '../../services/paymentService';
-import { openRazorpayCheckout, RazorpaySuccessResponse } from '../../lib/razorpay';
 import DashboardLayout from '../../components/layout/DashboardLayout';
 import { cn } from '../../lib/utils';
 import UpgradeOptionsModal from '../../components/ui/UpgradeOptionsModal';
@@ -88,7 +87,7 @@ const PLANS: Plan[] = [
     price: '$99/mo',
     limit: 100,
     features: ['100 video uploads per day', '50 YouTube channels', 'Instant generation queue', 'All AI voices unlocked', '24/7 dedicated support', 'Custom templates'],
-  }
+  },
 ];
 
 export default function PaymentsPage() {
@@ -118,37 +117,13 @@ export default function PaymentsPage() {
     setMessage(null);
     try {
       const response = await paymentService.createCheckoutSession(planId);
-      const order = response?.data;
-      if (!order?.orderId) {
-        throw new Error('Invalid checkout response');
+      const paymentLink = response?.data;
+      const shortUrl = paymentLink?.shortUrl || paymentLink?.short_url || paymentLink?.url;
+      if (typeof shortUrl !== 'string' || !shortUrl) {
+        throw new Error('Invalid Razorpay redirect URL');
       }
 
-      await openRazorpayCheckout(order, {
-        onSuccess: async (rzpResponse: RazorpaySuccessResponse) => {
-          try {
-            const confirmationPayload: Record<string, string> = {
-              razorpay_payment_id: rzpResponse.razorpay_payment_id,
-              razorpay_order_id: rzpResponse.razorpay_order_id,
-              razorpay_signature: rzpResponse.razorpay_signature,
-            };
-            await paymentService.confirmPayment(confirmationPayload);
-            const userData = await authService.getMe();
-            setUser(userData.data);
-            setMessage({ text: 'Subscription upgraded successfully! Your limits have been updated.', type: 'success' });
-          } catch (error: unknown) {
-            setMessage({ text: getApiErrorMessage(error, 'Payment verification failed. Please contact support.'), type: 'error' });
-          } finally {
-            setProcessing(null);
-          }
-        },
-        onDismiss: () => {
-          setProcessing(null);
-        },
-        onFailure: (error) => {
-          setMessage({ text: error.message || 'Payment failed', type: 'error' });
-          setProcessing(null);
-        },
-      });
+      window.location.assign(shortUrl);
     } catch (error: unknown) {
       setMessage({ text: getApiErrorMessage(error, 'Failed to start checkout'), type: 'error' });
       setProcessing(null);

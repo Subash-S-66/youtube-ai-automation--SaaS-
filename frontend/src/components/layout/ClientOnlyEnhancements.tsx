@@ -12,17 +12,11 @@ const DisableNumberScroll = dynamic(() => import("../DisableNumberScroll"), {
   loading: () => null,
 });
 
-const BillingServiceWorkerGuard = dynamic(() => import("./BillingServiceWorkerGuard"), {
-  ssr: false,
-  loading: () => null,
-});
-
 export default function ClientOnlyEnhancements() {
   return (
     <>
       <GlobalBanner />
       <DisableNumberScroll />
-      <BillingServiceWorkerGuard />
     </>
   );
 }

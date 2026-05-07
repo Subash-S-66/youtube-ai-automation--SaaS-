@@ -198,3 +198,10 @@ body.has-global-banner {
     color: white;
   }
 }
+
+  /* Ensure images preserve aspect ratio when resized via CSS */
+  img {
+    max-width: 100%;
+    height: auto;
+    display: inline-block;
+  }

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
-import { createOrder, createRenewOrder, handleRazorpayWebhook, confirmPaymentLink, confirmOrderPayment, convertPlanWithRemaining } from '../services/razorpayService';
+import { createPaymentLink, handleRazorpayWebhook, confirmPaymentLink, confirmOrderPayment, convertPlanWithRemaining } from '../services/razorpayService';
 
 // @desc    Create Razorpay payment link
 // @route   POST /api/payment/create-checkout
@@ -13,11 +13,13 @@ export const createCheckout = asyncHandler(async (req: Request, res: Response) =
 
   const { planId } = req.body;
 
-  const order = await createOrder(req.user.id, planId);
+  const shortUrl = await createPaymentLink(req.user.id, planId);
 
   res.status(200).json({
     success: true,
-    data: order,
+    data: {
+      shortUrl,
+    },
   });
 });
 
@@ -29,11 +31,15 @@ export const createRenewal = asyncHandler(async (req: Request, res: Response) =>
     throw new AppError('Not authorized', 401);
   }
 
-  const order = await createRenewOrder(req.user.id);
+  const user = req.user as { plan?: string };
+  const currentPlan = String(user?.plan || '').toLowerCase();
+  const shortUrl = await createPaymentLink(req.user.id, currentPlan || undefined);
 
   res.status(200).json({
     success: true,
-    data: order,
+    data: {
+      shortUrl,
+    },
   });
 });
 

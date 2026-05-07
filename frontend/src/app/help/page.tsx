@@ -78,7 +78,9 @@ export default function HelpPage() {
 
   const connectSocket = useCallback((ticketId: string) => {
     if (socket) return;
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || 'http://localhost:5000';
+    // Use configured public API origin in production; fall back to empty
+    // string so socket.io will connect to same-origin when not provided.
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL?.replace('/api', '') || '';
     const newSocket = io(backendUrl, {
       withCredentials: true,
     });
