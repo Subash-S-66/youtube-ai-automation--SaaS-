@@ -192,7 +192,6 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: softwareApplicationStructuredData }}
         />
-        <link rel="preload" href="/brand-logo.png" as="image" fetchPriority="high" />
         <link rel="preconnect" href={apiOrigin} />
         <link rel="dns-prefetch" href={apiOrigin} />
       </head>

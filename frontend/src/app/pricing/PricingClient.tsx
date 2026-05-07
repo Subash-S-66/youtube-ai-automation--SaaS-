@@ -101,6 +101,10 @@ export default function PricingClient() {
     try {
       const res = await paymentService.createCheckoutSession(planId);
       const order = res?.data;
+      if (order?.short_url) {
+        window.location.assign(order.short_url);
+        return;
+      }
       if (!order?.orderId) {
         throw new Error('Invalid checkout response');
       }

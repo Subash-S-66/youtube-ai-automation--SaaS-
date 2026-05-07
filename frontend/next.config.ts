@@ -19,10 +19,17 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: /^https?.*/,
+        // Cache only first-party HTTPS requests to avoid interfering with third-party flows (e.g. Razorpay checkout).
+        urlPattern: /^https:\/\/(www\.)?clipforgeapp\.tech\/.*/i,
         handler: "NetworkFirst",
         options: {
           cacheName: "offlineCache",
+          matchOptions: {
+            ignoreSearch: false,
+          },
+          cacheableResponse: {
+            statuses: [200],
+          },
           expiration: {
             maxEntries: 200,
           },

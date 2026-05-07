@@ -83,6 +83,8 @@ interface DashboardUser {
   isYoutubeConnected?: boolean;
   youtubeChannels?: YouTubeChannel[];
   plan?: string;
+  subscriptionStatus?: 'active' | 'inactive' | string;
+  subscriptionExpiresAt?: string;
   planLimits?: {
     max_media_items?: number;
     max_video_items?: number;
@@ -106,6 +108,8 @@ interface DashboardUser {
   remainingUploads?: number;
   user?: {
     plan?: string;
+    subscriptionStatus?: 'active' | 'inactive' | string;
+    subscriptionExpiresAt?: string;
     templateFont?: string;
     templateColor?: string;
     lastSelectedChannelId?: string;
@@ -491,55 +495,55 @@ function Dashboard() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [userResult, jobsResult, mediaResult, sequenceResult] = await Promise.allSettled([
-          authService.getMe(),
-          pipelineService.getJobs(),
-          mediaService.getMedia(),
-          mediaService.getSequence()
-        ]);
+        const userData = await authService.getMe() as AuthMeResponse;
+        setUser({ ...userData.data, ...userData.data.user });
 
-        if (userResult.status === 'fulfilled') {
-          const userData = userResult.value as AuthMeResponse;
-          setUser({ ...userData.data, ...userData.data.user });
-
-          if (userData.data?.user?.templateFont) {
-            setTemplateFont(userData.data.user.templateFont);
-          }
-          if (userData.data?.user?.templateColor) {
-            setTemplateColor(userData.data.user.templateColor);
-          }
-          if (userData.data?.user?.lastChannelInputs) {
-            setChannelInputCache(userData.data.user.lastChannelInputs);
-          }
-          if (userData.data?.user?.lastInputMode) {
-            setInputMode(userData.data.user.lastInputMode);
-          }
-          if (userData.data?.user?.lastPrompt !== undefined) {
-            setPrompt(userData.data.user.lastPrompt);
-          }
-          if (userData.data?.user?.lastSelectedTopic) {
-            setSelectedTopic(userData.data.user.lastSelectedTopic);
-          }
-          if (userData.data?.user?.lastCustomTopic !== undefined) {
-            setCustomTopic(userData.data.user.lastCustomTopic);
-          }
-
-          const validChannels = Array.isArray(userData.data?.youtubeChannels)
-            ? userData.data.youtubeChannels.filter((channel) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
-            : [];
-          const preferredChannelId = String(userData.data?.user?.lastSelectedChannelId || '').trim();
-          const initialChannelId = (preferredChannelId && validChannels.some((channel) => channel?.channelId === preferredChannelId))
-            ? preferredChannelId
-            : (validChannels[0]?.channelId || '');
-          channelSelectionHydratedRef.current = true;
-          if (initialChannelId) {
-            setSelectedChannelId(initialChannelId);
-            const cached = userData.data?.user?.lastChannelInputs?.[initialChannelId];
-            applyChannelCache(cached);
-          }
-        } else {
-          throw userResult.reason; // Rethrow to handle auth error below
+        if (userData.data?.user?.templateFont) {
+          setTemplateFont(userData.data.user.templateFont);
         }
+        if (userData.data?.user?.templateColor) {
+          setTemplateColor(userData.data.user.templateColor);
+        }
+        if (userData.data?.user?.lastChannelInputs) {
+          setChannelInputCache(userData.data.user.lastChannelInputs);
+        }
+        if (userData.data?.user?.lastInputMode) {
+          setInputMode(userData.data.user.lastInputMode);
+        }
+        if (userData.data?.user?.lastPrompt !== undefined) {
+          setPrompt(userData.data.user.lastPrompt);
+        }
+        if (userData.data?.user?.lastSelectedTopic) {
+          setSelectedTopic(userData.data.user.lastSelectedTopic);
+        }
+        if (userData.data?.user?.lastCustomTopic !== undefined) {
+          setCustomTopic(userData.data.user.lastCustomTopic);
+        }
+
+        const validChannels = Array.isArray(userData.data?.youtubeChannels)
+          ? userData.data.youtubeChannels.filter((channel) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
+          : [];
+        const preferredChannelId = String(userData.data?.user?.lastSelectedChannelId || '').trim();
+        const initialChannelId = (preferredChannelId && validChannels.some((channel) => channel?.channelId === preferredChannelId))
+          ? preferredChannelId
+          : (validChannels[0]?.channelId || '');
+        channelSelectionHydratedRef.current = true;
+        if (initialChannelId) {
+          setSelectedChannelId(initialChannelId);
+          const cached = userData.data?.user?.lastChannelInputs?.[initialChannelId];
+          applyChannelCache(cached);
+        }
+
+        const canUseCustomMediaNow = Boolean(userData.data?.planFeatures?.custom_media);
+        const jobPromise = pipelineService.getJobs();
+        const mediaPromise = canUseCustomMediaNow ? mediaService.getMedia() : Promise.resolve({ data: [], policy: null });
+        const sequencePromise = canUseCustomMediaNow ? mediaService.getSequence() : Promise.resolve({ data: [] });
+
+        const [jobsResult, mediaResult, sequenceResult] = await Promise.allSettled([
+          jobPromise,
+          mediaPromise,
+          sequencePromise,
+        ]);
 
         if (jobsResult.status === 'fulfilled') {
           const jobsData = jobsResult.value as JobsResponse;
@@ -794,6 +798,11 @@ function Dashboard() {
   }, [user?.isYoutubeConnected, validYouTubeChannels, selectedChannelId, applyChannelCache, channelInputCache]);
 
   const currentPlan = ((user?.plan || user?.user?.plan || 'free') as string).toLowerCase();
+  const subscriptionStatus = (user?.subscriptionStatus || user?.user?.subscriptionStatus || '').toLowerCase();
+  const subscriptionExpiry = user?.subscriptionExpiresAt || user?.user?.subscriptionExpiresAt;
+  const hasExpiry = Boolean(subscriptionExpiry);
+  const isExpired = hasExpiry ? new Date(subscriptionExpiry as string).getTime() <= Date.now() : false;
+  const isSubscriptionActive = subscriptionStatus === 'active' && !isExpired;
   const planFeatures = (user?.planFeatures || {}) as {
     voice_selection?: boolean;
     scheduling?: boolean;
@@ -804,7 +813,7 @@ function Dashboard() {
     template_customization?: boolean;
     custom_media?: boolean;
   };
-  const isFreeUser = currentPlan === 'free';
+  const isFreeUser = currentPlan === 'free' || !isSubscriptionActive;
   const isPaidPlan = !isFreeUser;
   const canUseVoiceSelection = planFeatures.voice_selection ?? isPaidPlan;
   const canUseScheduling = planFeatures.scheduling ?? isPaidPlan;
@@ -878,13 +887,55 @@ function Dashboard() {
     if (!canUseStoryMode && recapEnabled) {
       setRecapEnabled(false);
     }
+    if (!canUseCta && ctaEnabled) {
+      setCtaEnabled(false);
+    }
     if (!canUseScheduling && autoUploadEnabled) {
       setAutoUploadEnabled(false);
     }
     if (!canUseScheduling && scheduleEnabled) {
       setScheduleEnabled(false);
     }
-  }, [canUseStoryMode, canUseScheduling, storyMode, recapEnabled, autoUploadEnabled, scheduleEnabled, setStoryMode, setRecapEnabled, setAutoUploadEnabled]);
+    if (!canUseTemplateCustomization && templateConfigOpen) {
+      setTemplateConfigOpen(false);
+    }
+    if (!canUseCustomMedia && useCustomMedia) {
+      setUseCustomMedia(false);
+    }
+    if (!canUseVoiceSelection) {
+      if (!randomVoice) {
+        setRandomVoice(true);
+      }
+      if (selectedVoices.length !== 1 || selectedVoices[0] !== 'Aoede') {
+        setSelectedVoices(['Aoede']);
+      }
+    }
+  }, [
+    canUseStoryMode,
+    canUseScheduling,
+    canUseCta,
+    canUseTemplateCustomization,
+    canUseCustomMedia,
+    canUseVoiceSelection,
+    storyMode,
+    recapEnabled,
+    ctaEnabled,
+    autoUploadEnabled,
+    scheduleEnabled,
+    templateConfigOpen,
+    useCustomMedia,
+    randomVoice,
+    selectedVoices,
+    setStoryMode,
+    setRecapEnabled,
+    setCtaEnabled,
+    setAutoUploadEnabled,
+    setScheduleEnabled,
+    setTemplateConfigOpen,
+    setUseCustomMedia,
+    setRandomVoice,
+    setSelectedVoices,
+  ]);
 
   const handleConnectYouTube = useCallback(() => {
     (async () => {
@@ -1230,7 +1281,7 @@ function Dashboard() {
   };
 
   const handleStoryModeToggle = () => {
-    if (!canUseStoryMode) {
+    if (!canUseStoryMode && !storyMode) {
       showUpgradeModal('Story Mode');
       return;
     }
@@ -1731,7 +1782,7 @@ function Dashboard() {
                         className="hidden"
                         checked={ctaEnabled}
                         onChange={() => {
-                          if (!canUseCta) {
+                          if (!canUseCta && !ctaEnabled) {
                             showUpgradeModal('Ending CTA');
                             return;
                           }
@@ -1799,7 +1850,7 @@ function Dashboard() {
                           className="sr-only peer"
                           checked={scheduleEnabled}
                           onChange={(e) => {
-                            if (!canUseScheduling) { showUpgradeModal('Scheduling'); return; }
+                            if (!canUseScheduling && e.target.checked) { showUpgradeModal('Scheduling'); return; }
                             const nextChecked = e.target.checked;
                             setScheduleEnabled(nextChecked);
                             if (nextChecked) {
@@ -1865,7 +1916,7 @@ function Dashboard() {
                           className="sr-only peer"
                           checked={autoUploadEnabled}
                           onChange={(e) => {
-                            if (!canUseScheduling) { showUpgradeModal('Auto-upload scheduling'); return; }
+                            if (!canUseScheduling && e.target.checked) { showUpgradeModal('Auto-upload scheduling'); return; }
                             const nextChecked = e.target.checked;
                             setAutoUploadEnabled(nextChecked);
                             if (nextChecked) {
@@ -1971,7 +2022,7 @@ function Dashboard() {
                             className="sr-only peer"
                             checked={templateConfigOpen}
                             onChange={(e) => {
-                              if (!canUseTemplateCustomization) { showUpgradeModal('Subtitle Styling'); return; }
+                              if (!canUseTemplateCustomization && e.target.checked) { showUpgradeModal('Subtitle Styling'); return; }
                               setTemplateConfigOpen(e.target.checked);
                             }}
                           />
@@ -2112,7 +2163,7 @@ function Dashboard() {
                             className="sr-only peer"
                             checked={useCustomMedia}
                             onChange={(e) => {
-                              if (!canUseCustomMedia) { showUpgradeModal('Custom media'); return; }
+                              if (!canUseCustomMedia && e.target.checked) { showUpgradeModal('Custom media'); return; }
                               setUseCustomMedia(e.target.checked);
                             }}
                           />

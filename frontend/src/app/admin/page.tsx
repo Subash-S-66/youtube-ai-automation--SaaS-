@@ -8,6 +8,7 @@ import { adminService } from '../../services/adminService';
 const AppModal = dynamic(() => import('../../components/ui/AppModal'), { ssr: false });
 import { AppModalType } from '../../components/ui/AppModal';
 import { cn } from '../../lib/utils';
+import './admin.css';
 
 interface AdminStats {
   totalUsers: number;
@@ -371,9 +372,9 @@ export default function AdminDashboard() {
     },
   ];
 
-  const sectionCardClass = 'w-full rounded-2xl border px-4 py-4 text-left transition-all duration-200';
-  const sectionCardActiveClass = 'border-[#00D4FF]/60 bg-linear-to-br from-[#112033] to-[#0E1828] shadow-[0_0_0_1px_rgba(0,212,255,0.2)]';
-  const sectionCardIdleClass = 'border-[#1A2235] bg-[#0B0F1A]/90 hover:-translate-y-0.5 hover:border-[#32507B] hover:bg-[#10182A]';
+  const sectionCardClass = 'w-full rounded-xl border px-4 py-3.5 text-left transition-all duration-200';
+  const sectionCardActiveClass = 'border-[#6FB5FF]/80 bg-linear-to-br from-[#15243A] to-[#111D31] shadow-[0_0_0_1px_rgba(111,181,255,0.25)]';
+  const sectionCardIdleClass = 'border-[#23344F] bg-[#101826]/90 hover:-translate-y-0.5 hover:border-[#3A5A84] hover:bg-[#152238]';
 
   const openPicker = (ref: RefObject<HTMLInputElement | null>) => {
     if (!ref.current) return;
@@ -1509,62 +1510,66 @@ export default function AdminDashboard() {
 
   return (
     <>
-      <div className="relative min-h-screen overflow-hidden bg-[#070B14] px-4 py-8 lg:px-8">
+      <div className="admin-shell relative min-h-full overflow-hidden bg-[#070B14] px-4 py-6 lg:px-8">
         <div className="pointer-events-none absolute inset-0">
           <div className="absolute -top-20 left-[-12%] h-80 w-80 rounded-full bg-[#00D4FF]/10 blur-3xl" />
           <div className="absolute top-1/3 right-[-10%] h-96 w-96 rounded-full bg-[#7C5CFF]/10 blur-3xl" />
           <div className="absolute bottom-[-12%] left-1/3 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
         </div>
 
-        <div className="relative mx-auto max-w-365 space-y-6">
-          <div className="rounded-3xl border border-[#1E2C44] bg-linear-to-br from-[#101B2E] via-[#0E1626] to-[#0A0F1B] p-6 shadow-2xl">
+        <div className="relative mx-auto max-w-365 space-y-5">
+          <div className="rounded-2xl border border-[#1E2C44] bg-linear-to-br from-[#101B2E] via-[#0E1626] to-[#0A0F1B] p-4 shadow-xl">
             <div className="grid gap-6 xl:grid-cols-[1.35fr,1fr]">
               <div>
                 <div className="inline-flex items-center rounded-full border border-[#32507B] bg-[#0D1728]/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#8adfff]">
                   Admin Command Hub
                 </div>
-                <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-4xl">Faster, Clearer Admin Workflow</h1>
-                <p className="mt-3 max-w-2xl text-sm leading-relaxed text-slate-300">
+                <h1 className="mt-3 text-2xl font-black tracking-tight text-white sm:text-3xl">Admin Workflow</h1>
+                <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-300 sm:text-sm">
                   Everything is grouped by outcome so you can broadcast updates, tune runtime behavior, and manage plans without jumping between noisy panels.
                 </p>
 
-                <div className="mt-5 flex flex-wrap items-center gap-2">
+                <div className="mt-3 flex min-h-[32px] flex-wrap items-center gap-2">
                   <span className="inline-flex items-center rounded-full border border-[#2A3B5A] bg-[#0B1423] px-3 py-1 text-xs font-semibold text-slate-200">
                     Active Section: <span className="ml-1 text-[#8adfff] capitalize">{activeSection}</span>
                   </span>
-                  {activeSection === 'system' ? (
-                    <span className="inline-flex items-center rounded-full border border-[#2A3B5A] bg-[#0B1423] px-3 py-1 text-xs font-semibold text-slate-200">
+                  <span
+                    className={cn(
+                      'inline-flex items-center rounded-full border border-[#2A3B5A] bg-[#0B1423] px-3 py-1 text-xs font-semibold text-slate-200 transition-opacity',
+                      activeSection === 'system' ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                    )}
+                    aria-hidden={activeSection !== 'system'}
+                  >
                       Panel: <span className="ml-1 text-[#d4c8ff] capitalize">{activeSystemPanel}</span>
-                    </span>
-                  ) : null}
+                  </span>
                   <span className="inline-flex items-center rounded-full border border-[#2A3B5A] bg-[#0B1423] px-3 py-1 text-xs font-semibold text-slate-300">
                     Interface: Guided Mode
                   </span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-2">
                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Total Users</p>
-                  <p className="mt-1 text-xl font-black text-white">{stats?.totalUsers ?? '--'}</p>
+                  <p className="mt-0.5 text-lg font-black text-white">{stats?.totalUsers ?? '--'}</p>
                 </div>
-                <div className="rounded-xl border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-3">
+                <div className="rounded-lg border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-2">
                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Active Subs</p>
-                  <p className="mt-1 text-xl font-black text-white">{stats?.totalActiveSubscriptions ?? '--'}</p>
+                  <p className="mt-0.5 text-lg font-black text-white">{stats?.totalActiveSubscriptions ?? '--'}</p>
                 </div>
-                <div className="rounded-xl border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-3">
+                <div className="rounded-lg border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-2">
                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Total Jobs</p>
-                  <p className="mt-1 text-xl font-black text-white">{stats?.jobs?.total ?? '--'}</p>
+                  <p className="mt-0.5 text-lg font-black text-white">{stats?.jobs?.total ?? '--'}</p>
                 </div>
-                <div className="rounded-xl border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-3">
+                <div className="rounded-lg border border-[#2A3B5A] bg-[#0B1423]/80 px-3 py-2">
                   <p className="text-[10px] uppercase tracking-wide text-slate-500">Success Rate</p>
-                  <p className="mt-1 text-xl font-black text-white">{stats?.jobs?.successRate ?? '--'}</p>
+                  <p className="mt-0.5 text-lg font-black text-white">{stats?.jobs?.successRate ?? '--'}</p>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-[#1A2235] bg-[#0C1322]/95 p-4 shadow-lg">
+          <div className="sticky top-2 z-20 rounded-2xl border border-[#23344F] bg-[#0F1728]/95 p-4 shadow-lg backdrop-blur-md">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-sm font-bold text-white">Workflow Navigator</p>
@@ -1648,12 +1653,12 @@ export default function AdminDashboard() {
             <>
               <div
                 className={cn(
-                  'grid gap-6',
+                  'grid gap-6 min-h-[70vh] items-start',
                   activeSection === 'communication' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'
                 )}
               >
               {/* Notification Sender */}
-              <div className={cn('bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl', activeSection !== 'communication' && 'hidden')}>
+              <div className={cn('admin-panel p-6', activeSection !== 'communication' && 'hidden')}>
                 <div className="flex items-center mb-6">
                   <Bell className="h-5 w-5 text-[#7C5CFF] mr-2" />
                   <h2 className="text-xl font-bold text-white">Send Notification</h2>
@@ -1698,7 +1703,7 @@ export default function AdminDashboard() {
               </div>
 
               {/* Global Banner */}
-              <div className={cn('bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl', activeSection !== 'communication' && 'hidden')}>
+              <div className={cn('admin-panel p-6', activeSection !== 'communication' && 'hidden')}>
                 <div className="flex items-center mb-6">
                   <MonitorPlay className="h-5 w-5 text-[#00D4FF] mr-2" />
                   <h2 className="text-xl font-bold text-white">Global Banner</h2>
@@ -1751,7 +1756,7 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                   </div>
-                  <label className="flex items-center justify-between cursor-pointer bg-[#0B0F1A] border border-[#1A2235] rounded-xl px-4 py-3">
+                  <label className="flex items-center justify-between cursor-pointer admin-soft-panel px-4 py-3">
                     <div>
                       <p className="text-sm font-semibold text-white">Banner Active</p>
                       <p className="text-xs text-slate-400">Turn on/off the global banner</p>
@@ -1768,12 +1773,12 @@ export default function AdminDashboard() {
               </div>
 
               {/* System Config (Beta Mode) */}
-              <div className={cn('bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl', activeSection !== 'system' && 'hidden')}>
+              <div className={cn('admin-panel p-6', activeSection !== 'system' && 'hidden')}>
                 <div className="flex items-center mb-6">
                   <Settings className="h-5 w-5 text-slate-300 mr-2" />
                   <h2 className="text-xl font-bold text-white">System Config</h2>
                 </div>
-                <div className="mb-4 rounded-xl border border-[#1A2235] bg-[#0B0F1A] p-3">
+                <div className="mb-4 admin-soft-panel p-3">
                   <p className="text-xs text-slate-400 mb-2">Split view for high-content settings</p>
                   <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
                     {systemPanelTabs.map((panel) => {
@@ -1798,7 +1803,7 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                <div className={cn('p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl flex items-center justify-between', activeSystemPanel !== 'core' && 'hidden')}>
+                <div className={cn('p-4 admin-soft-panel flex items-center justify-between', activeSystemPanel !== 'core' && 'hidden')}>
                   <div>
                     <p className="text-white font-bold">Beta Mode</p>
                     <p className="text-sm text-slate-400">When enabled, all free users temporarily receive &quot;Basic&quot; plan limits. Does not modify their database record.</p>
@@ -1808,7 +1813,7 @@ export default function AdminDashboard() {
                     <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#7C5CFF]"></div>
                   </label>
                 </div>
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'core' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'core' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Plan Conversion Ratios</p>
                   <p className="text-xs text-slate-400 mb-3">Higher value = more days. Example: Basic 1, Pro 2, Premium 4 means 2 Basic days = 1 Pro day, 4 Basic days = 1 Premium day.</p>
                   <div className="grid grid-cols-2 gap-3">
@@ -1835,7 +1840,7 @@ export default function AdminDashboard() {
                     {savingProration ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Proration Settings'}
                   </button>
                 </div>
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'runtime' && 'hidden')}>
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-semibold text-white">Gemini Model Control</p>
                     <span className={cn(
@@ -1886,7 +1891,7 @@ export default function AdminDashboard() {
                     {savingGeminiModel ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Save Gemini Model'}
                   </button>
                 </div>
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'runtime' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Pipeline Runner</p>
                   <p className="text-xs text-slate-400 mb-3">Choose primary execution environment for pipeline runs.</p>
                   <div className="mb-3 p-3 rounded-lg border border-[#1A2235] bg-[#111827]">
@@ -2111,7 +2116,7 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'runtime' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Worker Runtime Controls</p>
                   <p className="text-xs text-slate-400 mb-3">Manage worker behavior from admin panel. Profile/concurrency updates apply after dedicated worker restart.</p>
 
@@ -2202,7 +2207,7 @@ export default function AdminDashboard() {
                   </button>
                 </div>
 
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'runtime' && 'hidden')}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">Pipeline Execution Controls</p>
                     <button
@@ -2291,7 +2296,7 @@ export default function AdminDashboard() {
                   </button>
                 </div>
 
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'runtime' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'runtime' && 'hidden')}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-white">Active Pipeline Jobs</p>
                     <button
@@ -2375,7 +2380,7 @@ export default function AdminDashboard() {
                   )}
                 </div>
 
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'policies' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'policies' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Queue And Worker Limits (Per Plan)</p>
                   <p className="text-xs text-slate-400 mb-3">Controls how many pipeline jobs a user can run or queue at one time (also used for channel hold cap).</p>
 
@@ -2407,7 +2412,7 @@ export default function AdminDashboard() {
                   </button>
                 </div>
 
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'policies' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'policies' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">History Retention Policy</p>
                   <p className="text-xs text-slate-400 mb-3">
                     Records are deleted only when both conditions are true: the user has more records than the plan cap, and records are older than minimum age.
@@ -2457,7 +2462,7 @@ export default function AdminDashboard() {
                   </button>
                 </div>
 
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'policies' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'policies' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Stuck Job Cleanup Policy</p>
                   <p className="text-xs text-slate-400 mb-3">Controls when stale queue/processing jobs are auto-terminated during recovery and periodic cleanup.</p>
 
@@ -2501,7 +2506,7 @@ export default function AdminDashboard() {
                   </button>
                 </div>
 
-                <div className={cn('mt-4 p-4 bg-[#0B0F1A] border border-[#1A2235] rounded-xl', activeSystemPanel !== 'recovery' && 'hidden')}>
+                <div className={cn('mt-4 p-4 admin-soft-panel', activeSystemPanel !== 'recovery' && 'hidden')}>
                   <p className="text-sm font-semibold text-white mb-2">Retry & Failover Policy</p>
                   <p className="text-xs text-slate-400 mb-3">Configure retry counts per plan and explicit Try #1 / Try #2 / Try #3 order. When cycling is enabled, jobs repeat this sequence instead of sticking on one runner.</p>
 
@@ -2616,7 +2621,7 @@ export default function AdminDashboard() {
             </div>
 
             {/* Dynamic Plans Control */}
-            <div className={cn('bg-[#111827] border border-[#1A2235] p-6 rounded-2xl shadow-xl', activeSection !== 'plans' && 'hidden')}>
+            <div className={cn('admin-panel p-6', activeSection !== 'plans' && 'hidden')}>
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center">
                   <Settings className="h-5 w-5 text-[#7C5CFF] mr-2" />
@@ -2633,7 +2638,7 @@ export default function AdminDashboard() {
               </div>
               <div className="space-y-4">
                 {planDrafts.map(plan => (
-                  <div key={plan._id} className="bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-4">
+                  <div key={plan._id} className="admin-soft-panel p-4">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-lg font-bold text-white capitalize">{plan.name}</h3>
                       <label className="flex items-center cursor-pointer">
@@ -2796,41 +2801,41 @@ export default function AdminDashboard() {
             <>
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
+            <div className="admin-panel p-6 flex items-center">
               <div className="p-4 rounded-xl bg-[#7C5CFF]/10 text-[#7C5CFF] mr-4"><Users className="h-6 w-6" /></div>
               <div><p className="text-slate-400 text-sm font-medium">Total Users</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.totalUsers || 0)}</p></div>
             </div>
-            <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
+            <div className="admin-panel p-6 flex items-center">
               <div className="p-4 rounded-xl bg-[#00D4FF]/10 text-[#00D4FF] mr-4"><CreditCard className="h-6 w-6" /></div>
               <div><p className="text-slate-400 text-sm font-medium">Active Subscriptions</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.totalActiveSubscriptions || 0)}</p></div>
             </div>
-            <div className="bg-[#111827] border border-[#1A2235] p-6 rounded-2xl flex items-center shadow-lg">
+            <div className="admin-panel p-6 flex items-center">
               <div className="p-4 rounded-xl bg-green-500/10 text-green-500 mr-4"><CheckCircle className="h-6 w-6" /></div>
               <div><p className="text-slate-400 text-sm font-medium">Success Rate</p><p className="text-2xl font-bold text-white">{dashboardLoading ? '...' : (stats?.jobs?.successRate || '0%')}</p></div>
             </div>
           </div>
 
-          <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-5 shadow-lg">
+          <div className="admin-panel p-5">
             <h2 className="text-lg font-semibold text-white">How To Use This Panel</h2>
             <p className="mt-1 text-sm text-slate-400">Use the section tabs above to manage each area without scrolling through every tool at once.</p>
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <button type="button" onClick={() => setActiveSection('communication')} className="text-left rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+              <button type="button" onClick={() => setActiveSection('communication')} className="text-left admin-soft-panel px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
                 <p className="font-semibold text-white">Broadcast Center</p>
                 <p className="text-slate-400 text-xs mt-1">Send notifications and publish global banners.</p>
               </button>
-              <button type="button" onClick={() => setActiveSection('system')} className="text-left rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+              <button type="button" onClick={() => setActiveSection('system')} className="text-left admin-soft-panel px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
                 <p className="font-semibold text-white">System Policies</p>
                 <p className="text-slate-400 text-xs mt-1">Tune beta mode, queue limits, runner, and retry behavior.</p>
               </button>
-              <button type="button" onClick={() => setActiveSection('plans')} className="text-left rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+              <button type="button" onClick={() => setActiveSection('plans')} className="text-left admin-soft-panel px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
                 <p className="font-semibold text-white">Plan Controls</p>
                 <p className="text-slate-400 text-xs mt-1">Edit plan pricing, features, and usage limits.</p>
               </button>
-              <Link href="/admin/users" className="rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+              <Link href="/admin/users" className="admin-soft-panel px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
                 <p className="font-semibold text-white">Users Directory</p>
                 <p className="text-slate-400 text-xs mt-1">Manage individual users, history, and subscriptions.</p>
               </Link>
-              <Link href="/admin/tickets" className="rounded-xl border border-[#1A2235] bg-[#0B0F1A] px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
+              <Link href="/admin/tickets" className="admin-soft-panel px-3 py-3 hover:border-[#7C5CFF]/50 transition-colors">
                 <p className="font-semibold text-white">Help Tickets</p>
                 <p className="text-slate-400 text-xs mt-1">Review support conversations, status, and responses.</p>
               </Link>
@@ -2914,3 +2919,5 @@ export default function AdminDashboard() {
     </>
   );
 }
+
+

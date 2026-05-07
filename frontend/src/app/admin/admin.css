@@ -1,0 +1,74 @@
+.admin-shell {
+  --admin-card-bg: #111b2c;
+  --admin-card-border: #2a3e5e;
+  --admin-input-bg: #0c1422;
+  --admin-input-border: #324b70;
+  --admin-focus: #73b8ff;
+  /* Prevent browser scroll anchoring from shifting viewport when System panels rerender */
+  overflow-anchor: none;
+}
+
+.admin-shell h1,
+.admin-shell h2,
+.admin-shell h3 {
+  letter-spacing: -0.01em;
+}
+
+.admin-shell input[type='text'],
+.admin-shell input[type='number'],
+.admin-shell input[type='datetime-local'],
+.admin-shell input[type='url'],
+.admin-shell input[type='password'],
+.admin-shell textarea,
+.admin-shell select {
+  background: var(--admin-input-bg) !important;
+  border-color: var(--admin-input-border) !important;
+  color: #e6eefc !important;
+  border-radius: 0.7rem !important;
+  min-height: 2.5rem;
+}
+
+.admin-shell textarea {
+  min-height: 6rem;
+}
+
+.admin-shell input:focus,
+.admin-shell textarea:focus,
+.admin-shell select:focus {
+  outline: none !important;
+  border-color: var(--admin-focus) !important;
+  box-shadow: 0 0 0 1px rgba(115, 184, 255, 0.35);
+}
+
+.admin-shell button {
+  border-radius: 0.7rem;
+}
+
+.admin-shell table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.admin-shell th {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #91a5c8;
+}
+
+.admin-shell td {
+  color: #d6e0f1;
+}
+
+.admin-shell .admin-panel {
+  background: var(--admin-card-bg);
+  border: 1px solid var(--admin-card-border);
+  border-radius: 1rem;
+  box-shadow: 0 14px 28px rgba(2, 8, 20, 0.25);
+}
+
+.admin-shell .admin-soft-panel {
+  background: #0f1728;
+  border: 1px solid #263854;
+  border-radius: 0.85rem;
+}

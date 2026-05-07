@@ -17,6 +17,8 @@ const NOINDEX_PREFIXES = [
   '/forgot-password',
 ];
 
+const BILLING_PATHS = ['/payments', '/subscription', '/pricing'];
+
 const getRequestHost = (request: NextRequest): string => {
   const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
   const host = forwardedHost || request.headers.get('host') || request.nextUrl.host;
@@ -45,6 +47,10 @@ const shouldNoIndexPath = (pathname: string): boolean => {
   return NOINDEX_PREFIXES.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 };
 
+const shouldAllowPaymentFeature = (pathname: string): boolean => {
+  return BILLING_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+};
+
 const applySecurityHeaders = (
   response: NextResponse,
   pathname: string,
@@ -55,7 +61,9 @@ const applySecurityHeaders = (
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set(
     'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=(), payment=(), usb=()'
+    shouldAllowPaymentFeature(pathname)
+      ? 'camera=(), microphone=(), geolocation=(), payment=(self "https://checkout.razorpay.com"), usb=()'
+      : 'camera=(), microphone=(), geolocation=(), payment=(), usb=()'
   );
   response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
   response.headers.set('Cross-Origin-Resource-Policy', 'same-site');

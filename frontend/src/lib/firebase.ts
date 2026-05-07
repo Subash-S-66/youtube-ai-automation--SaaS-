@@ -40,9 +40,11 @@ if (typeof window !== 'undefined' && hasFirebaseConfig) {
     console.error('Firebase initialization error', error);
   }
 } else if (typeof window !== 'undefined' && !hasFirebaseConfig) {
-  console.warn(
-    'Firebase config is missing. Set NEXT_PUBLIC_FIREBASE_* env vars to enable Firebase.'
-  );
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn(
+      'Firebase config is missing. Set NEXT_PUBLIC_FIREBASE_* env vars to enable Firebase.'
+    );
+  }
 }
 
 export { app, messaging };
