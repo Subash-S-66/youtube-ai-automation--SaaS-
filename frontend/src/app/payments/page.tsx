@@ -119,10 +119,6 @@ export default function PaymentsPage() {
     try {
       const response = await paymentService.createCheckoutSession(planId);
       const order = response?.data;
-      if (order?.short_url) {
-        window.location.assign(order.short_url);
-        return;
-      }
       if (!order?.orderId) {
         throw new Error('Invalid checkout response');
       }
