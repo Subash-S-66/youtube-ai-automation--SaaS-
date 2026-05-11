@@ -1944,12 +1944,12 @@ const updatePlanSchema = z.object({
         .object({
           max_channels: z.coerce.number().int().min(1).max(500).optional(),
           daily_upload_limit: z.coerce.number().int().min(1).max(5000).optional(),
-          max_media_items: z.coerce.number().int().min(1).max(5000).optional(),
-          max_video_items: z.coerce.number().int().min(1).max(5000).optional(),
-          max_image_items: z.coerce.number().int().min(1).max(5000).optional(),
-          max_thumbnail_items: z.coerce.number().int().min(1).max(5000).optional(),
-          max_clip_length_seconds: z.coerce.number().int().min(1).max(86400).optional(),
-          max_total_video_duration_seconds: z.coerce.number().int().min(1).max(86400).optional(),
+          max_media_items: z.coerce.number().int().min(0).max(5000).optional(),
+          max_video_items: z.coerce.number().int().min(0).max(5000).optional(),
+          max_image_items: z.coerce.number().int().min(0).max(5000).optional(),
+          max_thumbnail_items: z.coerce.number().int().min(0).max(5000).optional(),
+          max_clip_length_seconds: z.coerce.number().int().min(0).max(86400).optional(),
+          max_total_video_duration_seconds: z.coerce.number().int().min(0).max(86400).optional(),
         })
         .strict()
         .optional(),

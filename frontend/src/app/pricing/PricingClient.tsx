@@ -178,6 +178,7 @@ export default function PricingClient() {
               const isCurrentPlan = currentPlanId === plan.id;
               const planId = String(plan.id || '').toLowerCase();
               const isLowerPlan = isSubscriptionActive && currentRank > (planRank[planId] ?? 0);
+              const canExtendCurrentPlan = isCurrentPlan && planId !== 'free';
               const hasDiscount = plan.discountPercentage > 0;
               const discountedPrice = hasDiscount ? plan.price * (1 - plan.discountPercentage / 100) : plan.price;
 
@@ -247,10 +248,10 @@ export default function PricingClient() {
                     ) : (
                       <button
                         onClick={() => handleUpgrade(plan.id)}
-                        disabled={isCurrentPlan || upgrading !== null}
+                        disabled={(isCurrentPlan && !canExtendCurrentPlan) || upgrading !== null}
                         className={cn(
                           "w-full py-3.5 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center",
-                          isCurrentPlan
+                          isCurrentPlan && !canExtendCurrentPlan
                             ? "bg-[#1A2235] text-slate-400 cursor-not-allowed border border-[#1A2235]"
                             : plan.recommended
                               ? "bg-gradient-primary text-white shadow-glow-primary hover:shadow-glow-primary-hover"
@@ -259,8 +260,10 @@ export default function PricingClient() {
                       >
                         {upgrading === plan.id ? (
                           <RefreshCw className="h-5 w-5 animate-spin" />
-                        ) : isCurrentPlan ? (
+                        ) : isCurrentPlan && !canExtendCurrentPlan ? (
                           'Current Plan'
+                        ) : canExtendCurrentPlan ? (
+                          'Add 30 Days'
                         ) : (
                           <>Upgrade to {plan.name} <Zap className="h-4 w-4 ml-1.5" /></>
                         )}

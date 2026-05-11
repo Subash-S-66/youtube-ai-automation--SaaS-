@@ -2330,22 +2330,44 @@ def run_full_pipeline(
         local_images = sorted([p for p in CLIPS_DIR.rglob("*.jpg") if p.is_file()])
         local_images.extend([p for p in CLIPS_DIR.rglob("*.jpeg") if p.is_file()])
         local_images.extend([p for p in CLIPS_DIR.rglob("*.png") if p.is_file()])
-        fallback_media = local_videos[:16] + local_images[:8]
+        local_images.extend([p for p in CLIPS_DIR.rglob("*.webp") if p.is_file()])
+
+        requested_mode = str(requested_content_type or "clips").strip().lower()
+        if requested_mode == "images":
+            fallback_media = local_images[:12]
+        elif requested_mode == "mixed":
+            fallback_media = _interleave_media_paths(local_videos[:16], local_images[:8])
+        else:
+            # clips or unknown -> clips-only fallback
+            fallback_media = local_videos[:16]
+
         if fallback_media:
             media_paths.extend(fallback_media)
+            clip_fallback_count = sum(1 for item in fallback_media if item.suffix.lower() in {".mp4", ".mov", ".avi", ".webm", ".mkv"})
+            image_fallback_count = len(fallback_media) - clip_fallback_count
             LOGGER.info(
-                "local_fallback_media_selected clips=%s images=%s total=%s",
-                len(local_videos[:16]),
-                len(local_images[:8]),
+                "local_fallback_media_selected mode=%s clips=%s images=%s total=%s",
+                requested_mode,
+                clip_fallback_count,
+                image_fallback_count,
                 len(fallback_media),
             )
             LOGGER.info(
                 json.dumps(
-                    {"event": "auto_media_fallback_local", "videos": len(local_videos[:16]), "images": len(local_images[:8])},
+                    {
+                        "event": "auto_media_fallback_local",
+                        "mode": requested_mode,
+                        "videos": clip_fallback_count,
+                        "images": image_fallback_count,
+                    },
                     ensure_ascii=False,
                 )
             )
-            _log_job_stage(payload, "media", f"using local fallback media videos={len(local_videos[:16])} images={len(local_images[:8])}")
+            _log_job_stage(
+                payload,
+                "media",
+                f"using local fallback media mode={requested_mode} videos={clip_fallback_count} images={image_fallback_count}",
+            )
     if not media_paths:
         placeholders = _create_placeholder_media(CLIPS_DIR / "fallback_media", tag="job_fallback")
         if placeholders:
@@ -2570,4 +2592,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

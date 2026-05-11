@@ -237,6 +237,7 @@ export default function PaymentsPage() {
                 const isCurrentPlan = currentPlanId === plan.id;
                 const planId = String(plan.id || '').toLowerCase();
                 const isLowerPlan = isSubscriptionActive && currentRank > (planRank[planId] ?? 0);
+                const canExtendCurrentPlan = isCurrentPlan && planId !== 'free';
 
                 return (
                   <m.div
@@ -286,10 +287,10 @@ export default function PaymentsPage() {
                       ) : (
                         <button
                           onClick={() => handleUpgrade(plan.id)}
-                          disabled={isCurrentPlan || processing !== null}
+                          disabled={(isCurrentPlan && !canExtendCurrentPlan) || processing !== null}
                           className={cn(
                             "w-full py-2.5 px-4 rounded-xl font-bold text-sm transition-all flex items-center justify-center",
-                            isCurrentPlan
+                            isCurrentPlan && !canExtendCurrentPlan
                               ? "bg-[#111827] text-[#00D4FF] cursor-not-allowed border border-[#00D4FF]/30"
                               : plan.recommended
                                 ? "bg-gradient-primary text-white shadow-glow-primary hover:shadow-glow-primary-hover"
@@ -298,8 +299,10 @@ export default function PaymentsPage() {
                         >
                           {processing === plan.id ? (
                             <RefreshCw className="h-4 w-4 animate-spin" />
-                          ) : isCurrentPlan ? (
+                          ) : isCurrentPlan && !canExtendCurrentPlan ? (
                             'Current Plan'
+                          ) : canExtendCurrentPlan ? (
+                            'Add 30 Days'
                           ) : (
                             <>Upgrade <Zap className="h-3.5 w-3.5 ml-1.5" /></>
                           )}

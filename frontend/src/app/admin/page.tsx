@@ -1653,7 +1653,7 @@ export default function AdminDashboard() {
             <>
               <div
                 className={cn(
-                  'grid gap-6 min-h-[70vh] items-start',
+                  'grid gap-6 items-start',
                   activeSection === 'communication' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'
                 )}
               >

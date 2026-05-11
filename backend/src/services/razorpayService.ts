@@ -112,9 +112,7 @@ export const createPaymentLink = async (userId: string, planId?: string): Promis
     throw new AppError('You cannot purchase a lower plan while your subscription is active.', 400);
   }
 
-  if (user.plan === requestedPlanName && user.subscriptionStatus === 'active') {
-    throw new AppError(`User already has an active ${requestedPlanName} subscription`, 400);
-  }
+  // Allow repurchasing the same active plan so users can extend by another billing period.
 
   // Calculate amount in paise considering the discount.
   // For Razorpay INR, assume price is in USD, 1 USD ~ 80 INR
@@ -199,9 +197,7 @@ export const createOrder = async (userId: string, planId?: string) => {
     throw new AppError('You cannot purchase a lower plan while your subscription is active.', 400);
   }
 
-  if (user.plan === requestedPlanName && user.subscriptionStatus === 'active') {
-    throw new AppError(`User already has an active ${requestedPlanName} subscription`, 400);
-  }
+  // Allow repurchasing the same active plan so users can extend by another billing period.
 
   const exchangeRate = 80;
   let finalPrice = planObj.price;
