@@ -530,9 +530,9 @@ function Dashboard() {
           : [];
         const savedLocalChannelId = typeof window !== 'undefined' ? (localStorage.getItem('clipforge_selectedChannelId') || '') : '';
         const preferredChannelId = String(
+          savedLocalChannelId ||
           userData.data?.user?.lastSelectedChannelId ||
           (userData.data as any)?.lastSelectedChannelId ||
-          savedLocalChannelId ||
           ''
         ).trim();
         const initialChannelId = (preferredChannelId && (
