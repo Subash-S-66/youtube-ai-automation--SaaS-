@@ -468,6 +468,11 @@ function Dashboard() {
 
     setChannelInputCache(nextCache);
     setSelectedChannelId(nextChannelId);
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('clipforge_selectedChannelId', nextChannelId);
+      }
+    } catch {}
     applyChannelCache(nextCache[nextChannelId]);
     userService.updateSettings({ lastChannelInputs: nextCache, lastSelectedChannelId: nextChannelId }).catch(() => {});
   }, [selectedChannelId, channelInputCache, getCurrentChannelCacheEntry, applyChannelCache]);
@@ -523,13 +528,28 @@ function Dashboard() {
         const validChannels = Array.isArray(userData.data?.youtubeChannels)
           ? userData.data.youtubeChannels.filter((channel) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
           : [];
-        const preferredChannelId = String(userData.data?.user?.lastSelectedChannelId || '').trim();
-        const initialChannelId = (preferredChannelId && validChannels.some((channel) => channel?.channelId === preferredChannelId))
+        const savedLocalChannelId = typeof window !== 'undefined' ? (localStorage.getItem('clipforge_selectedChannelId') || '') : '';
+        const preferredChannelId = String(
+          userData.data?.user?.lastSelectedChannelId ||
+          (userData.data as any)?.lastSelectedChannelId ||
+          savedLocalChannelId ||
+          ''
+        ).trim();
+        const initialChannelId = (preferredChannelId && (
+          validChannels.some((channel) => channel?.channelId === preferredChannelId) ||
+          activeYouTubeChannels.some((channel) => channel?.channelId === preferredChannelId) ||
+          allYouTubeChannels.some((channel) => channel?.channelId === preferredChannelId)
+        ))
           ? preferredChannelId
-          : (validChannels[0]?.channelId || '');
+          : (validChannels[0]?.channelId || activeYouTubeChannels[0]?.channelId || allYouTubeChannels[0]?.channelId || '');
         channelSelectionHydratedRef.current = true;
         if (initialChannelId) {
           setSelectedChannelId(initialChannelId);
+          try {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('clipforge_selectedChannelId', initialChannelId);
+            }
+          } catch {}
           const cached = userData.data?.user?.lastChannelInputs?.[initialChannelId];
           applyChannelCache(cached);
         }
@@ -781,21 +801,26 @@ function Dashboard() {
       }
       return;
     }
-    if (validYouTubeChannels.length === 0) {
+    if (activeYouTubeChannels.length === 0 && allYouTubeChannels.length === 0) {
       if (selectedChannelId) {
         setSelectedChannelId('');
       }
       return;
     }
-    const isSelectedValid = validYouTubeChannels.some((channel) => channel.channelId === selectedChannelId);
-    if (!isSelectedValid) {
-      const fallbackChannelId = validYouTubeChannels[0]?.channelId || '';
+    const isSelectedInChannels = allYouTubeChannels.some((channel) => channel?.channelId === selectedChannelId);
+    if (!isSelectedInChannels && selectedChannelId) {
+      const fallbackChannelId = validYouTubeChannels[0]?.channelId || activeYouTubeChannels[0]?.channelId || allYouTubeChannels[0]?.channelId || '';
       setSelectedChannelId(fallbackChannelId);
       if (fallbackChannelId) {
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('clipforge_selectedChannelId', fallbackChannelId);
+          }
+        } catch {}
         applyChannelCache(channelInputCache[fallbackChannelId]);
       }
     }
-  }, [user?.isYoutubeConnected, validYouTubeChannels, selectedChannelId, applyChannelCache, channelInputCache]);
+  }, [user?.isYoutubeConnected, validYouTubeChannels, activeYouTubeChannels, allYouTubeChannels, selectedChannelId, applyChannelCache, channelInputCache]);
 
   const currentPlan = ((user?.plan || user?.user?.plan || 'free') as string).toLowerCase();
   const subscriptionStatus = (user?.subscriptionStatus || user?.user?.subscriptionStatus || '').toLowerCase();
@@ -1481,10 +1506,10 @@ function Dashboard() {
         )}
       </AnimatePresence>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6">
 
-        {/* Left Column: Form */}
-        <div className="xl:col-span-2 space-y-6">
+        {/* Generator Form Engine */}
+        <div className="order-last lg:order-first lg:col-span-2 space-y-6">
 
           <m.div whileHover={{ scale: 1.002 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 sm:p-6 shadow-xl relative overflow-hidden">
             <div className="flex items-center justify-between mb-6 border-b border-[#1A2235] pb-4">
@@ -2227,29 +2252,13 @@ function Dashboard() {
                         </m.div>
                         )}
                       </AnimatePresence>
-                  </div>
-
-                <m.button
-                  id="generate-pipeline-btn"
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.99 }}
-                  type="submit"
-                  disabled={generating || !user?.isYoutubeConnected}
-                  className="w-full py-4 px-4 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-lg tracking-wide border border-white/20"
-                >
-                {generating ? (
-                  <RefreshCw className="h-6 w-6 animate-spin mr-3" />
-                ) : (
-                  <Play className="h-6 w-6 mr-3 fill-white" />
-                )}
-                {generating ? 'Processing Pipeline...' : 'Generate & Run Pipeline'}
-              </m.button>
+                    </div>
             </form>
           </m.div>
         </div>
 
-        {/* Right Column: Status & Connections */}
-        <div className="space-y-6">
+        {/* Right Column: Status & Connections (Top on Mobile) */}
+        <div className="order-first lg:order-last space-y-6">
           <m.div whileHover={{ scale: 1.01 }} className="bg-[#111827] border border-[#1A2235] rounded-2xl p-3 sm:p-6 shadow-xl relative overflow-hidden">
              <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
                 <Youtube className="h-24 w-24" />
@@ -2363,8 +2372,21 @@ function Dashboard() {
             whileTap={{ scale: 0.99 }}
             type="submit"
             form="pipeline-generate-form"
+            onClick={(e) => {
+              if (generating || !user?.isYoutubeConnected) return;
+              const formElement = document.getElementById('pipeline-generate-form') as HTMLFormElement | null;
+              if (formElement) {
+                if (typeof formElement.requestSubmit === 'function') {
+                  try {
+                    formElement.requestSubmit();
+                    return;
+                  } catch {}
+                }
+              }
+              handleGenerateAndRun(e);
+            }}
             disabled={generating || !user?.isYoutubeConnected}
-            className="w-full sm:w-auto sm:min-w-[320px] py-3.5 px-8 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-base sm:text-lg tracking-wide border border-white/20 ml-auto"
+            className="w-full sm:w-auto sm:min-w-[320px] py-3.5 px-8 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-base sm:text-lg tracking-wide border border-white/20 ml-auto cursor-pointer"
           >
             {generating ? (
               <RefreshCw className="h-5 w-5 animate-spin mr-2.5" />

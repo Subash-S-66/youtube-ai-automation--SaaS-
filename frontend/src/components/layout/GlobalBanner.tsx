@@ -7,7 +7,13 @@ import { getApiOrigin } from '../../lib/apiBase';
 
 export default function GlobalBanner() {
   const pathname = usePathname();
-  const isLandingPage = pathname === '/' || pathname === '/landing';
+  const isExcludedPage =
+    pathname === '/' ||
+    pathname === '/landing' ||
+    pathname === '/terms-of-service' ||
+    pathname === '/terms' ||
+    pathname === '/privacy-policy' ||
+    pathname === '/privacy';
 
   const [banner, setBanner] = useState<{
     message: string;
@@ -25,7 +31,7 @@ export default function GlobalBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    if (banner && banner.isActive && !dismissed && !isLandingPage) {
+    if (banner && banner.isActive && !dismissed && !isExcludedPage) {
       document.body.classList.add('has-global-banner');
     } else {
       document.body.classList.remove('has-global-banner');
@@ -34,7 +40,7 @@ export default function GlobalBanner() {
     return () => {
       document.body.classList.remove('has-global-banner');
     };
-  }, [banner, dismissed, isLandingPage]);
+  }, [banner, dismissed, isExcludedPage]);
 
   useEffect(() => {
     const fetchBanner = async () => {
@@ -78,7 +84,7 @@ export default function GlobalBanner() {
     return map[banner.type] || 'banner-info-blue';
   }, [banner, dismissed]);
 
-  if (!banner || !banner.isActive || dismissed || isLandingPage) return null;
+  if (!banner || !banner.isActive || dismissed || isExcludedPage) return null;
 
   return (
     <div className={`w-full h-10 font-medium overflow-hidden z-[999] fixed top-0 left-0 flex items-center shadow-md ${currentStyle}`}>
