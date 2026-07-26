@@ -469,14 +469,16 @@ export const enqueuePipelineJob = async ({
   }
 
   if (finalSettings.templateConfig && !limitCheck.features?.template_customization) {
-    throw new AppError('Template Customization is only available on Pro and Premium plans.', 403);
+    delete finalSettings.templateConfig;
   }
 
   if (
     (finalSettings.customVideoIds?.length || finalSettings.customImageIds?.length || finalSettings.customThumbnailId) &&
     !limitCheck.features?.custom_media
   ) {
-    throw new AppError('Custom Media is only available on Pro and Premium plans.', 403);
+    delete finalSettings.customVideoIds;
+    delete finalSettings.customImageIds;
+    delete finalSettings.customThumbnailId;
   }
 
   if (limitCheck.remainingUploads < requestedVideoCount) {

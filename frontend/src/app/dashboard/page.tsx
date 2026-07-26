@@ -247,7 +247,7 @@ function Dashboard() {
   const [captionPosition, setCaptionPosition] = usePersistentSettings<CaptionPosition>('clipforge_captionPosition', 'bottom');
   const [captionAnimation, setCaptionAnimation] = usePersistentSettings<CaptionAnimation>('clipforge_captionAnimation', 'fade');
   const [maxWordsPerCaption, setMaxWordsPerCaption] = usePersistentSettings<number>('clipforge_maxWordsPerCaption', 3);
-  const [templateConfigOpen, setTemplateConfigOpen] = usePersistentSettings<boolean>('clipforge_templateConfigOpen', true);
+  const [templateConfigOpen, setTemplateConfigOpen] = usePersistentSettings<boolean>('clipforge_templateConfigOpen', false);
   const [useCustomMedia, setUseCustomMedia] = usePersistentSettings<boolean>('clipforge_useCustomMedia', false);
   const [selectedThumbnailId, setSelectedThumbnailId] = usePersistentSettings<string>('clipforge_selectedThumbnailId', '');
 
@@ -1310,18 +1310,18 @@ function Dashboard() {
         storyId: executeStoryId || storyId,
         currentPart,
         recapEnabled: effectiveStoryMode && currentPart > 1 ? recapEnabled : false,
-        ctaEnabled,
+        ctaEnabled: canUseCta ? ctaEnabled : false,
         voices: finalVoices,
-        templateConfig: {
+        templateConfig: canUseTemplateCustomization && templateConfigOpen ? {
           fontStyle: templateFont,
           subtitleColor: templateColor,
           captionPosition,
           captionAnimation,
           maxWordsPerCaption: normalizedMaxWordsPerCaption,
-        },
-        customVideoIds: selectedCustomVideoIds,
-        customImageIds: selectedCustomImageIds,
-        customThumbnailId: useCustomMedia && selectedThumbnailId ? selectedThumbnailId : undefined
+        } : undefined,
+        customVideoIds: canUseCustomMedia && useCustomMedia ? selectedCustomVideoIds : undefined,
+        customImageIds: canUseCustomMedia && useCustomMedia ? selectedCustomImageIds : undefined,
+        customThumbnailId: canUseCustomMedia && useCustomMedia && selectedThumbnailId ? selectedThumbnailId : undefined
       };
 
       if (autoUploadEnabled) {
@@ -1461,6 +1461,7 @@ function Dashboard() {
 
   return (
     <DashboardLayout user={user}>
+      <div className="space-y-6 pb-28">
 
       <AnimatePresence>
         {message && (
@@ -1563,7 +1564,7 @@ function Dashboard() {
                 </div>
               </div>
 
-            <form onSubmit={handleGenerateAndRun} className="space-y-6 relative z-10">
+            <form id="pipeline-generate-form" onSubmit={handleGenerateAndRun} className="space-y-6 relative z-10">
 
               {/* Prompt vs Topic Content */}
               <AnimatePresence mode="wait">
@@ -1770,11 +1771,14 @@ function Dashboard() {
 
                 <div className="p-4 bg-[#0B0F1A] rounded-xl border border-[#1A2235] hover:border-[#7C5CFF]/50 transition-colors">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <label className="flex items-center cursor-pointer group">
+                    <label className={cn("flex items-center cursor-pointer group", !canUseCta && "opacity-75")}>
                       <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", ctaEnabled ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
                         {ctaEnabled && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                       </div>
                       <span className="text-sm text-slate-300 group-hover:text-white">Add Ending CTA</span>
+                      {!canUseCta && (
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 ml-2">Pro</span>
+                      )}
                       <input
                         id="cta-enabled"
                         aria-label="Enable Call to Action"
@@ -1791,11 +1795,14 @@ function Dashboard() {
                       />
                     </label>
 
-                    <label className={cn("flex items-center group", !canUseStoryMode && "opacity-70")}>
+                    <label className={cn("flex items-center cursor-pointer group", !canUseStoryMode && "opacity-75")}>
                       <div className={cn("w-5 h-5 rounded border flex items-center justify-center transition-colors mr-3", effectiveStoryMode ? "bg-[#7C5CFF] border-[#7C5CFF]" : "bg-[#111827] border-[#1A2235]")}>
                         {effectiveStoryMode && <div className="w-2.5 h-2.5 bg-white rounded-sm" />}
                       </div>
                       <span className="text-sm text-slate-300 group-hover:text-white">Story Mode</span>
+                      {!canUseStoryMode && (
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 ml-2">Pro</span>
+                      )}
                       <input
                         id="story-mode-inline-toggle"
                         aria-label="Enable Story Mode"
@@ -1841,10 +1848,14 @@ function Dashboard() {
                     )}
                   </AnimatePresence>
 
-                  <div className="mt-4 pt-4 border-t border-[#1A2235]">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-slate-300">Schedule this video</span>
-                      <label className={cn("relative inline-flex items-center", !canUseScheduling ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                      <div className="flex items-center gap-2">
+                        <span className={cn("text-sm", !canUseScheduling ? "text-slate-400" : "text-slate-300")}>Schedule this video</span>
+                        {!canUseScheduling && (
+                          <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">Pro</span>
+                        )}
+                      </div>
+                      <label className={cn("relative inline-flex items-center", !canUseScheduling ? "cursor-pointer opacity-60" : "cursor-pointer")}>
                         <input id="schedule-enabled-toggle" aria-label="Toggle Schedule Enabled"
                           type="checkbox"
                           className="sr-only peer"
@@ -2005,12 +2016,20 @@ function Dashboard() {
 
                   {/* Subtitle Styling */}
                   <div className="col-span-1 sm:col-span-2 space-y-4">
-                    <div className="p-4 bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 rounded-xl border border-[#00D4FF]/30">
+                    <div className={cn(
+                      "p-4 rounded-xl border transition-all",
+                      !canUseTemplateCustomization ? "bg-[#090D16]/80 border-slate-800/80 opacity-65" : "bg-gradient-to-r from-[#00D4FF]/10 to-[#7C5CFF]/10 border-[#00D4FF]/30"
+                    )}>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center">
-                          <Sparkles className="h-5 w-5 text-[#00D4FF] mr-3" />
+                          <Sparkles className={cn("h-5 w-5 mr-3", !canUseTemplateCustomization ? "text-slate-500" : "text-[#00D4FF]")} />
                           <div>
-                            <p className="text-sm font-bold text-white">Subtitle Styling</p>
+                            <div className="flex items-center gap-2">
+                              <p className={cn("text-sm font-bold", !canUseTemplateCustomization ? "text-slate-400" : "text-white")}>Subtitle Styling</p>
+                              {!canUseTemplateCustomization && (
+                                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">Pro</span>
+                              )}
+                            </div>
                             <p className="text-xs text-slate-400">Customize font and subtitle color.</p>
                           </div>
                         </div>
@@ -2136,15 +2155,21 @@ function Dashboard() {
                     </div>
                   </div>
 
-                </div>
-
                 {/* Custom Media Toggle */}
-                <div className="p-4 bg-gradient-to-r from-[#FF4FD8]/10 to-[#7C5CFF]/10 rounded-xl border border-[#FF4FD8]/30">
+                <div className={cn(
+                  "p-4 rounded-xl border transition-all",
+                  !canUseCustomMedia ? "bg-[#090D16]/80 border-slate-800/80 opacity-65" : "bg-gradient-to-r from-[#FF4FD8]/10 to-[#7C5CFF]/10 border-[#FF4FD8]/30"
+                )}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center">
-                        <FileVideo className="h-5 w-5 text-[#FF4FD8] mr-3" />
+                        <FileVideo className={cn("h-5 w-5 mr-3", !canUseCustomMedia ? "text-slate-500" : "text-[#FF4FD8]")} />
                         <div>
-                          <p className="text-sm font-bold text-white">Use Custom Media</p>
+                          <div className="flex items-center gap-2">
+                            <p className={cn("text-sm font-bold", !canUseCustomMedia ? "text-slate-400" : "text-white")}>Use Custom Media</p>
+                            {!canUseCustomMedia && (
+                              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">Pro</span>
+                            )}
+                          </div>
                           <p className="text-xs text-slate-400">Inject your uploaded assets into the video generation.</p>
                         </div>
                       </div>
@@ -2305,6 +2330,7 @@ function Dashboard() {
           </m.div>
         </div>
       </div>
+      </div>
 
       <AppModal
         isOpen={modalConfig.isOpen}
@@ -2317,6 +2343,38 @@ function Dashboard() {
         cancelText={modalConfig.cancelText}
         isLoading={false}
       />
+
+      {/* Fixed Bottom Action Bar for Generate Button */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#0D1222]/95 backdrop-blur-xl border-t border-[#1A2235] p-3 sm:p-4 shadow-[0_-10px_30px_rgba(0,0,0,0.8)]">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 px-2 sm:px-6">
+          <div className="hidden sm:flex items-center gap-3 text-xs text-slate-400">
+            <div className="flex items-center gap-2 bg-[#0B0F1A] px-3 py-1.5 rounded-lg border border-[#1A2235]">
+              <span className="w-2 h-2 rounded-full bg-[#00D4FF] animate-pulse"></span>
+              <span className="text-slate-200 font-semibold">{videoCount} Video{videoCount > 1 ? 's' : ''}</span>
+            </div>
+            <span>&bull;</span>
+            <span className="text-slate-300 font-medium">{duration}s</span>
+            <span>&bull;</span>
+            <span className="capitalize text-slate-300 font-medium">{contentType}</span>
+          </div>
+          <m.button
+            id="generate-pipeline-btn-fixed"
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.99 }}
+            type="submit"
+            form="pipeline-generate-form"
+            disabled={generating || !user?.isYoutubeConnected}
+            className="w-full sm:w-auto sm:min-w-[320px] py-3.5 px-8 bg-gradient-primary text-white font-extrabold rounded-full shadow-glow-primary hover:shadow-glow-primary-hover transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center text-base sm:text-lg tracking-wide border border-white/20 ml-auto"
+          >
+            {generating ? (
+              <RefreshCw className="h-5 w-5 animate-spin mr-2.5" />
+            ) : (
+              <Play className="h-5 w-5 mr-2.5 fill-white" />
+            )}
+            {generating ? 'Processing Pipeline...' : 'Generate & Run Pipeline'}
+          </m.button>
+        </div>
+      </div>
 
     </DashboardLayout>
   );

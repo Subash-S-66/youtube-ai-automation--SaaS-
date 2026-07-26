@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { X } from 'lucide-react';
 import { getApiOrigin } from '../../lib/apiBase';
 
 export default function GlobalBanner() {
+  const pathname = usePathname();
+  const isLandingPage = pathname === '/' || pathname === '/landing';
+
   const [banner, setBanner] = useState<{
     message: string;
     isActive: boolean;
@@ -21,7 +25,7 @@ export default function GlobalBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    if (banner && banner.isActive && !dismissed) {
+    if (banner && banner.isActive && !dismissed && !isLandingPage) {
       document.body.classList.add('has-global-banner');
     } else {
       document.body.classList.remove('has-global-banner');
@@ -30,7 +34,7 @@ export default function GlobalBanner() {
     return () => {
       document.body.classList.remove('has-global-banner');
     };
-  }, [banner]);
+  }, [banner, dismissed, isLandingPage]);
 
   useEffect(() => {
     const fetchBanner = async () => {
@@ -74,7 +78,7 @@ export default function GlobalBanner() {
     return map[banner.type] || 'banner-info-blue';
   }, [banner, dismissed]);
 
-  if (!banner || !banner.isActive || dismissed) return null;
+  if (!banner || !banner.isActive || dismissed || isLandingPage) return null;
 
   return (
     <div className={`w-full h-10 font-medium overflow-hidden z-[999] fixed top-0 left-0 flex items-center shadow-md ${currentStyle}`}>

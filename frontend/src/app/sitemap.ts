@@ -21,6 +21,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: '/how-to-use-clipforge', changeFrequency: 'weekly', priority: 0.9 },
     { path: '/price', changeFrequency: 'monthly', priority: 0.8 },
     { path: '/clipforge-vs-competitors', changeFrequency: 'weekly', priority: 0.8 },
+    { path: '/privacy-policy', changeFrequency: 'monthly', priority: 0.5 },
+    { path: '/terms-of-service', changeFrequency: 'monthly', priority: 0.5 },
   ];
 
   return entries.map((entry) => ({

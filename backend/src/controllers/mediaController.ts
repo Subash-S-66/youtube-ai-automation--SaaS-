@@ -12,10 +12,10 @@ import { getUploadLimits } from '../services/uploadLimitService';
 // @desc    Upload new media
 // @route   POST /api/media/upload
 // @access  Private
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 interface MediaPolicy {
   plan: string;
@@ -67,9 +67,15 @@ async function detectFileType(filePath: string) {
 
 async function probeVideoDuration(filePath: string): Promise<number> {
   try {
-    const { stdout } = await execAsync(
-      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${filePath}"`
-    );
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration',
+      '-of',
+      'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ]);
     const parsed = parseFloat(stdout.trim());
     if (isNaN(parsed) || parsed <= 0) {
       throw new Error('Invalid duration from ffprobe');

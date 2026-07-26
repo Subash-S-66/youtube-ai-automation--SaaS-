@@ -247,7 +247,6 @@ app.get('/health', async (req: Request, res: Response) => {
     pipelineWorkerHeartbeats: workerHeartbeats,
     azureRunnerConfigured: missingAzureEnv.length === 0,
     remoteRunnerConfigured,
-    missingAzureEnv,
   });
 });
 
