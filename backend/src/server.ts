@@ -1,4 +1,9 @@
-﻿import dotenv from 'dotenv';
+import crypto from 'crypto';
+if (typeof globalThis.crypto === 'undefined') {
+  (globalThis as any).crypto = crypto;
+}
+
+import dotenv from 'dotenv';
 import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });

@@ -1,6 +1,11 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import path from 'path';
+import crypto from 'crypto';
+
+if (typeof globalThis.crypto === 'undefined') {
+  (globalThis as any).crypto = crypto;
+}
 
 if (!process.env.MONGO_URI) {
   dotenv.config({ path: path.resolve(__dirname, '../../.env') });
