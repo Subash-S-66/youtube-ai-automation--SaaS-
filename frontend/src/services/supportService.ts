@@ -12,8 +12,18 @@ export const supportService = {
     return response.data;
   },
 
-  async closeTicket(id: string) {
-    const response = await api.patch(`/support/ticket/${id}/close`);
+  async closeTicket(id: string, options?: { helperPin?: string; rating?: number; comment?: string }) {
+    const response = await api.patch(`/support/ticket/${id}/close`, options || {});
+    return response.data;
+  },
+
+  async submitFeedback(id: string, rating: number, comment?: string) {
+    const response = await api.post(`/support/ticket/${id}/feedback`, { rating, comment });
+    return response.data;
+  },
+
+  async getUnreadCounts() {
+    const response = await api.get('/support/unread-counts');
     return response.data;
   },
 

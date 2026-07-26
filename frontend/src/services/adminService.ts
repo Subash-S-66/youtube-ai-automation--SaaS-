@@ -18,7 +18,7 @@ export const adminService = {
     return response.data;
   },
 
-  async createAdminUser(data: { email: string; password: string; role?: 'admin' | 'helper' }) {
+  async createAdminUser(data: { email: string; password: string; role?: 'admin' | 'helper'; helperPin?: string }) {
     const response = await api.post('/admin/users/create-admin', data);
     return response.data;
   },
@@ -45,6 +45,31 @@ export const adminService = {
 
   async getGlobalBanner() {
     const response = await api.get('/admin/banner');
+    return response.data;
+  },
+
+  async getAllBanners() {
+    const response = await api.get('/admin/banners');
+    return response.data;
+  },
+
+  async createBanner(data: { message: string; isActive?: boolean; type?: string; startAt?: string | null; endAt?: string | null }) {
+    const response = await api.post('/admin/banners', data);
+    return response.data;
+  },
+
+  async updateBanner(id: string, data: { message?: string; isActive?: boolean; type?: string; startAt?: string | null; endAt?: string | null }) {
+    const response = await api.put(`/admin/banners/${id}`, data);
+    return response.data;
+  },
+
+  async toggleBannerStatus(id: string) {
+    const response = await api.patch(`/admin/banners/${id}/toggle`);
+    return response.data;
+  },
+
+  async deleteBanner(id: string) {
+    const response = await api.delete(`/admin/banners/${id}`);
     return response.data;
   },
 

@@ -7,6 +7,7 @@ import dynamic from 'next/dynamic';
 import { usePathname } from 'next/navigation';
 import { Menu, X, LayoutDashboard, CreditCard, History, Settings, LogOut, HelpCircle, Shield, Users, MessageSquare } from 'lucide-react';
 import { authService } from '../../services/authService';
+import { supportService } from '../../services/supportService';
 import { cn } from '../../lib/utils';
 import InstallPwaButton from '../InstallPwaButton';
 import { getApiOrigin } from '../../lib/apiBase';
@@ -22,7 +23,33 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isBackendOffline, setIsBackendOffline] = useState(false);
   const [avatarError, setAvatarError] = useState(false);
+  const [unreadBadgeCount, setUnreadBadgeCount] = useState<number>(0);
   const pathname = usePathname();
+
+  useEffect(() => {
+    const fetchBadge = async () => {
+      try {
+        const res = await supportService.getUnreadCounts();
+        if (res.success && res.data) {
+          if (res.data.unreadHelperTickets !== undefined) {
+            setUnreadBadgeCount(res.data.unreadHelperTickets);
+          } else if (res.data.unreadUserMessages !== undefined) {
+            setUnreadBadgeCount(res.data.unreadUserMessages);
+          }
+        }
+      } catch {
+        // silent ignore
+      }
+    };
+
+    fetchBadge();
+    const interval = setInterval(fetchBadge, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const isAdminRoute = pathname.startsWith('/admin');
+  const isWidePage = pathname === '/pricing';
+
   const displayUser = user?.user
     ? {
         ...user.user,
@@ -31,20 +58,19 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
         isBetaMode: user.isBetaMode ?? user.user.isBetaMode,
       }
     : user || null;
-  const isAdminRoute = pathname.startsWith('/admin');
-  const isWidePage = pathname === '/pricing';
 
   const handleLogout = () => {
     authService.logout();
   };
 
   useEffect(() => {
-    let retryTimer: number | null = null;
-
     const handleOffline = () => setIsBackendOffline(true);
     const handleOnline = () => setIsBackendOffline(false);
+
     window.addEventListener('api-offline', handleOffline);
     window.addEventListener('api-online', handleOnline);
+
+    let retryTimer: number | null = null;
 
     const checkServer = async () => {
       try {
@@ -89,7 +115,6 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
 
   return (
     <div className="dashboard-shell flex min-h-0 bg-[#0B0F1A] text-slate-300 font-sans overflow-hidden">
-
       {/* Mobile Sidebar Overlay */}
       {isMobileMenuOpen && (
         <div
@@ -147,7 +172,7 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
                         <div className="absolute left-0 w-1 h-6 bg-[#00D4FF] rounded-r-md shadow-[0_0_10px_rgba(0,212,255,0.6)]" />
                       )}
                       <Icon className={cn("mr-3 flex-shrink-0 h-5 w-5 transition-colors", pathname.startsWith('/admin') ? "text-[#00D4FF]" : "text-slate-500 group-hover:text-[#7C5CFF]")} />
-                      {link.name}
+                      <span className="flex-1">{link.name}</span>
                     </Link>
 
                     <div
@@ -177,12 +202,19 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
                         )}
                       >
                         <MessageSquare className={cn("mr-2 h-4 w-4", pathname === '/admin/tickets' ? "text-[#00D4FF]" : "text-slate-500")} />
-                        Support Tickets
+                        <span className="flex-1">Support Tickets</span>
+                        {unreadBadgeCount > 0 && displayUser?.role === 'admin' && (
+                          <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold bg-red-500 text-white rounded-full">
+                            {unreadBadgeCount}
+                          </span>
+                        )}
                       </Link>
                     </div>
                   </div>
                 );
               }
+
+              const isHelpOrInbox = link.href === '/help' || link.href === '/admin/tickets';
 
               return (
                 <Link
@@ -196,7 +228,12 @@ export default function DashboardLayout({ children, user }: LayoutProps) {
                 >
                   {isActive && <div className="absolute left-0 w-1 h-6 bg-[#00D4FF] rounded-r-md shadow-[0_0_10px_rgba(0,212,255,0.6)]" />}
                   <Icon className={cn("mr-3 flex-shrink-0 h-5 w-5 transition-colors", isActive ? "text-[#00D4FF]" : "text-slate-500 group-hover:text-[#7C5CFF]")} />
-                  {link.name}
+                  <span className="flex-1">{link.name}</span>
+                  {isHelpOrInbox && unreadBadgeCount > 0 && (
+                    <span className="ml-auto px-1.5 py-0.5 text-[10px] font-bold bg-red-500 text-white rounded-full">
+                      {unreadBadgeCount}
+                    </span>
+                  )}
                 </Link>
               );
             })}

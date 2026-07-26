@@ -3,6 +3,8 @@ import {
   getUserTicket,
   sendMessage,
   closeTicket,
+  submitTicketFeedback,
+  getUnreadCounts,
   getAdminTickets,
   getAdminTicketMessages
 } from '../controllers/supportController';
@@ -15,6 +17,8 @@ const router = Router();
 router.get('/ticket', protect, getUserTicket);
 router.post('/message', protect, sendMessage);
 router.patch('/ticket/:id/close', protect, closeTicket);
+router.post('/ticket/:id/feedback', protect, submitTicketFeedback);
+router.get('/unread-counts', protect, getUnreadCounts);
 
 // Admin routes
 router.get('/admin/tickets', protect, supportStaffMiddleware, getAdminTickets);

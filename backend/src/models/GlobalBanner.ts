@@ -14,6 +14,7 @@ export interface IGlobalBanner extends Document {
     | 'critical-rose';
   startAt?: Date;
   endAt?: Date;
+  order: number;
   updatedAt: Date;
 }
 
@@ -26,7 +27,7 @@ const GlobalBannerSchema = new Schema<IGlobalBanner>(
     },
     isActive: {
       type: Boolean,
-      default: false,
+      default: true,
     },
     type: {
       type: String,
@@ -47,6 +48,10 @@ const GlobalBannerSchema = new Schema<IGlobalBanner>(
     },
     endAt: {
       type: Date,
+    },
+    order: {
+      type: Number,
+      default: 0,
     },
   },
   {

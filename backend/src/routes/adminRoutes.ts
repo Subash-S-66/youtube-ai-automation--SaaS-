@@ -10,6 +10,11 @@ import {
   createNotification,
   setGlobalBanner,
   getGlobalBannerConfig,
+  getAllBanners,
+  createBanner,
+  updateBanner,
+  toggleBannerStatus,
+  deleteBanner,
   getGeminiModels,
   deleteUserByAdmin,
   getSystemConfig,
@@ -39,6 +44,11 @@ router.delete('/users/:id', deleteUserByAdmin);
 router.post('/notify', createNotification);
 router.post('/banner', setGlobalBanner);
 router.get('/banner', getGlobalBannerConfig);
+router.get('/banners', getAllBanners);
+router.post('/banners', createBanner);
+router.put('/banners/:id', updateBanner);
+router.patch('/banners/:id/toggle', toggleBannerStatus);
+router.delete('/banners/:id', deleteBanner);
 router.get('/gemini-models', getGeminiModels);
 router.get('/config', getSystemConfig);
 router.get('/runtime-status', getPipelineRuntimeStatus);

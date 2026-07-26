@@ -23,6 +23,7 @@ import { PlanType } from '../config/plans';
 export interface IUser extends Document {
   email: string;
   password?: string;
+  helperPin?: string;
   provider: 'local' | 'google';
   googleId?: string;
   profileImage?: string;
@@ -141,6 +142,9 @@ const UserSchema = new Schema<IUser>(
       required: function (this: IUser) {
         return this.provider === 'local';
       },
+    },
+    helperPin: {
+      type: String,
     },
     provider: {
       type: String,

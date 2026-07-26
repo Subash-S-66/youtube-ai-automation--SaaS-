@@ -1641,10 +1641,276 @@ export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) 
 });
 
 export const getGlobalBannerConfig = asyncHandler(async (req: Request, res: Response) => {
-  const banner = await GlobalBanner.findOne();
+  const banners = await GlobalBanner.find().sort({ order: 1, createdAt: 1 });
   res.status(200).json({
     success: true,
-    data: banner || null,
+    data: banners.length > 0 ? banners[0] : null,
+    banners,
+  });
+});
+
+export const getAllBanners = asyncHandler(async (req: Request, res: Response) => {
+  const banners = await GlobalBanner.find().sort({ order: 1, createdAt: 1 });
+  res.status(200).json({
+    success: true,
+    data: banners,
+  });
+});
+
+export const createBanner = asyncHandler(async (req: Request, res: Response) => {
+  const validation = bannerSchema.safeParse({ body: req.body });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const { message, isActive, type, startAt, endAt } = validation.data.body;
+  const count = await GlobalBanner.countDocuments();
+
+  const banner = await GlobalBanner.create({
+    message: message.trim(),
+    isActive: isActive !== undefined ? isActive : true,
+    type: type || 'info-blue',
+    startAt: startAt ? new Date(startAt) : undefined,
+    endAt: endAt ? new Date(endAt) : undefined,
+    order: count + 1,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Banner created successfully',
+    data: banner,
+  });
+});
+
+export const updateBanner = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const banner = await GlobalBanner.findById(id);
+  if (!banner) {
+    throw new AppError('Banner not found', 404);
+  }
+
+  const { message, isActive, type, startAt, endAt } = req.body;
+  if (message !== undefined) banner.message = String(message).trim();
+  if (isActive !== undefined) banner.isActive = Boolean(isActive);
+  if (type !== undefined) banner.type = type;
+  if (startAt !== undefined) banner.startAt = startAt ? new Date(startAt) : undefined;
+  if (endAt !== undefined) banner.endAt = endAt ? new Date(endAt) : undefined;
+
+  await banner.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Banner updated successfully',
+    data: banner,
+  });
+});
+
+export const toggleBannerStatus = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const banner = await GlobalBanner.findById(id);
+  if (!banner) {
+    throw new AppError('Banner not found', 404);
+  }
+
+  banner.isActive = !banner.isActive;
+  await banner.save();
+
+  res.status(200).json({
+    success: true,
+    message: `Banner ${banner.isActive ? 'activated' : 'hidden'} successfully`,
+    data: banner,
+  });
+});
+
+export const deleteBanner = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const banner = await GlobalBanner.findByIdAndDelete(id);
+  if (!banner) {
+    throw new AppError('Banner not found', 404);
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Banner deleted successfully',
+  });
+});
+
+export const deleteUserByAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  const user = await User.findById(id);
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  await DeletedUser.create({
+    email: user.email,
+    planHistory: [user.plan],
+    usageStats: {
+      uploadsUsedTotal: user.uploadsUsedToday,
+    },
+    deletedAt: new Date(),
+  });
+
+  try {
+    const activeJobs = await pipelineQueue.getJobs(['waiting', 'delayed']);
+    for (const job of activeJobs) {
+      if (id && job.data.userId === id.toString()) {
+        await job.remove();
+      }
+    }
+  } catch (error) {
+    console.error('Failed to cleanup BullMQ jobs during admin deletion:', error);
+  }
+
+  await user.deleteOne();
+
+  res.status(200).json({
+    success: true,
+    message: 'User deleted successfully',
+  });
+});
+
+export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) => {
+  const validation = bannerSchema.safeParse({ body: req.body });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const { message, isActive, type, startAt, endAt } = validation.data.body;
+
+  let banner = await GlobalBanner.findOne();
+  const normalizedMessage = (message || '').trim();
+
+  if (isActive && normalizedMessage.length === 0) {
+    throw new AppError('Banner message is required', 400);
+  }
+
+  if (banner) {
+    if (normalizedMessage.length > 0) {
+      banner.message = normalizedMessage;
+    }
+    banner.isActive = isActive;
+    banner.type = type;
+    banner.startAt = startAt ? new Date(startAt) : null as any;
+    banner.endAt = endAt ? new Date(endAt) : null as any;
+    await banner.save();
+  } else {
+    if (isActive && normalizedMessage.length === 0) {
+      throw new AppError('Banner message is required when creating a new banner', 400);
+    }
+    banner = await GlobalBanner.create({
+      // Allow creating an inactive banner record even if message is blank.
+      message: normalizedMessage.length > 0 ? normalizedMessage : '   ',
+      isActive,
+      type,
+      startAt: startAt ? new Date(startAt) : null as any,
+      endAt: endAt ? new Date(endAt) : null as any,
+    });
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Global banner updated successfully',
+    data: banner,
+  });
+});
+
+export const getGlobalBannerConfig = asyncHandler(async (req: Request, res: Response) => {
+  const banners = await GlobalBanner.find().sort({ order: 1, createdAt: 1 });
+  res.status(200).json({
+    success: true,
+    data: banners.length > 0 ? banners[0] : null,
+    banners,
+  });
+});
+
+export const getAllBanners = asyncHandler(async (req: Request, res: Response) => {
+  const banners = await GlobalBanner.find().sort({ order: 1, createdAt: 1 });
+  res.status(200).json({
+    success: true,
+    data: banners,
+  });
+});
+
+export const createBanner = asyncHandler(async (req: Request, res: Response) => {
+  const validation = bannerSchema.safeParse({ body: req.body });
+  if (!validation.success) {
+    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
+    throw new AppError(errorMessages, 400);
+  }
+
+  const { message, isActive, type, startAt, endAt } = validation.data.body;
+  const count = await GlobalBanner.countDocuments();
+
+  const banner = await GlobalBanner.create({
+    message: message.trim(),
+    isActive: isActive !== undefined ? isActive : true,
+    type: type || 'info-blue',
+    startAt: startAt ? new Date(startAt) : undefined,
+    endAt: endAt ? new Date(endAt) : undefined,
+    order: count + 1,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Banner created successfully',
+    data: banner,
+  });
+});
+
+export const updateBanner = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const banner = await GlobalBanner.findById(id);
+  if (!banner) {
+    throw new AppError('Banner not found', 404);
+  }
+
+  const { message, isActive, type, startAt, endAt } = req.body;
+  if (message !== undefined) banner.message = String(message).trim();
+  if (isActive !== undefined) banner.isActive = Boolean(isActive);
+  if (type !== undefined) banner.type = type;
+  if (startAt !== undefined) banner.startAt = startAt ? new Date(startAt) : undefined;
+  if (endAt !== undefined) banner.endAt = endAt ? new Date(endAt) : undefined;
+
+  await banner.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Banner updated successfully',
+    data: banner,
+  });
+});
+
+export const toggleBannerStatus = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const banner = await GlobalBanner.findById(id);
+  if (!banner) {
+    throw new AppError('Banner not found', 404);
+  }
+
+  banner.isActive = !banner.isActive;
+  await banner.save();
+
+  res.status(200).json({
+    success: true,
+    message: `Banner ${banner.isActive ? 'activated' : 'hidden'} successfully`,
+    data: banner,
+  });
+});
+
+export const deleteBanner = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const banner = await GlobalBanner.findByIdAndDelete(id);
+  if (!banner) {
+    throw new AppError('Banner not found', 404);
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'Banner deleted successfully',
   });
 });
 
@@ -1744,7 +2010,6 @@ export const getUserDetails = asyncHandler(async (req: Request, res: Response) =
     throw new AppError('User id is required', 400);
   }
 
-  // Refresh lazy daily reset + hold reconciliation before returning admin usage stats.
   await getUploadLimits(userId).catch((error) => {
     console.warn(`[Admin] Failed to refresh upload counters for user ${userId}:`, error);
   });
@@ -1783,7 +2048,7 @@ const updateUserPlanSchema = z.object({
 const createAdminSchema = z.object({
   body: z.object({
     email: z
-      .string({ message: 'Email is required' })
+      .string({ message: 'Email address is required' })
       .trim()
       .email('Enter a valid email address'),
     password: z
@@ -1791,6 +2056,7 @@ const createAdminSchema = z.object({
       .min(8, 'Password must be at least 8 characters long')
       .regex(/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d@$!%*?&]+$/, 'Password must contain at least one letter and one number'),
     role: z.enum(STAFF_ROLES).default('admin'),
+    helperPin: z.string().optional(),
   }),
 });
 
@@ -1805,10 +2071,17 @@ export const createAdminUser = asyncHandler(async (req: Request, res: Response) 
   const normalizedEmail = String(validation.data.body.email || '').trim().toLowerCase();
   const password = validation.data.body.password;
   const role = validation.data.body.role;
+  const rawHelperPin = String(validation.data.body.helperPin || req.body.helperPin || '').trim();
   const roleLabel = role === 'helper' ? 'helper' : 'admin';
 
   if (!validator.isEmail(normalizedEmail)) {
     throw new AppError('Enter a valid email address', 400);
+  }
+
+  if (role === 'helper' || rawHelperPin) {
+    if (!/^\d{4}$/.test(rawHelperPin)) {
+      throw new AppError('A 4-digit numeric Helper PIN (e.g. 1234) is required for helper accounts', 400);
+    }
   }
 
   const existing = await User.findOne({ email: normalizedEmail }).select('role');
@@ -1822,6 +2095,7 @@ export const createAdminUser = asyncHandler(async (req: Request, res: Response) 
 
   const salt = await bcrypt.genSalt(10);
   const hashedPassword = await bcrypt.hash(password, salt);
+  const hashedHelperPin = rawHelperPin ? await bcrypt.hash(rawHelperPin, salt) : undefined;
 
   let createdAdmin: any = null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -1829,6 +2103,7 @@ export const createAdminUser = asyncHandler(async (req: Request, res: Response) 
       createdAdmin = await User.create({
         email: normalizedEmail,
         password: hashedPassword,
+        helperPin: hashedHelperPin,
         provider: 'local',
         role,
         plan: 'free',
@@ -1886,7 +2161,7 @@ export const updateUserPlan = asyncHandler(async (req: Request, res: Response) =
 
   if (subscriptionExpiresAt) {
     user.subscriptionExpiresAt = new Date(subscriptionExpiresAt);
-    user.subscriptionStatus = 'active'; // Assuming setting a date makes it active
+    user.subscriptionStatus = 'active';
   } else if (subscriptionExpiresAt === null) {
     user.set('subscriptionExpiresAt', undefined);
     user.subscriptionStatus = plan === 'free' ? 'inactive' : 'active';
@@ -1908,14 +2183,6 @@ export const updateUserPlan = asyncHandler(async (req: Request, res: Response) =
       subscriptionExpiresAt: user.subscriptionExpiresAt,
       subscriptionStatus: user.subscriptionStatus,
     },
-  });
-});
-
-export const getPlans = asyncHandler(async (req: Request, res: Response) => {
-  const plans = await Plan.find().sort({ price: 1, name: 1 });
-  res.status(200).json({
-    success: true,
-    data: plans,
   });
 });
 

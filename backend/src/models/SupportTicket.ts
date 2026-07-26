@@ -4,7 +4,15 @@ export interface ISupportTicket extends Document {
   userId: mongoose.Types.ObjectId;
   status: 'open' | 'closed';
   closedAt?: Date;
-  expireAt?: Date; // For 24h UI disappearance
+  closedBy?: mongoose.Types.ObjectId;
+  helperClosed?: boolean;
+  userClosed?: boolean;
+  userHidden?: boolean;
+  feedbackRating?: number;
+  feedbackComment?: string;
+  feedbackPending?: boolean;
+  unreadUserCount?: number;
+  unreadHelperCount?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -26,9 +34,42 @@ const SupportTicketSchema = new Schema<ISupportTicket>(
     closedAt: {
       type: Date,
     },
-    expireAt: {
-      type: Date,
-      index: true,
+    closedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    helperClosed: {
+      type: Boolean,
+      default: false,
+    },
+    userClosed: {
+      type: Boolean,
+      default: false,
+    },
+    userHidden: {
+      type: Boolean,
+      default: false,
+    },
+    feedbackRating: {
+      type: Number,
+      min: 1,
+      max: 5,
+    },
+    feedbackComment: {
+      type: String,
+      trim: true,
+    },
+    feedbackPending: {
+      type: Boolean,
+      default: false,
+    },
+    unreadUserCount: {
+      type: Number,
+      default: 0,
+    },
+    unreadHelperCount: {
+      type: Number,
+      default: 0,
     },
   },
   {
@@ -36,7 +77,6 @@ const SupportTicketSchema = new Schema<ISupportTicket>(
   }
 );
 
-// Compound index for finding a user's active/recent tickets efficiently
 SupportTicketSchema.index({ userId: 1, status: 1 });
 
 const SupportTicket = mongoose.model<ISupportTicket>('SupportTicket', SupportTicketSchema);

@@ -76,12 +76,46 @@ export default function AdminTicketsPage() {
 
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
-  const socketRef = useRef<Socket | null>(null);
   const ticketSearchRef = useRef('');
   const ticketStatusRef = useRef<TicketFilterStatus>('all');
-  const canCloseTickets = user?.role === 'admin';
-
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [closingTicket, setClosingTicket] = useState(false);
+  const canCloseTickets = user?.role === 'admin' || user?.role === 'helper';
+
+  const openCloseModal = () => {
+    if (!canCloseTickets || !selectedTicket || selectedTicket.status === 'closed') return;
+    setPinInput('');
+    setPinError('');
+    setPinModalOpen(true);
+  };
+
+  const handleConfirmCloseWithPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTicket) return;
+
+    const trimmedPin = pinInput.trim();
+    if (!/^\d{4}$/.test(trimmedPin)) {
+      setPinError('Please enter your 4-digit Helper PIN.');
+      return;
+    }
+
+    setClosingTicket(true);
+    setPinError('');
+    try {
+      await supportService.closeTicket(selectedTicket._id, { helperPin: trimmedPin });
+      setSelectedTicket({ ...selectedTicket, status: 'closed' });
+      setPinModalOpen(false);
+      void fetchTickets();
+    } catch (error: unknown) {
+      setPinError(getApiErrorMessage(error, 'Failed to close ticket. Invalid Helper PIN.'));
+    } finally {
+      setClosingTicket(false);
+    }
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -313,10 +347,10 @@ export default function AdminTicketsPage() {
                  </div>
                  {selectedTicket.status === 'open' && canCloseTickets && (
                    <button
-                     onClick={handleCloseTicket}
-                     className="px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded border border-red-500/20 text-xs transition-colors"
+                     onClick={openCloseModal}
+                     className="px-3 py-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 rounded border border-red-500/20 text-xs transition-colors font-semibold"
                    >
-                     Mark as Closed
+                     Close Ticket
                    </button>
                  )}
               </div>
@@ -367,7 +401,7 @@ export default function AdminTicketsPage() {
                     <button
                       type="submit"
                       disabled={replying || !replyText.trim()}
-                      className="h-full px-6 bg-[#7C5CFF] hover:bg-[#6b4de0] text-white rounded-lg font-medium transition-colors shadow-glow-primary flex flex-col items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                      className="h-full px-6 bg-[#7C5CFF] hover:bg-[#6b4fe0] text-white rounded-lg font-medium transition-colors shadow-glow-primary flex flex-col items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                     >
                       {replying ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
                     </button>
@@ -375,13 +409,51 @@ export default function AdminTicketsPage() {
                 </div>
               ) : (
                 <div className="p-4 bg-[#0B0F1A] border-t border-[#1A2235] shrink-0 text-center text-sm text-slate-500">
-                  This ticket is closed. Only admins can close tickets; both admins and helpers can reply while open.
+                  This ticket is closed. Enter your 4-digit Helper PIN when closing to submit staff resolution.
                 </div>
               )}
             </>
           )}
         </div>
 
+      {pinModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 className="text-lg font-bold text-white mb-2">Close Support Ticket</h3>
+            <p className="text-xs text-slate-400 mb-4">
+              Enter your 4-digit Helper PIN to verify ticket closure:
+            </p>
+            <form onSubmit={handleConfirmCloseWithPin} className="space-y-4">
+              <input
+                type="password"
+                maxLength={4}
+                autoFocus
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                placeholder="4-digit PIN (e.g. 1234)"
+                className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl px-4 py-3 text-center text-xl tracking-widest text-white focus:outline-none focus:border-[#7C5CFF]"
+              />
+              {pinError && <p className="text-xs text-red-400 text-center">{pinError}</p>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPinModalOpen(false)}
+                  className="flex-1 py-2 bg-[#1A2235] hover:bg-slate-700 text-slate-300 font-semibold rounded-xl text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={closingTicket || pinInput.length !== 4}
+                  className="flex-1 py-2 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex justify-center items-center"
+                >
+                  {closingTicket ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Confirm Close'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       </div>
   );
 }

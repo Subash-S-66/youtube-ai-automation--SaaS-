@@ -69,6 +69,41 @@ export default function HelpPage() {
   const [error, setError] = useState('');
   const [socket, setSocket] = useState<Socket | null>(null);
 
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [feedbackRating, setFeedbackRating] = useState(5);
+  const [feedbackComment, setFeedbackComment] = useState('');
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+
+  useEffect(() => {
+    if (ticket && (ticket as any).feedbackPending && ticket.status === 'closed') {
+      setFeedbackModalOpen(true);
+    }
+  }, [ticket]);
+
+  const handleOpenCloseConfirmation = () => {
+    setFeedbackRating(5);
+    setFeedbackComment('');
+    setFeedbackModalOpen(true);
+  };
+
+  const handleSubmitFeedback = async () => {
+    if (!ticket) return;
+    setSubmittingFeedback(true);
+    try {
+      if (ticket.status === 'closed') {
+        await supportService.submitFeedback(ticket._id, feedbackRating, feedbackComment);
+      } else {
+        await supportService.closeTicket(ticket._id, { rating: feedbackRating, comment: feedbackComment });
+      }
+      setFeedbackModalOpen(false);
+      await fetchTicket();
+    } catch (err) {
+      console.error('Failed to submit feedback', err);
+    } finally {
+      setSubmittingFeedback(false);
+    }
+  };
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll
@@ -199,8 +234,8 @@ export default function HelpPage() {
           </div>
           {ticket && !isClosed && (
             <button
-              onClick={handleCloseTicket}
-              className="text-sm px-4 py-2 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors"
+              onClick={handleOpenCloseConfirmation}
+              className="text-sm px-4 py-2 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors font-semibold"
             >
               Close Ticket
             </button>
@@ -256,7 +291,7 @@ export default function HelpPage() {
               <div className="bg-[#1A2235] px-4 py-3 flex items-center justify-center space-x-2 border-b border-slate-700/50 z-10 shrink-0">
                 <Info className="w-4 h-4 text-slate-400" />
                 <span className="text-slate-300 text-sm">
-                  This ticket was closed. This conversation is read-only and will disappear in 24 hours.
+                  This ticket was closed. Thank you for using ClipForge Support!
                 </span>
               </div>
             )}
@@ -295,6 +330,54 @@ export default function HelpPage() {
           </div>
         )}
       </div>
+
+      {feedbackModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="bg-[#111827] border border-[#1A2235] rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-center">
+            <h3 className="text-lg font-bold text-white">How was your support experience?</h3>
+            <p className="text-xs text-slate-400">Please rate the assistance provided by our helper team:</p>
+            
+            <div className="flex justify-center items-center gap-2 py-2">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setFeedbackRating(star)}
+                  className={`text-2xl transition-transform ${star <= feedbackRating ? 'text-amber-400 scale-110' : 'text-slate-600 hover:text-slate-400'}`}
+                >
+                  ★
+                </button>
+              ))}
+            </div>
+
+            <textarea
+              value={feedbackComment}
+              onChange={(e) => setFeedbackComment(e.target.value)}
+              placeholder="Write optional feedback comment..."
+              className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-xl p-3 text-xs text-slate-200 focus:outline-none focus:border-[#7C5CFF] resize-none"
+              rows={3}
+            />
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setFeedbackModalOpen(false)}
+                className="flex-1 py-2 bg-[#1A2235] hover:bg-slate-700 text-slate-300 font-semibold rounded-xl text-xs"
+              >
+                Skip For Now
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmitFeedback}
+                disabled={submittingFeedback}
+                className="flex-1 py-2 bg-[#7C5CFF] hover:bg-[#6b4fe0] disabled:opacity-50 text-white font-bold rounded-xl text-xs flex justify-center items-center"
+              >
+                {submittingFeedback ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Submit Feedback'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

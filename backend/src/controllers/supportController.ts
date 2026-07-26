@@ -7,16 +7,11 @@ import { AppError } from '../middleware/errorHandler';
 import { sendEmail } from '../services/emailService';
 import { getSocketIo } from '../socket';
 
+import bcrypt from 'bcryptjs';
+
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Helper to determine if an old ticket is still valid for read-only view (24h window)
-const isTicketIn24hWindow = (ticket: any): boolean => {
-  if (ticket.status === 'open') return true;
-  if (!ticket.expireAt) return false;
-  return new Date() < new Date(ticket.expireAt);
-};
-
-// @desc    Get user's current or recent ticket with messages
+// @desc    Get user's active or recent ticket with messages
 // @route   GET /api/support/ticket
 // @access  Private
 export const getUserTicket = asyncHandler(async (req: Request, res: Response) => {
@@ -25,21 +20,20 @@ export const getUserTicket = asyncHandler(async (req: Request, res: Response) =>
   if (!userId) throw new AppError('Not authorized', 401);
   if (role === 'helper') throw new AppError('Helpers must use the staff ticket inbox', 403);
 
-  // Find an open ticket first
-  let ticket = await SupportTicket.findOne({ userId, status: 'open' });
-
-  // If no open ticket, look for a recently closed one (within 24h)
-  if (!ticket) {
-    const now = new Date();
-    ticket = await SupportTicket.findOne({
-      userId,
-      status: 'closed',
-      expireAt: { $gt: now }
-    }).sort({ closedAt: -1 }); // Get most recently closed
-  }
+  // Find user's active ticket or recently closed ticket that is not hidden by user
+  let ticket = await SupportTicket.findOne({
+    userId,
+    userHidden: { $ne: true },
+  }).sort({ updatedAt: -1 });
 
   if (!ticket) {
     return res.status(200).json({ success: true, data: null });
+  }
+
+  // Clear unread count for user when reading messages
+  if (ticket.unreadUserCount && ticket.unreadUserCount > 0) {
+    ticket.unreadUserCount = 0;
+    await ticket.save();
   }
 
   const messages = await SupportMessage.find({ ticketId: ticket._id }).sort({ createdAt: 1 });
@@ -48,8 +42,8 @@ export const getUserTicket = asyncHandler(async (req: Request, res: Response) =>
     success: true,
     data: {
       ticket,
-      messages
-    }
+      messages,
+    },
   });
 });
 
@@ -74,19 +68,20 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
     ticket = await SupportTicket.findById(ticketId);
     if (!ticket) throw new AppError('Ticket not found', 404);
   } else {
-    ticket = await SupportTicket.findOne({ userId, status: 'open' });
+    ticket = await SupportTicket.findOne({ userId, status: 'open', userHidden: { $ne: true } });
 
     // If no open ticket exists for user, create one
     if (!ticket) {
       ticket = await SupportTicket.create({
         userId,
-        status: 'open'
+        status: 'open',
+        userHidden: false,
       });
 
       // Send email notification to admin about new ticket creation
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
-         sendEmail(adminEmail, "New Support Chat Started", `A user has started a new support chat.\n\nFirst message: ${message.trim()}`).catch(console.error);
+        sendEmail(adminEmail, 'New Support Chat Started', `A user has started a new support chat.\n\nFirst message: ${message.trim()}`).catch(console.error);
       }
     }
   }
@@ -101,6 +96,14 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
     message: message.trim(),
   });
 
+  // Update unread counters
+  if (isSupportStaff) {
+    ticket.unreadUserCount = (ticket.unreadUserCount || 0) + 1;
+  } else {
+    ticket.unreadHelperCount = (ticket.unreadHelperCount || 0) + 1;
+  }
+  await ticket.save();
+
   // Emit to socket
   try {
     const io = getSocketIo();
@@ -112,59 +115,92 @@ export const sendMessage = asyncHandler(async (req: Request, res: Response) => {
     console.warn('Socket emission failed', err);
   }
 
-  // Automatically send email notification to the user if an admin replied
+  // Automatically send email notification to the user if support staff replied
   if (isSupportStaff) {
-     const userToNotify = await User.findById(ticket.userId);
-     if (userToNotify && userToNotify.email) {
-        sendEmail(userToNotify.email, "New reply from Support", `You have a new reply on your support ticket.\n\nSupport says: ${message.trim()}`).catch(console.error);
-     }
+    const userToNotify = await User.findById(ticket.userId);
+    if (userToNotify && userToNotify.email) {
+      sendEmail(userToNotify.email, 'New reply from Support', `You have a new reply on your support ticket.\n\nSupport says: ${message.trim()}`).catch(console.error);
+    }
   }
 
   res.status(201).json({
     success: true,
     data: newMsg,
-    ticketId: ticket._id
+    ticketId: ticket._id,
   });
 });
 
-// @desc    Close a support ticket (user or admin)
+// @desc    Close a support ticket (requires helper PIN if closed by staff)
 // @route   PATCH /api/support/ticket/:id/close
 // @access  Private
 export const closeTicket = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.user?.id;
   const role = String(req.user?.role || '').toLowerCase();
-  const isAdmin = role === 'admin';
+  const isSupportStaff = role === 'admin' || role === 'helper';
   const ticketId = req.params.id;
+  const { helperPin, rating, comment } = req.body;
 
   if (!userId) throw new AppError('Not authorized', 401);
-  if (role === 'helper') {
-    throw new AppError('Helpers are not authorized to close tickets', 403);
-  }
 
   const ticket = await SupportTicket.findById(ticketId);
   if (!ticket) throw new AppError('Ticket not found', 404);
 
-  // Validate ownership
-  if (!isAdmin && ticket.userId.toString() !== userId) {
-    throw new AppError('Not authorized to close this ticket', 403);
+  const staffUser = isSupportStaff ? await User.findById(userId) : null;
+
+  if (isSupportStaff) {
+    const pinToVerify = String(helperPin || '').trim();
+    if (!pinToVerify || !/^\d{4}$/.test(pinToVerify)) {
+      throw new AppError('A valid 4-digit Helper PIN is required to close tickets', 400);
+    }
+
+    if (!staffUser || !staffUser.helperPin) {
+      throw new AppError('No Helper PIN configured for this account. Please contact an admin.', 403);
+    }
+
+    const pinMatch = await bcrypt.compare(pinToVerify, staffUser.helperPin);
+    if (!pinMatch) {
+      throw new AppError('Invalid Helper PIN', 401);
+    }
+
+    const now = new Date();
+    ticket.status = 'closed';
+    ticket.closedAt = now;
+    ticket.closedBy = staffUser._id;
+    ticket.helperClosed = true;
+    ticket.feedbackPending = true;
+    ticket.unreadUserCount = (ticket.unreadUserCount || 0) + 1; // notify user to give feedback
+    await ticket.save();
+  } else {
+    // User manual closure
+    if (ticket.userId.toString() !== userId) {
+      throw new AppError('Not authorized to close this ticket', 403);
+    }
+
+    const now = new Date();
+    ticket.status = 'closed';
+    ticket.closedAt = now;
+    ticket.closedBy = ticket.userId;
+    ticket.userClosed = true;
+    ticket.userHidden = true; // Hides from user side, preserves in DB for Admin
+    ticket.feedbackPending = false;
+
+    if (rating && Number(rating) >= 1 && Number(rating) <= 5) {
+      ticket.feedbackRating = Number(rating);
+    }
+    if (comment) {
+      ticket.feedbackComment = String(comment).trim();
+    }
+    await ticket.save();
   }
-
-  if (ticket.status === 'closed') {
-    return res.status(200).json({ success: true, message: 'Already closed' });
-  }
-
-  const now = new Date();
-  const expireAt = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 hours from now
-
-  ticket.status = 'closed';
-  ticket.closedAt = now;
-  ticket.expireAt = expireAt;
-  await ticket.save();
 
   try {
     const io = getSocketIo();
     if (io) {
-      io.to(ticket._id.toString()).emit('ticket_closed', { ticketId: ticket._id, closedBy: isAdmin ? 'admin' : 'user', expireAt });
+      io.to(ticket._id.toString()).emit('ticket_closed', {
+        ticketId: ticket._id,
+        closedBy: isSupportStaff ? 'helper' : 'user',
+        feedbackPending: ticket.feedbackPending,
+      });
       io.to('admin_support').emit('admin_ticket_closed', { ticketId: ticket._id });
     }
   } catch (err) {
@@ -174,11 +210,86 @@ export const closeTicket = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: 'Ticket closed successfully',
-    data: ticket
+    data: ticket,
   });
 });
 
-// @desc    Get all support tickets (admin)
+// @desc    Submit user feedback for helper-closed ticket
+// @route   POST /api/support/ticket/:id/feedback
+// @access  Private
+export const submitTicketFeedback = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  const ticketId = req.params.id;
+  const { rating, comment } = req.body;
+
+  if (!userId) throw new AppError('Not authorized', 401);
+
+  const ticket = await SupportTicket.findOne({ _id: ticketId, userId });
+  if (!ticket) throw new AppError('Ticket not found', 404);
+
+  const numericRating = Number(rating);
+  if (!Number.isFinite(numericRating) || numericRating < 1 || numericRating > 5) {
+    throw new AppError('Rating must be between 1 and 5 stars', 400);
+  }
+
+  ticket.feedbackRating = numericRating;
+  if (comment) {
+    ticket.feedbackComment = String(comment).trim();
+  }
+  ticket.feedbackPending = false;
+  ticket.userHidden = true; // Hides from active user list, preserves in DB for Admin
+  await ticket.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Feedback submitted successfully',
+    data: ticket,
+  });
+});
+
+// @desc    Get unread support message/ticket badge counts
+// @route   GET /api/support/unread-counts
+// @access  Private
+export const getUnreadCounts = asyncHandler(async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  const role = String(req.user?.role || '').toLowerCase();
+  const isSupportStaff = role === 'admin' || role === 'helper';
+
+  if (!userId) throw new AppError('Not authorized', 401);
+
+  if (isSupportStaff) {
+    const unreadHelperTickets = await SupportTicket.countDocuments({
+      status: 'open',
+      $or: [{ unreadHelperCount: { $gt: 0 } }, { unreadHelperCount: { $exists: false } }],
+    });
+    return res.status(200).json({
+      success: true,
+      data: {
+        unreadHelperTickets,
+      },
+    });
+  }
+
+  const activeTicket = await SupportTicket.findOne({
+    userId,
+    userHidden: { $ne: true },
+  });
+
+  const unreadUserMessages = activeTicket
+    ? (activeTicket.unreadUserCount || 0) + (activeTicket.feedbackPending ? 1 : 0)
+    : 0;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      unreadUserMessages,
+      feedbackPending: Boolean(activeTicket?.feedbackPending),
+      ticketId: activeTicket?._id || null,
+    },
+  });
+});
+
+// @desc    Get all support tickets (admin/helper)
 // @route   GET /api/support/admin/tickets
 // @access  Private/Admin
 export const getAdminTickets = asyncHandler(async (req: Request, res: Response) => {
@@ -188,17 +299,19 @@ export const getAdminTickets = asyncHandler(async (req: Request, res: Response) 
 
   const tickets = await SupportTicket.find(statusFilter ? { status: statusFilter } : {})
     .sort({ updatedAt: -1 })
-    .populate('userId', 'email plan');
+    .populate('userId', 'email plan')
+    .populate('closedBy', 'email role');
 
-  // We need to fetch the latest message for preview in the admin list
-  const ticketsWithPreview = await Promise.all(tickets.map(async (t) => {
-    const latestMsg = await SupportMessage.findOne({ ticketId: t._id }).sort({ createdAt: -1 });
-    return {
-      ...t.toObject(),
-      latestMessage: latestMsg ? latestMsg.message : 'No messages yet',
-      latestMessageSender: latestMsg ? latestMsg.sender : null
-    };
-  }));
+  const ticketsWithPreview = await Promise.all(
+    tickets.map(async (t) => {
+      const latestMsg = await SupportMessage.findOne({ ticketId: t._id }).sort({ createdAt: -1 });
+      return {
+        ...t.toObject(),
+        latestMessage: latestMsg ? latestMsg.message : 'No messages yet',
+        latestMessageSender: latestMsg ? latestMsg.sender : null,
+      };
+    })
+  );
 
   const filteredTickets = search
     ? ticketsWithPreview.filter((ticket: any) => {
@@ -217,7 +330,7 @@ export const getAdminTickets = asyncHandler(async (req: Request, res: Response) 
   });
 });
 
-// @desc    Get messages for a specific ticket (admin)
+// @desc    Get messages for a specific ticket (admin/helper)
 // @route   GET /api/support/admin/tickets/:id/messages
 // @access  Private/Admin
 export const getAdminTicketMessages = asyncHandler(async (req: Request, res: Response) => {
@@ -225,15 +338,21 @@ export const getAdminTicketMessages = asyncHandler(async (req: Request, res: Res
   if (!id) throw new AppError('Ticket ID is required', 400);
 
   const messages = await SupportMessage.find({ ticketId: id as any }).sort({ createdAt: 1 });
-  const ticket = await SupportTicket.findById(id).populate('userId', 'email');
+  const ticket = await SupportTicket.findById(id).populate('userId', 'email').populate('closedBy', 'email role');
 
   if (!ticket) throw new AppError('Ticket not found', 404);
+
+  // Clear unread helper count when admin views ticket
+  if (ticket.unreadHelperCount && ticket.unreadHelperCount > 0) {
+    ticket.unreadHelperCount = 0;
+    await ticket.save();
+  }
 
   res.status(200).json({
     success: true,
     data: {
       ticket,
-      messages
-    }
+      messages,
+    },
   });
 });

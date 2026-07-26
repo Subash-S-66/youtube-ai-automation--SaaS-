@@ -3,22 +3,18 @@ import asyncHandler from '../utils/asyncHandler';
 import GlobalBanner from '../models/GlobalBanner';
 
 export const getActiveBanner = asyncHandler(async (req: Request, res: Response) => {
-  const banner = await GlobalBanner.findOne();
+  const banners = await GlobalBanner.find({ isActive: true }).sort({ order: 1, createdAt: 1 });
+  const now = new Date();
 
-  let isActiveNow = false;
-
-  if (banner && banner.isActive) {
-    const now = new Date();
-    const isStarted = !banner.startAt || now >= banner.startAt;
-    const isNotEnded = !banner.endAt || now <= banner.endAt;
-
-    if (isStarted && isNotEnded) {
-      isActiveNow = true;
-    }
-  }
+  const activeBanners = banners.filter((b) => {
+    const isStarted = !b.startAt || now >= b.startAt;
+    const isNotEnded = !b.endAt || now <= b.endAt;
+    return isStarted && isNotEnded;
+  });
 
   res.status(200).json({
     success: true,
-    data: isActiveNow ? banner : null,
+    data: activeBanners.length > 0 ? activeBanners : null,
+    banners: activeBanners,
   });
 });

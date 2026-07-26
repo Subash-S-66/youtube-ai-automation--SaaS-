@@ -84,6 +84,7 @@ export default function AdminUsersPage() {
   const [createAdminEmail, setCreateAdminEmail] = useState('');
   const [createAdminPassword, setCreateAdminPassword] = useState('');
   const [createStaffRole, setCreateStaffRole] = useState<'admin' | 'helper'>('admin');
+  const [createHelperPin, setCreateHelperPin] = useState('');
   const [creatingAdmin, setCreatingAdmin] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDetails, setUserDetails] = useState<UserDetails | null>(null);
@@ -240,16 +241,30 @@ export default function AdminUsersPage() {
       return;
     }
 
+    if (createStaffRole === 'helper' && !/^\d{4}$/.test(createHelperPin.trim())) {
+      setModalConfig({
+        isOpen: true,
+        title: 'Helper PIN Required',
+        description: 'Please enter a 4-digit numeric Helper PIN (e.g. 1234).',
+        type: 'error',
+        confirmText: 'OK',
+        onConfirm: () => setModalConfig(prev => ({ ...prev, isOpen: false })),
+      });
+      return;
+    }
+
     setCreatingAdmin(true);
     try {
       await adminService.createAdminUser({
         email: createAdminEmail.trim(),
         password: createAdminPassword,
         role: createStaffRole,
+        helperPin: createStaffRole === 'helper' ? createHelperPin.trim() : undefined,
       });
 
       setCreateAdminEmail('');
       setCreateAdminPassword('');
+      setCreateHelperPin('');
 
       const usersRes = await adminService.getUsers(userPage, 10, userSearch) as UsersResponse;
       if (usersRes?.success) {
@@ -291,7 +306,7 @@ export default function AdminUsersPage() {
                 <h2 className="text-lg font-bold text-white">Create Staff User</h2>
                 <p className="text-xs text-slate-400 mt-1">Create admin or helper logins securely from the dashboard.</p>
               </div>
-              <form onSubmit={handleCreateAdmin} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <form onSubmit={handleCreateAdmin} className={cn("grid grid-cols-1 gap-3", createStaffRole === 'helper' ? "md:grid-cols-5" : "md:grid-cols-4")}>
                 <input
                   type="email"
                   value={createAdminEmail}
@@ -317,6 +332,17 @@ export default function AdminUsersPage() {
                   <option value="admin">Admin</option>
                   <option value="helper">Helper (tickets reply only)</option>
                 </select>
+                {createStaffRole === 'helper' && (
+                  <input
+                    type="password"
+                    maxLength={4}
+                    value={createHelperPin}
+                    onChange={(e) => setCreateHelperPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="4-digit PIN (e.g. 1234)"
+                    className="bg-[#0B0F1A] border border-[#1A2235] rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-[#7C5CFF]"
+                    required
+                  />
+                )}
                 <button
                   type="submit"
                   disabled={creatingAdmin}

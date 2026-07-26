@@ -5,6 +5,21 @@ import { usePathname } from 'next/navigation';
 import { X } from 'lucide-react';
 import { getApiOrigin } from '../../lib/apiBase';
 
+interface BannerItem {
+  _id?: string;
+  message: string;
+  isActive: boolean;
+  type:
+    | 'info-blue'
+    | 'info-cyan'
+    | 'info-green'
+    | 'info-purple'
+    | 'warning-amber'
+    | 'warning-gold'
+    | 'critical-red'
+    | 'critical-rose';
+}
+
 export default function GlobalBanner() {
   const pathname = usePathname();
   const isExcludedPage =
@@ -15,23 +30,12 @@ export default function GlobalBanner() {
     pathname === '/privacy-policy' ||
     pathname === '/privacy';
 
-  const [banner, setBanner] = useState<{
-    message: string;
-    isActive: boolean;
-    type:
-      | 'info-blue'
-      | 'info-cyan'
-      | 'info-green'
-      | 'info-purple'
-      | 'warning-amber'
-      | 'warning-gold'
-      | 'critical-red'
-      | 'critical-rose';
-  } | null>(null);
+  const [banners, setBanners] = useState<BannerItem[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    if (banner && banner.isActive && !dismissed && !isExcludedPage) {
+    if (banners.length > 0 && !dismissed && !isExcludedPage) {
       document.body.classList.add('has-global-banner');
     } else {
       document.body.classList.remove('has-global-banner');
@@ -40,7 +44,7 @@ export default function GlobalBanner() {
     return () => {
       document.body.classList.remove('has-global-banner');
     };
-  }, [banner, dismissed, isExcludedPage]);
+  }, [banners, dismissed, isExcludedPage]);
 
   useEffect(() => {
     const fetchBanner = async () => {
@@ -48,10 +52,17 @@ export default function GlobalBanner() {
       try {
         const response = await fetch(`${getApiOrigin()}/api/banner`);
         const data = await response.json();
-        if (data.success && data.data && data.data.isActive) {
-          setBanner(data.data);
+        if (data.success) {
+          const list = Array.isArray(data.banners)
+            ? data.banners
+            : Array.isArray(data.data)
+            ? data.data
+            : data.data && data.data.isActive
+            ? [data.data]
+            : [];
+          setBanners(list);
         } else {
-          setBanner(null);
+          setBanners([]);
         }
       } catch (error) {
         console.error('Failed to fetch global banner', error);
@@ -65,12 +76,19 @@ export default function GlobalBanner() {
     return () => clearInterval(intervalId);
   }, []);
 
+  // Cycle banners if multiple
   useEffect(() => {
-    setDismissed(false);
-  }, [banner?.message, banner?.isActive, banner?.type]);
+    if (banners.length <= 1) return;
+    const timer = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % banners.length);
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [banners.length]);
+
+  const currentBanner = banners[currentIndex] || banners[0];
 
   const currentStyle = useMemo(() => {
-    if (!banner) return 'banner-info-blue';
+    if (!currentBanner) return 'banner-info-blue';
     const map: Record<string, string> = {
       'info-blue': 'banner-info-blue',
       'info-cyan': 'banner-info-cyan',
@@ -81,17 +99,26 @@ export default function GlobalBanner() {
       'critical-red': 'banner-critical-red',
       'critical-rose': 'banner-critical-rose',
     };
-    return map[banner.type] || 'banner-info-blue';
-  }, [banner, dismissed]);
+    return map[currentBanner.type] || 'banner-info-blue';
+  }, [currentBanner]);
 
-  if (!banner || !banner.isActive || dismissed || isExcludedPage) return null;
+  if (!currentBanner || !currentBanner.isActive || dismissed || isExcludedPage) return null;
 
   return (
     <div className={`w-full h-10 font-medium overflow-hidden z-[999] fixed top-0 left-0 flex items-center shadow-md ${currentStyle}`}>
       <div className="relative w-full h-full flex items-center overflow-hidden pl-2 pr-10">
         <div className="banner-marquee whitespace-nowrap flex items-center h-full min-w-full">
-          <span className="px-8 inline-block align-middle">{banner.message}</span>
+          {banners.map((b, idx) => (
+            <span key={b._id || idx} className="px-8 inline-block align-middle font-semibold text-sm">
+              {b.message}
+            </span>
+          ))}
         </div>
+        {banners.length > 1 && (
+          <span className="absolute right-10 top-1/2 -translate-y-1/2 text-[10px] font-bold opacity-75 bg-black/20 px-2 py-0.5 rounded">
+            {currentIndex + 1}/{banners.length}
+          </span>
+        )}
         <button
           type="button"
           onClick={() => setDismissed(true)}

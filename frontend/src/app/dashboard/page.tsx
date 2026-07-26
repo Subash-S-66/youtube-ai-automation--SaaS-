@@ -1621,8 +1621,13 @@ function Dashboard() {
                     initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
                     className="grid grid-cols-1 sm:grid-cols-2 gap-4"
                   >
+                    <div className="sm:col-span-2 flex items-center justify-between">
+                      <label className="block text-sm font-medium text-slate-300">Category</label>
+                      <span className={`text-xs font-semibold ${remainingColor}`}>
+                        Uploads left today: {remainingUploads}
+                      </span>
+                    </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-300 mb-2">Category</label>
                       <select
                         id="content-category"
                         aria-label="Content Category"
@@ -1654,42 +1659,6 @@ function Dashboard() {
                         />
                       </m.div>
                     )}
-
-                      <div className="sm:col-span-2 bg-[#0B0F1A] rounded-xl border border-[#1A2235] p-3">
-                        <div className="flex items-center justify-between mb-3">
-                          <div>
-                            <p className="text-sm font-semibold text-white">Recent uploads</p>
-                            <p className="text-[11px] text-slate-500">Your latest media stays visible while you pick a topic.</p>
-                          </div>
-                          <span className="text-[11px] text-slate-400">{recentUploads.length} shown</span>
-                        </div>
-                        {recentUploads.length > 0 ? (
-                          <div className="grid grid-cols-1 gap-2 max-h-44 overflow-y-auto pr-1">
-                            {recentUploads.map((item) => {
-                              const isVideo = item.type === 'video';
-                              const durationLabel = isVideo
-                                ? `${Math.max(1, Math.round(item.duration || 0))}s`
-                                : `${Math.max(1, Math.round(item.imageDuration || 3))}s`;
-                              return (
-                                <div key={item._id} className="flex items-center justify-between gap-3 rounded-lg border border-[#1A2235] bg-[#111827] px-3 py-2">
-                                  <div className="min-w-0">
-                                    <p className="text-sm text-slate-200 truncate">{item.originalName || 'Untitled upload'}</p>
-                                    <p className="text-[11px] text-slate-500">Added {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : 'recently'}</p>
-                                  </div>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <span className={cn("text-[10px] uppercase tracking-wide px-2 py-1 rounded-full border", isVideo ? "border-[#7C5CFF]/40 text-[#B9A7FF]" : "border-[#00D4FF]/40 text-[#8BE7FF]")}>{item.type}</span>
-                                    <span className="text-[11px] text-slate-400">{durationLabel}</span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="rounded-lg border border-dashed border-[#1A2235] bg-[#111827]/50 px-3 py-4 text-sm text-slate-500">
-                            No uploads yet. Add media in the Media Library to see it here.
-                          </div>
-                        )}
-                      </div>
                   </m.div>
                 )}
               </AnimatePresence>
@@ -1706,7 +1675,7 @@ function Dashboard() {
 
                   <div className="bg-[#0B0F1A] p-3 rounded-xl border border-[#1A2235] flex flex-col justify-between min-h-[80px] col-span-1 sm:col-span-2">
                     <label className="flex items-center text-xs font-medium text-slate-400 mb-1 uppercase tracking-wider">
-                      <FileVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Format
+                      <FileVideo className="h-3 w-3 mr-2 text-[#7C5CFF]" /> Format {!canUseFormatSelection && <span className="text-[10px] font-extrabold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded border border-amber-400/20 uppercase tracking-wider ml-1">PRO</span>}
                     </label>
                     <select id="content-type" aria-label="Content Type"
                       className="w-4/5 mx-auto mt-1 bg-transparent text-slate-300 text-sm text-center focus:outline-none cursor-pointer border-b border-[#1A2235] pb-1"
