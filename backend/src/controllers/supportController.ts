@@ -7,7 +7,7 @@ import { AppError } from '../middleware/errorHandler';
 import { sendEmail } from '../services/emailService';
 import { getSocketIo } from '../socket';
 
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -223,6 +223,7 @@ export const submitTicketFeedback = asyncHandler(async (req: Request, res: Respo
   const { rating, comment } = req.body;
 
   if (!userId) throw new AppError('Not authorized', 401);
+  if (!ticketId) throw new AppError('Ticket ID is required', 400);
 
   const ticket = await SupportTicket.findOne({ _id: ticketId, userId });
   if (!ticket) throw new AppError('Ticket not found', 404);

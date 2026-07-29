@@ -1667,14 +1667,16 @@ export const createBanner = asyncHandler(async (req: Request, res: Response) => 
   const { message, isActive, type, startAt, endAt } = validation.data.body;
   const count = await GlobalBanner.countDocuments();
 
-  const banner = await GlobalBanner.create({
-    message: message.trim(),
+  const bannerPayload: any = {
+    message: (message || '').trim(),
     isActive: isActive !== undefined ? isActive : true,
     type: type || 'info-blue',
-    startAt: startAt ? new Date(startAt) : undefined,
-    endAt: endAt ? new Date(endAt) : undefined,
     order: count + 1,
-  });
+  };
+  if (startAt) bannerPayload.startAt = new Date(startAt);
+  if (endAt) bannerPayload.endAt = new Date(endAt);
+
+  const banner = await GlobalBanner.create(bannerPayload);
 
   res.status(201).json({
     success: true,
@@ -1694,8 +1696,8 @@ export const updateBanner = asyncHandler(async (req: Request, res: Response) => 
   if (message !== undefined) banner.message = String(message).trim();
   if (isActive !== undefined) banner.isActive = Boolean(isActive);
   if (type !== undefined) banner.type = type;
-  if (startAt !== undefined) banner.startAt = startAt ? new Date(startAt) : undefined;
-  if (endAt !== undefined) banner.endAt = endAt ? new Date(endAt) : undefined;
+  if (startAt !== undefined) (banner as any).startAt = startAt ? new Date(startAt) : undefined;
+  if (endAt !== undefined) (banner as any).endAt = endAt ? new Date(endAt) : undefined;
 
   await banner.save();
 
@@ -1772,188 +1774,7 @@ export const deleteUserByAdmin = asyncHandler(async (req: Request, res: Response
   });
 });
 
-export const setGlobalBanner = asyncHandler(async (req: Request, res: Response) => {
-  const validation = bannerSchema.safeParse({ body: req.body });
-  if (!validation.success) {
-    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
-    throw new AppError(errorMessages, 400);
-  }
 
-  const { message, isActive, type, startAt, endAt } = validation.data.body;
-
-  let banner = await GlobalBanner.findOne();
-  const normalizedMessage = (message || '').trim();
-
-  if (isActive && normalizedMessage.length === 0) {
-    throw new AppError('Banner message is required', 400);
-  }
-
-  if (banner) {
-    if (normalizedMessage.length > 0) {
-      banner.message = normalizedMessage;
-    }
-    banner.isActive = isActive;
-    banner.type = type;
-    banner.startAt = startAt ? new Date(startAt) : null as any;
-    banner.endAt = endAt ? new Date(endAt) : null as any;
-    await banner.save();
-  } else {
-    if (isActive && normalizedMessage.length === 0) {
-      throw new AppError('Banner message is required when creating a new banner', 400);
-    }
-    banner = await GlobalBanner.create({
-      // Allow creating an inactive banner record even if message is blank.
-      message: normalizedMessage.length > 0 ? normalizedMessage : '   ',
-      isActive,
-      type,
-      startAt: startAt ? new Date(startAt) : null as any,
-      endAt: endAt ? new Date(endAt) : null as any,
-    });
-  }
-
-  res.status(200).json({
-    success: true,
-    message: 'Global banner updated successfully',
-    data: banner,
-  });
-});
-
-export const getGlobalBannerConfig = asyncHandler(async (req: Request, res: Response) => {
-  const banners = await GlobalBanner.find().sort({ order: 1, createdAt: 1 });
-  res.status(200).json({
-    success: true,
-    data: banners.length > 0 ? banners[0] : null,
-    banners,
-  });
-});
-
-export const getAllBanners = asyncHandler(async (req: Request, res: Response) => {
-  const banners = await GlobalBanner.find().sort({ order: 1, createdAt: 1 });
-  res.status(200).json({
-    success: true,
-    data: banners,
-  });
-});
-
-export const createBanner = asyncHandler(async (req: Request, res: Response) => {
-  const validation = bannerSchema.safeParse({ body: req.body });
-  if (!validation.success) {
-    const errorMessages = validation.error.issues.map((e: any) => e.message).join(', ');
-    throw new AppError(errorMessages, 400);
-  }
-
-  const { message, isActive, type, startAt, endAt } = validation.data.body;
-  const count = await GlobalBanner.countDocuments();
-
-  const banner = await GlobalBanner.create({
-    message: message.trim(),
-    isActive: isActive !== undefined ? isActive : true,
-    type: type || 'info-blue',
-    startAt: startAt ? new Date(startAt) : undefined,
-    endAt: endAt ? new Date(endAt) : undefined,
-    order: count + 1,
-  });
-
-  res.status(201).json({
-    success: true,
-    message: 'Banner created successfully',
-    data: banner,
-  });
-});
-
-export const updateBanner = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const banner = await GlobalBanner.findById(id);
-  if (!banner) {
-    throw new AppError('Banner not found', 404);
-  }
-
-  const { message, isActive, type, startAt, endAt } = req.body;
-  if (message !== undefined) banner.message = String(message).trim();
-  if (isActive !== undefined) banner.isActive = Boolean(isActive);
-  if (type !== undefined) banner.type = type;
-  if (startAt !== undefined) banner.startAt = startAt ? new Date(startAt) : undefined;
-  if (endAt !== undefined) banner.endAt = endAt ? new Date(endAt) : undefined;
-
-  await banner.save();
-
-  res.status(200).json({
-    success: true,
-    message: 'Banner updated successfully',
-    data: banner,
-  });
-});
-
-export const toggleBannerStatus = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const banner = await GlobalBanner.findById(id);
-  if (!banner) {
-    throw new AppError('Banner not found', 404);
-  }
-
-  banner.isActive = !banner.isActive;
-  await banner.save();
-
-  res.status(200).json({
-    success: true,
-    message: `Banner ${banner.isActive ? 'activated' : 'hidden'} successfully`,
-    data: banner,
-  });
-});
-
-export const deleteBanner = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const banner = await GlobalBanner.findByIdAndDelete(id);
-  if (!banner) {
-    throw new AppError('Banner not found', 404);
-  }
-
-  res.status(200).json({
-    success: true,
-    message: 'Banner deleted successfully',
-  });
-});
-
-export const deleteUserByAdmin = asyncHandler(async (req: Request, res: Response) => {
-  const { id } = req.params;
-
-  const user = await User.findById(id);
-  if (!user) {
-    throw new AppError('User not found', 404);
-  }
-
-  // Stripe disabled. If you need Razorpay cancellation, implement it here.
-
-  // Store in DeletedUsers collection
-  await DeletedUser.create({
-    email: user.email,
-    planHistory: [user.plan],
-    usageStats: {
-      uploadsUsedTotal: user.uploadsUsedToday,
-    },
-    deletedAt: new Date(),
-  });
-
-  // Remove pending jobs from BullMQ queue to save resources
-  try {
-    const activeJobs = await pipelineQueue.getJobs(['waiting', 'delayed']);
-    for (const job of activeJobs) {
-      if (id && job.data.userId === id.toString()) {
-        await job.remove();
-      }
-    }
-  } catch (error) {
-    console.error('Failed to cleanup BullMQ jobs during admin deletion:', error);
-  }
-
-  // Delete user from active users
-  await user.deleteOne();
-
-  res.status(200).json({
-    success: true,
-    message: 'User deleted successfully',
-  });
-});
 
 export const getAllUsers = asyncHandler(async (req: Request, res: Response) => {
   const limitRaw = Number(req.query.limit);
@@ -2100,17 +1921,20 @@ export const createAdminUser = asyncHandler(async (req: Request, res: Response) 
   let createdAdmin: any = null;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      createdAdmin = await User.create({
+      const adminPayload: any = {
         email: normalizedEmail,
         password: hashedPassword,
-        helperPin: hashedHelperPin,
         provider: 'local',
         role,
         plan: 'free',
         subscriptionStatus: 'inactive',
         isEmailVerified: true,
         referralCode: generateReferralCode(),
-      });
+      };
+      if (hashedHelperPin) {
+        adminPayload.helperPin = hashedHelperPin;
+      }
+      createdAdmin = await User.create(adminPayload);
       break;
     } catch (error: any) {
       const duplicateReferralCode = error?.code === 11000 && Boolean(error?.keyPattern?.referralCode);
@@ -2290,5 +2114,13 @@ You successfully generated and uploaded ${weeklyJobs} videos over the past 7 day
   res.status(200).json({
     success: true,
     message: `Weekly report triggered successfully. Queued ${emailsQueued} emails.`,
+  });
+});
+
+export const getPlans = asyncHandler(async (req: Request, res: Response) => {
+  const plans = await Plan.find().sort({ price: 1 });
+  res.status(200).json({
+    success: true,
+    data: plans,
   });
 });
