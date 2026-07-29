@@ -40,6 +40,7 @@ const withPWA = withPWAInit({
 });
 
 const nextConfig: NextConfig = {
+  turbopack: {},
   reactStrictMode: true,
   outputFileTracingRoot: path.join(__dirname, ".."),
   transpilePackages: ['lucide-react'], // Helps with tree-shaking
