@@ -382,7 +382,6 @@ const applySuccessfulPayment = async ({
       plan: planObj.name,
       subscriptionStatus: 'active',
       subscriptionExpiresAt,
-      uploadsUsedToday: 0,
     },
     { returnDocument: 'after' }
   );
@@ -639,7 +638,6 @@ export const convertPlanWithRemaining = async (userId: string, targetPlan: strin
       plan: target,
       subscriptionStatus: 'active',
       subscriptionExpiresAt,
-      uploadsUsedToday: 0,
     },
     { returnDocument: 'after' }
   );
