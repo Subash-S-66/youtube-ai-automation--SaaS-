@@ -12,8 +12,8 @@ export const metadata: Metadata = {
     path: '/pricing',
   }),
   robots: {
-    index: false,
-    follow: false,
+    index: true,
+    follow: true,
   },
 };
 

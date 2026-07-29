@@ -290,14 +290,14 @@ PYTHONPATH=pipeline/src python -m pytest -q tests
 
 ## Production Deployment
 
-GitHub Actions CI/CD setup guide (DigitalOcean backend + Azure worker):
+GitHub Actions CI/CD setup guide (Vercel backend + Azure worker):
 
 - `deploy/GITHUB_ACTIONS_AZURE_CICD.md`
 
 Recommended split:
 
 1. Frontend on Vercel.
-2. Backend API on DigitalOcean App Platform.
+2. Backend API on Vercel (`backend/`).
 3. Worker as separate service using the `worker/` folder runtime.
 4. Managed MongoDB and Redis.
 
@@ -311,13 +311,13 @@ Recommended split:
 ### Vercel frontend env
 
 ```bash
-NEXT_PUBLIC_API_URL=https://api.clipforgeapp.tech/api
+NEXT_PUBLIC_API_URL=https://your-backend-project.vercel.app/api
 ```
 
-### DigitalOcean backend env (critical)
+### Vercel backend env (critical)
 
 ```bash
-BACKEND_URL=https://api.clipforgeapp.tech
+BACKEND_URL=https://your-backend-project.vercel.app
 FRONTEND_URL=https://clipforgeapp.tech
 FRONTEND_URLS=https://clipforgeapp.tech,https://www.clipforgeapp.tech,https://youtube-ai-automation-saa-s.vercel.app
 ```

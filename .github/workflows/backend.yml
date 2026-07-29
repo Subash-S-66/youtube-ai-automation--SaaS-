@@ -1,4 +1,4 @@
-name: Deploy Backend (DigitalOcean)
+name: Deploy Backend (Vercel)
 
 on:
   workflow_dispatch:
@@ -43,31 +43,28 @@ jobs:
         working-directory: ./backend
         run: npx tsc --noEmit
 
-      - name: Build Project
-        working-directory: ./backend
-        run: npm run build
-
-      - name: Validate DigitalOcean Secrets
-        id: do_secrets
+      - name: Validate Vercel Backend Secrets
+        id: vercel_secrets
         run: |
-          if [ -z "${DIGITALOCEAN_ACCESS_TOKEN}" ] || [ -z "${DIGITALOCEAN_APP_ID}" ]; then
-            echo "Missing DigitalOcean secrets. Skipping deploy."
+          if [ -z "${VERCEL_TOKEN}" ] || [ -z "${VERCEL_ORG_ID}" ] || [ -z "${VERCEL_BACKEND_PROJECT_ID}" ]; then
+            echo "Missing Vercel secrets. Skipping backend deploy."
             echo "ready=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "ready=true" >> "$GITHUB_OUTPUT"
         env:
-          DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-          DIGITALOCEAN_APP_ID: ${{ secrets.DIGITALOCEAN_APP_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_BACKEND_PROJECT_ID: ${{ secrets.VERCEL_BACKEND_PROJECT_ID || secrets.VERCEL_PROJECT_ID }}
 
-      - name: Setup doctl
-        if: ${{ steps.do_secrets.outputs.ready == 'true' }}
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-
-      - name: Deploy to DigitalOcean App Platform
-        if: ${{ steps.do_secrets.outputs.ready == 'true' }}
-        run: doctl apps create-deployment "${DIGITALOCEAN_APP_ID}" --wait
+      - name: Deploy Backend to Vercel
+        if: ${{ steps.vercel_secrets.outputs.ready == 'true' }}
+        working-directory: ./backend
         env:
-          DIGITALOCEAN_APP_ID: ${{ secrets.DIGITALOCEAN_APP_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_BACKEND_PROJECT_ID || secrets.VERCEL_PROJECT_ID }}
+        run: |
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
+          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN"
+          npx --yes vercel@latest deploy --prebuilt --prod --token="$VERCEL_TOKEN"

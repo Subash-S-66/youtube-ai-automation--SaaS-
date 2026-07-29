@@ -1,16 +1,16 @@
-# GitHub Actions CI/CD (DigitalOcean Backend + Azure Worker)
+# GitHub Actions CI/CD (Vercel Backend + Azure Worker)
 
 This repository supports hybrid deployment through GitHub Actions:
 
-1. Backend API on DigitalOcean App Platform (`.github/workflows/backend.yml`)
+1. Backend API on Vercel (`.github/workflows/backend.yml`)
 2. Pipeline worker on Azure Container Apps Job (`.github/workflows/pipeline.yml`)
 
 ## Workflows
 
 - `backend.yml`
   - Trigger: push to `main` when `backend/**` changes (or manual run)
-  - CI: install, audit, type-check, build
-  - CD: trigger deployment on DigitalOcean App Platform
+  - CI: install, audit, type-check
+  - CD: trigger deployment on Vercel
 
 - `pipeline.yml`
   - Trigger: push to `main` when `pipeline/**` changes (or manual run)
@@ -27,8 +27,9 @@ Set these in GitHub: Repository -> Settings -> Secrets and variables -> Actions 
 
 ### Backend Workflow
 
-- `DIGITALOCEAN_ACCESS_TOKEN`
-- `DIGITALOCEAN_APP_ID`
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_BACKEND_PROJECT_ID`
 
 ### Pipeline Workflow
 

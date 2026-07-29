@@ -11,7 +11,6 @@ const NOINDEX_PREFIXES = [
   '/media',
   '/payments',
   '/subscription',
-  '/pricing',
   '/reset-password',
   '/verify-email',
   '/forgot-password',

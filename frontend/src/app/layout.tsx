@@ -47,11 +47,7 @@ export const metadata: Metadata = {
     "AI video automation platform",
   ],
   alternates: {
-    canonical: getAbsoluteUrl('/'),
-    languages: {
-      'en-US': getAbsoluteUrl('/'),
-      'x-default': getAbsoluteUrl('/'),
-    },
+    canonical: './',
   },
   openGraph: {
     type: "website",
