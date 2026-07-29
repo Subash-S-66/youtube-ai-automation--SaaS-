@@ -10,15 +10,29 @@ const router = express.Router();
 import fs from 'fs';
 import path from 'path';
 
-// Ensure uploads directory exists
-const uploadDir = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+import os from 'os';
+
+// Ensure uploads directory exists safely (using /tmp on Vercel Serverless environment)
+const uploadDir = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+  ? path.join(os.tmpdir(), 'uploads')
+  : path.join(__dirname, '../../uploads');
+
+try {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+} catch (err) {
+  console.warn('[Storage] Upload directory creation notice:', err);
 }
 
 const storage = multer.diskStorage({
   destination: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) {
-    cb(null, 'uploads/'); // Store locally in backend/uploads
+    try {
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+    } catch (_) {}
+    cb(null, uploadDir);
   },
   filename: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
