@@ -64,10 +64,45 @@ export default function SettingsPage() {
 
   const handleConnectYouTube = async () => {
     try {
+      const maxChannels = user?.planLimits?.max_channels || user?.user?.planLimits?.max_channels || 1;
+      const currentChannelCount = (user?.user?.youtubeChannels || user?.youtubeChannels || []).length;
+      if (currentChannelCount >= maxChannels) {
+        setModalConfig({
+          isOpen: true,
+          title: 'Channel Limit Reached',
+          description: `You have reached the maximum allowed YouTube channels (${maxChannels} channel${maxChannels > 1 ? 's' : ''}) for your current plan. Please upgrade your plan to connect additional accounts.`,
+          type: 'error',
+          confirmText: 'Upgrade Plan',
+          onConfirm: () => {
+            setModalConfig(prev => ({ ...prev, isOpen: false }));
+            window.location.href = '/subscription';
+          },
+          cancelText: 'Cancel',
+          onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+        });
+        return;
+      }
+
       const url = await youtubeService.getAuthUrl();
       if (url) window.location.href = url;
-    } catch (e) {
-      console.warn('Failed to connect YouTube', e);
+    } catch (e: any) {
+      if (e.response?.status === 403 || e.response?.data?.message?.includes('Channel limit reached') || e.response?.data?.message?.includes('maximum number of connected YouTube channels')) {
+        setModalConfig({
+          isOpen: true,
+          title: 'Channel Limit Reached',
+          description: e.response?.data?.message || 'You have reached the maximum allowed YouTube channels for your current plan. Please upgrade to add more.',
+          type: 'error',
+          confirmText: 'Upgrade Plan',
+          onConfirm: () => {
+            setModalConfig(prev => ({ ...prev, isOpen: false }));
+            window.location.href = '/subscription';
+          },
+          cancelText: 'Cancel',
+          onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+        });
+      } else {
+        setMessage({ text: e.response?.data?.message || 'Failed to initialize YouTube connection', type: 'error' });
+      }
     }
   };
 

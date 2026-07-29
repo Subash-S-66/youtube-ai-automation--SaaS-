@@ -86,6 +86,8 @@ interface DashboardUser {
   subscriptionStatus?: 'active' | 'inactive' | string;
   subscriptionExpiresAt?: string;
   planLimits?: {
+    max_channels?: number;
+    daily_upload_limit?: number;
     max_media_items?: number;
     max_video_items?: number;
     max_image_items?: number;
@@ -107,6 +109,8 @@ interface DashboardUser {
   uploadLimit?: number;
   remainingUploads?: number;
   user?: {
+    isYoutubeConnected?: boolean;
+    youtubeChannels?: YouTubeChannel[];
     plan?: string;
     subscriptionStatus?: 'active' | 'inactive' | string;
     subscriptionExpiresAt?: string;
@@ -525,9 +529,10 @@ function Dashboard() {
           setCustomTopic(userData.data.user.lastCustomTopic);
         }
 
-        const validChannels = Array.isArray(userData.data?.youtubeChannels)
-          ? userData.data.youtubeChannels.filter((channel) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false)
-          : [];
+        const fetchedChannels: YouTubeChannel[] = Array.isArray(userData.data?.user?.youtubeChannels)
+          ? (userData.data.user.youtubeChannels as YouTubeChannel[])
+          : (Array.isArray(userData.data?.youtubeChannels) ? (userData.data.youtubeChannels as YouTubeChannel[]) : []);
+        const validChannels = fetchedChannels.filter((channel: YouTubeChannel) => channel?.status !== 'disabled_due_to_plan' && channel?.isValid !== false);
         const savedLocalChannelId = typeof window !== 'undefined' ? (localStorage.getItem('clipforge_selectedChannelId') || '') : '';
         const preferredChannelId = String(
           savedLocalChannelId ||
@@ -536,12 +541,11 @@ function Dashboard() {
           ''
         ).trim();
         const initialChannelId = (preferredChannelId && (
-          validChannels.some((channel) => channel?.channelId === preferredChannelId) ||
-          activeYouTubeChannels.some((channel) => channel?.channelId === preferredChannelId) ||
-          allYouTubeChannels.some((channel) => channel?.channelId === preferredChannelId)
+          validChannels.some((channel: YouTubeChannel) => channel?.channelId === preferredChannelId) ||
+          fetchedChannels.some((channel: YouTubeChannel) => channel?.channelId === preferredChannelId)
         ))
           ? preferredChannelId
-          : (validChannels[0]?.channelId || activeYouTubeChannels[0]?.channelId || allYouTubeChannels[0]?.channelId || '');
+          : (validChannels[0]?.channelId || fetchedChannels[0]?.channelId || '');
         channelSelectionHydratedRef.current = true;
         if (initialChannelId) {
           setSelectedChannelId(initialChannelId);
@@ -586,8 +590,14 @@ function Dashboard() {
           setSequenceItems([]);
         }
 
-        // Parse URL params for auth callback errors
+        // Parse URL params for auth callback errors or success
         const urlParams = new URLSearchParams(window.location.search);
+        const youtubeParam = urlParams.get('youtube');
+        if (youtubeParam === 'connected') {
+          setMessage({ text: 'YouTube channel connected successfully!', type: 'success' });
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
         const urlError = urlParams.get('error');
         if (urlError === 'channel_limit_reached') {
             setModalConfig({
@@ -808,10 +818,10 @@ function Dashboard() {
       return;
     }
     const isSelectedInChannels = allYouTubeChannels.some((channel) => channel?.channelId === selectedChannelId);
-    if (!isSelectedInChannels && selectedChannelId) {
+    if (!isSelectedInChannels || !selectedChannelId) {
       const fallbackChannelId = validYouTubeChannels[0]?.channelId || activeYouTubeChannels[0]?.channelId || allYouTubeChannels[0]?.channelId || '';
-      setSelectedChannelId(fallbackChannelId);
-      if (fallbackChannelId) {
+      if (fallbackChannelId && fallbackChannelId !== selectedChannelId) {
+        setSelectedChannelId(fallbackChannelId);
         try {
           if (typeof window !== 'undefined') {
             localStorage.setItem('clipforge_selectedChannelId', fallbackChannelId);
@@ -964,10 +974,49 @@ function Dashboard() {
 
   const handleConnectYouTube = useCallback(() => {
     (async () => {
-      const url = await youtubeService.getAuthUrl();
-      window.location.href = url;
+      try {
+        const maxChannels = user?.planLimits?.max_channels || 1;
+        const currentChannelCount = (user?.youtubeChannels || []).length;
+        if (currentChannelCount >= maxChannels) {
+          setModalConfig({
+            isOpen: true,
+            title: 'Channel Limit Reached',
+            description: `You have reached the maximum allowed YouTube channels (${maxChannels} channel${maxChannels > 1 ? 's' : ''}) for your current plan. Please upgrade your plan to connect additional accounts.`,
+            type: 'error',
+            confirmText: 'Upgrade Plan',
+            onConfirm: () => {
+              setModalConfig(prev => ({ ...prev, isOpen: false }));
+              window.location.href = '/subscription';
+            },
+            cancelText: 'Cancel',
+            onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+          });
+          return;
+        }
+
+        const url = await youtubeService.getAuthUrl();
+        window.location.href = url;
+      } catch (e: any) {
+        if (e.response?.status === 403 || e.response?.data?.message?.includes('Channel limit reached') || e.response?.data?.message?.includes('maximum number of connected YouTube channels')) {
+          setModalConfig({
+            isOpen: true,
+            title: 'Channel Limit Reached',
+            description: e.response?.data?.message || 'You have reached the maximum allowed YouTube channels for your current plan. Please upgrade to add more.',
+            type: 'error',
+            confirmText: 'Upgrade Plan',
+            onConfirm: () => {
+              setModalConfig(prev => ({ ...prev, isOpen: false }));
+              window.location.href = '/subscription';
+            },
+            cancelText: 'Cancel',
+            onCancel: () => setModalConfig(prev => ({ ...prev, isOpen: false }))
+          });
+        } else {
+          setMessage({ text: e.response?.data?.message || 'Failed to initialize YouTube connection', type: 'error' });
+        }
+      }
     })();
-  }, []);
+  }, [user]);
 
   const handleReconnectChannel = useCallback((channelId: string) => {
     (async () => {

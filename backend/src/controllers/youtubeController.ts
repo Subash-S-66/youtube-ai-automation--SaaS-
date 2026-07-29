@@ -126,6 +126,18 @@ export const getYouTubeAuthUrl = asyncHandler(async (req: Request, res: Response
     });
   } else {
     res.clearCookie('oauth_reconnect_channel');
+    const user = await User.findById(req.user.id);
+    if (user) {
+      const { getUploadLimits } = require('../services/uploadLimitService');
+      const limitCheck = await getUploadLimits(user.id);
+      const maxChannels = Number(limitCheck.planLimits?.max_channels) || 1;
+      if (user.youtubeChannels.length >= maxChannels) {
+        throw new AppError(
+          `You have reached the maximum number of connected YouTube channels allowed for your current plan (${maxChannels} max). Please upgrade your plan to connect more channels.`,
+          403
+        );
+      }
+    }
   }
 
   const stateToken = generateStateToken(req.user.id);
@@ -235,18 +247,10 @@ export const youtubeCallback = asyncHandler(async (req: Request, res: Response) 
            user.youtubeChannels[existingChannelIndex].isValid = true;
        }
     } else {
-       // Enforce Channel Limits dynamically with effective plan
+       // Enforce Channel Limits dynamically with effective plan limits
        const { getUploadLimits } = require('../services/uploadLimitService');
        const limitCheck = await getUploadLimits(user.id);
-       const effectivePlan = limitCheck.plan;
-
-       const channelLimits = {
-         free: 1,
-         basic: 3,
-         pro: 10,
-         premium: 50,
-       };
-       const maxChannels = (channelLimits as any)[effectivePlan] || 1;
+       const maxChannels = Number(limitCheck.planLimits?.max_channels) || 1;
 
        if (user.youtubeChannels.length >= maxChannels) {
            const frontendUrl = resolveFrontendBaseUrl(req);
