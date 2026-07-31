@@ -176,10 +176,11 @@ const ensureRunnerAvailabilityOrThrow = (config: any): void => {
   const missingAzureEnv = getMissingAzureRunnerEnv();
   const missingRemoteEnv = getMissingRemoteRunnerEnv(config?.pipelineServiceUrl);
 
-  const availability: Record<'local' | 'azure' | 'remote', boolean> = {
+  const availability: Record<'local' | 'azure' | 'remote' | 'oracle', boolean> = {
     local: localRuntime.available,
     azure: missingAzureEnv.length === 0,
     remote: missingRemoteEnv.length === 0,
+    oracle: true,
   };
 
   if (availability.local || availability.azure || availability.remote) {

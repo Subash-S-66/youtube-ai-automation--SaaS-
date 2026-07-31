@@ -3,7 +3,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface ISystemConfig extends Document {
   betaMode: boolean;
   geminiModel?: string;
-  pipelineRunner?: 'local' | 'azure' | 'remote';
+  pipelineRunner?: 'local' | 'azure' | 'remote' | 'oracle';
   pipelineServiceUrl?: string;
   pipelineServiceSecret?: string;
   pipelineRunnerPinned?: boolean;
@@ -29,7 +29,7 @@ export interface ISystemConfig extends Document {
   };
   pipelineRetryCycles?: number;
   pipelineCycleAcrossRunners?: boolean;
-  pipelineRunnerFallbackOrder?: Array<'local' | 'azure' | 'remote'>;
+  pipelineRunnerFallbackOrder?: Array<'local' | 'azure' | 'remote' | 'oracle'>;
   planLimits?: {
     free: number;
     basic: number;

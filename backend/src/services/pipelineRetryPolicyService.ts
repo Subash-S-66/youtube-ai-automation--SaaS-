@@ -1,4 +1,4 @@
-export type PipelineRunner = 'local' | 'azure' | 'remote';
+export type PipelineRunner = 'local' | 'azure' | 'remote' | 'oracle';
 
 export interface PipelineRetriesByPlan {
   free: number;

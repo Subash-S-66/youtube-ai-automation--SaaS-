@@ -21,6 +21,7 @@ import { encrypt } from '../utils/encryption';
 import { triggerAzureJob, resolveAzureArmApiVersion, stopAzureJobExecution } from './azureJobTrigger';
 import { isLocalPipelineRuntimeAvailable, resolveLocalPythonRuntime, triggerLocalPipeline } from './localPipelineTrigger';
 import { triggerRemotePipeline } from './remotePipelineTrigger';
+import { triggerOracleJob } from './oracleJobTrigger';
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import { normalizePipelineSettings } from '../services/pipelineRunService';
@@ -212,9 +213,9 @@ const clearAzureAuthFailure = (): void => {
   azureAuthFailureCache = null;
 };
 
-const normalizePipelineRunner = (value: unknown): 'local' | 'azure' | 'remote' | null => {
+const normalizePipelineRunner = (value: unknown): 'local' | 'azure' | 'remote' | 'oracle' | null => {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'local' || normalized === 'azure' || normalized === 'remote') {
+  if (normalized === 'local' || normalized === 'azure' || normalized === 'remote' || normalized === 'oracle') {
     return normalized;
   }
   return null;
@@ -226,17 +227,17 @@ const isEmbeddedWorkerProcess = parseBooleanEnv(process.env.PIPELINE_WORKER_EMBE
 const HEARTBEAT_RUNNER_CACHE_MS = parsePositiveInt(process.env.PIPELINE_HEARTBEAT_RUNNER_CACHE_MS, 30000);
 
 let heartbeatRunnerCache: {
-  value: 'local' | 'azure' | 'remote';
+  value: 'local' | 'azure' | 'remote' | 'oracle';
   expiresAt: number;
 } | null = null;
 
-const resolveHeartbeatRunner = async (): Promise<'local' | 'azure' | 'remote'> => {
+const resolveHeartbeatRunner = async (): Promise<'local' | 'azure' | 'remote' | 'oracle'> => {
   const now = Date.now();
   if (heartbeatRunnerCache && heartbeatRunnerCache.expiresAt > now) {
     return heartbeatRunnerCache.value;
   }
 
-  let configPrimary: 'local' | 'azure' | 'remote' | null = null;
+  let configPrimary: 'local' | 'azure' | 'remote' | 'oracle' | null = null;
   let effectivePinned = pipelineRunnerPinnedFallback;
   try {
     const configDoc = await SystemConfig.findOne().sort({ updatedAt: -1 }).select('pipelineRunner pipelineRunnerPinned');
@@ -248,7 +249,7 @@ const resolveHeartbeatRunner = async (): Promise<'local' | 'azure' | 'remote'> =
     // Best effort only; fall back to env and auto runner.
   }
 
-  const autoPrimary: 'local' | 'azure' | 'remote' = String(process.env.PIPELINE_SERVICE_URL || '').trim()
+  const autoPrimary: 'local' | 'azure' | 'remote' | 'oracle' = String(process.env.PIPELINE_SERVICE_URL || '').trim()
     ? 'remote'
     : 'local';
   const resolved = effectivePinned
@@ -458,7 +459,7 @@ const appendLogSafe = async (jobId: string, newText: string, status?: string): P
   }
 };
 
-type PipelineRunner = 'local' | 'azure' | 'remote';
+type PipelineRunner = 'local' | 'azure' | 'remote' | 'oracle';
 
 const getMissingAzureRunnerEnv = (): string[] => {
   const missing: string[] = [];
@@ -572,6 +573,7 @@ const resolvePipelineRunner = async (
     local: isRunnerAvailable('local'),
     azure: isRunnerAvailable('azure'),
     remote: isRunnerAvailable('remote', { remoteServiceUrl }),
+    oracle: true,
   };
 
   let resolvedRunner = selectedRunner;
@@ -1518,6 +1520,22 @@ Proceeding with Story ${settings.storyId} - Episode ${settings.currentPart}...
           authSecretOverride: runnerSelection.remoteServiceSecret,
         });
         await appendLogSafe(jobId, `\nRemote pipeline accepted: ${remoteResult.message}\n`);
+        return;
+      }
+
+      if (pipelineRunner === 'oracle') {
+        await appendLogSafe(jobId, `\nDispatching Oracle Cloud worker for job ${jobId}...\n`);
+        const oracleResult = await triggerOracleJob(envVars);
+        await JobModel.updateOne(
+          { _id: jobId },
+          {
+            $set: {
+              'result.dispatch.runner': 'oracle',
+              'result.dispatch.oracleInstanceId': oracleResult.instanceId || 'oracle-worker',
+            },
+          }
+        );
+        await appendLogSafe(jobId, `\nOracle Cloud worker accepted: ${oracleResult.message}\n`);
         return;
       }
 
