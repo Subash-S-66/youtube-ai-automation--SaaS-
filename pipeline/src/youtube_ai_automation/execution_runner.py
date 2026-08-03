@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -186,8 +186,6 @@ def resolve_payload(args: argparse.Namespace) -> dict[str, Any]:
                 "duration": duration if duration is not None else 60,
                 "options": payload.get("options") if isinstance(payload.get("options"), dict) else {},
             }
-        else:
-            payload["input"] = dict(payload)
 
     if not isinstance(payload.get("input"), dict):
         raise ValueError("Payload must include input object: {\"input\": {...}}")

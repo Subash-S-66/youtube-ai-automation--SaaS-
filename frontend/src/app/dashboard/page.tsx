@@ -1891,137 +1891,129 @@ function Dashboard() {
                     )}
                   </AnimatePresence>
 
-                    {/* Unified Publish & Schedule Options */}
-                    <div className="mt-4 pt-4 border-t border-[#1A2235]">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <Calendar className="h-4 w-4 text-[#00D4FF]" />
-                          <span className="text-sm font-semibold text-white">Publish & Schedule Options</span>
-                          {!canUseScheduling && (
-                            <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">Pro</span>
-                          )}
-                        </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={cn("text-sm", !canUseScheduling ? "text-slate-400" : "text-slate-300")}>Schedule this video</span>
+                        {!canUseScheduling && (
+                          <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">Pro</span>
+                        )}
                       </div>
-
-                      <div className="grid grid-cols-3 gap-1 bg-[#111827] p-1 rounded-lg border border-[#1A2235] mb-3">
-                        <button
-                          type="button"
-                          onClick={() => { setScheduleEnabled(false); setAutoUploadEnabled(false); }}
-                          className={cn(
-                            "py-1.5 px-2 text-xs font-semibold rounded-md transition-all text-center",
-                            !scheduleEnabled && !autoUploadEnabled
-                              ? "bg-[#1A2235] text-[#00D4FF] shadow-sm border border-[#00D4FF]/30"
-                              : "text-slate-400 hover:text-slate-200"
-                          )}
-                        >
-                          Publish Now
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!canUseScheduling) { showUpgradeModal('Scheduling'); return; }
-                            setScheduleEnabled(true); setAutoUploadEnabled(false);
+                      <label className={cn("relative inline-flex items-center", !canUseScheduling ? "cursor-pointer opacity-60" : "cursor-pointer")}>
+                        <input id="schedule-enabled-toggle" aria-label="Toggle Schedule Enabled"
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={scheduleEnabled}
+                          onChange={(e) => {
+                            if (!canUseScheduling && e.target.checked) { showUpgradeModal('Scheduling'); return; }
+                            const nextChecked = e.target.checked;
+                            setScheduleEnabled(nextChecked);
+                            if (nextChecked) {
+                              setAutoUploadEnabled(false);
+                            }
                           }}
-                          className={cn(
-                            "py-1.5 px-2 text-xs font-semibold rounded-md transition-all text-center",
-                            scheduleEnabled
-                              ? "bg-[#1A2235] text-[#00D4FF] shadow-sm border border-[#00D4FF]/30"
-                              : "text-slate-400 hover:text-slate-200"
-                          )}
-                        >
-                          One-Time Schedule
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!canUseScheduling) { showUpgradeModal('Auto-upload scheduling'); return; }
-                            setScheduleEnabled(false); setAutoUploadEnabled(true);
-                          }}
-                          className={cn(
-                            "py-1.5 px-2 text-xs font-semibold rounded-md transition-all text-center",
-                            autoUploadEnabled
-                              ? "bg-[#1A2235] text-[#00D4FF] shadow-sm border border-[#00D4FF]/30"
-                              : "text-slate-400 hover:text-slate-200"
-                          )}
-                        >
-                          Auto Upload
-                        </button>
-                      </div>
-
-                      <AnimatePresence mode="wait">
-                        {scheduleEnabled && (
-                          <m.div key="one-time-schedule" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                            <div className="pt-2 border-t border-[#1A2235]">
-                              <label className="block text-xs text-slate-400 mb-1">Publish Date & Time</label>
-                              <div className="relative">
-                                <input
-                                  id="schedule-datetime"
-                                  aria-label="Schedule Date and Time"
-                                  ref={scheduleInputRef}
-                                  type="datetime-local"
-                                  value={scheduleDatetime}
-                                  onChange={(e) => setScheduleDatetime(e.target.value)}
-                                  className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors pr-10"
-                                />
-                                <button
-                                  type="button"
-                                  aria-label="Open calendar"
-                                  onClick={() => {
-                                    const el = scheduleInputRef.current;
-                                    if (!el) return;
-                                    const pickerEl = el as DateTimePickerInput;
-                                    if (typeof pickerEl.showPicker === 'function') {
-                                      pickerEl.showPicker();
-                                    } else {
-                                      el.focus();
-                                    }
-                                  }}
-                                  className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
-                                >
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                                    <line x1="16" y1="2" x2="16" y2="6" />
-                                    <line x1="8" y1="2" x2="8" y2="6" />
-                                    <line x1="3" y1="10" x2="21" y2="10" />
-                                  </svg>
-                                </button>
-                              </div>
-                              <p className="text-xs text-slate-500 mt-2">The video will be generated and published automatically at this specified time.</p>
-                            </div>
-                          </m.div>
-                        )}
-                        {autoUploadEnabled && (
-                          <m.div key="auto-upload-schedule" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                            <div className="pt-2 border-t border-[#1A2235]">
-                              <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                  <label className="block text-xs text-slate-400 mb-1">Interval (hours)</label>
-                                  <input id="auto-upload-interval-hours" aria-label="Auto Upload Interval Hours"
-                                    type="number" min="1" max="24"
-                                    className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
-                                    value={autoUploadIntervalHours}
-                                    onChange={(e) => setAutoUploadIntervalHours(Number(e.target.value))}
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-slate-400 mb-1">Videos per interval</label>
-                                  <input id="auto-upload-videos-per-interval" aria-label="Auto Upload Videos Per Interval"
-                                    type="number" min="1" max="10"
-                                    className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
-                                    value={autoUploadVideosPerInterval}
-                                    onChange={(e) => setAutoUploadVideosPerInterval(Number(e.target.value))}
-                                  />
-                                </div>
-                              </div>
-                              <p className="text-xs text-slate-500 mt-2">Automated recurring background generation per channel at your configured hour intervals.</p>
-                            </div>
-                          </m.div>
-                        )}
-                        {!scheduleEnabled && !autoUploadEnabled && (
-                          <p className="text-xs text-slate-500 pt-1">Immediate mode: Video will be generated and uploaded right after submitting.</p>
-                        )}
-                      </AnimatePresence>
+                        />
+                        <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                      </label>
                     </div>
+
+                    <AnimatePresence>
+                      {scheduleEnabled && (
+                        <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="mt-3">
+                            <label className="block text-xs text-slate-400 mb-1">Publish Date & Time</label>
+                            <div className="relative">
+                              <input
+                                id="schedule-datetime"
+                                aria-label="Schedule Date and Time"
+                                ref={scheduleInputRef}
+                                type="datetime-local"
+                                value={scheduleDatetime}
+                                onChange={(e) => setScheduleDatetime(e.target.value)}
+                                className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors pr-10"
+                              />
+                              <button
+                                type="button"
+                                aria-label="Open calendar"
+                                onClick={() => {
+                                  const el = scheduleInputRef.current;
+                                  if (!el) return;
+                                  const pickerEl = el as DateTimePickerInput;
+                                  if (typeof pickerEl.showPicker === 'function') {
+                                    pickerEl.showPicker();
+                                  } else {
+                                    el.focus();
+                                  }
+                                }}
+                                className="absolute right-1 top-1/2 -translate-y-1/2 text-white w-9 h-9 flex items-center justify-center rounded-md hover:bg-white/10"
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                                  <line x1="16" y1="2" x2="16" y2="6" />
+                                  <line x1="8" y1="2" x2="8" y2="6" />
+                                  <line x1="3" y1="10" x2="21" y2="10" />
+                                </svg>
+                              </button>
+                            </div>
+                            <p className="text-xs text-slate-500 mt-2">The video will be generated and published at this time.</p>
+                          </div>
+                        </m.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-[#1A2235]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-slate-300">Auto Upload Schedule</span>
+                      <label className={cn("relative inline-flex items-center", !canUseScheduling ? "cursor-not-allowed opacity-60" : "cursor-pointer")}>
+                        <input id="auto-upload-enabled-toggle" aria-label="Toggle Auto Upload Enabled"
+                          type="checkbox"
+                          className="sr-only peer"
+                          checked={autoUploadEnabled}
+                          onChange={(e) => {
+                            if (!canUseScheduling && e.target.checked) { showUpgradeModal('Auto-upload scheduling'); return; }
+                            const nextChecked = e.target.checked;
+                            setAutoUploadEnabled(nextChecked);
+                            if (nextChecked) {
+                              setScheduleEnabled(false);
+                            }
+                          }}
+                        />
+                        <div className="w-11 h-6 bg-[#1A2235] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></div>
+                      </label>
+                    </div>
+
+                    <AnimatePresence>
+                      {autoUploadEnabled && (
+                        <m.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="mt-3 grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs text-slate-400 mb-1">Interval (hours)</label>
+                              <input id="auto-upload-interval-hours" aria-label="Auto Upload Interval Hours"
+                                type="number"
+                                min="1"
+                                max="24"
+                                className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
+                                value={autoUploadIntervalHours}
+                                onChange={(e) => setAutoUploadIntervalHours(Number(e.target.value))}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-slate-400 mb-1">Videos per interval</label>
+                              <input id="auto-upload-videos-per-interval" aria-label="Auto Upload Videos Per Interval"
+                                type="number"
+                                min="1"
+                                max="10"
+                                className="w-full bg-[#0B0F1A] border border-[#1A2235] rounded-lg p-2 text-slate-200 focus:outline-none focus:border-[#00D4FF] transition-colors"
+                                value={autoUploadVideosPerInterval}
+                                onChange={(e) => setAutoUploadVideosPerInterval(Number(e.target.value))}
+                              />
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-2">Each channel runs its own schedule. First upload starts after the selected interval.</p>
+                        </m.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
 
                   {/* Voice Selection */}
