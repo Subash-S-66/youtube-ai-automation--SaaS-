@@ -229,6 +229,16 @@ interface ActivePipelineJob {
   canStop: boolean;
 }
 
+interface GlobalBannerItem {
+  _id: string;
+  message: string;
+  isActive: boolean;
+  type: string;
+  startAt?: string;
+  endAt?: string;
+  createdAt?: string;
+}
+
 export default function AdminDashboard() {
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -248,6 +258,8 @@ export default function AdminDashboard() {
   // Plans Config State
   const [plans, setPlans] = useState<PlanDraft[]>([]);
 
+  const [allBanners, setAllBanners] = useState<GlobalBannerItem[]>([]);
+  const [editingBannerId, setEditingBannerId] = useState<string | null>(null);
   const [bannerMessage, setBannerMessage] = useState('');
   const [bannerActive, setBannerActive] = useState(true);
   const [bannerType, setBannerType] = useState('info-blue');
@@ -264,6 +276,7 @@ export default function AdminDashboard() {
   const [geminiModelsLoading, setGeminiModelsLoading] = useState(false);
   const [pipelineRunner, setPipelineRunner] = useState<'local' | 'azure' | 'remote'>('local');
   const [pipelineServiceUrl, setPipelineServiceUrl] = useState('');
+  const [secondaryPipelineServiceUrl, setSecondaryPipelineServiceUrl] = useState('');
   const [pipelineServiceSecret, setPipelineServiceSecret] = useState('');
   const [pipelineRunnerPinned, setPipelineRunnerPinned] = useState(false);
   const [ffmpegCommandTimeoutSeconds, setFfmpegCommandTimeoutSeconds] = useState(360);
@@ -1240,10 +1253,14 @@ export default function AdminDashboard() {
           adminService.getGeminiModels(),
           adminService.getActivePipelineJobs(25),
           adminService.getGlobalBanner(),
+          adminService.getAllBanners(),
           import('../../services/planService').then(m => m.planService.getAdminPlans()),
         ]).then((results) => {
           if (!isMounted) return;
-          const [statsRes, usersRes, configRes, geminiModelsRes, activeJobsRes, bannerRes, plansRes] = results;
+          const [statsRes, usersRes, configRes, geminiModelsRes, activeJobsRes, bannerRes, allBannersRes, plansRes] = results;
+          if (allBannersRes.status === 'fulfilled' && allBannersRes.value?.success && Array.isArray(allBannersRes.value.data)) {
+            setAllBanners(allBannersRes.value.data);
+          }
 
           if (statsRes.status === 'fulfilled' && statsRes.value?.success) setStats(statsRes.value.data);
           if (usersRes.status === 'fulfilled' && usersRes.value?.success) {
@@ -1704,17 +1721,71 @@ export default function AdminDashboard() {
 
               {/* Global Banner */}
               <div className={cn('admin-panel p-6', activeSection !== 'communication' && 'hidden')}>
-                <div className="flex items-center mb-6">
-                  <MonitorPlay className="h-5 w-5 text-[#00D4FF] mr-2" />
-                  <h2 className="text-xl font-bold text-white">Global Banner</h2>
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center">
+                    <MonitorPlay className="h-5 w-5 text-[#00D4FF] mr-2" />
+                    <h2 className="text-xl font-bold text-white">
+                      {editingBannerId ? 'Edit Global Banner' : 'Create Global Banner'}
+                    </h2>
+                  </div>
+                  {editingBannerId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingBannerId(null);
+                        setBannerMessage('');
+                        setBannerStart('');
+                        setBannerEnd('');
+                        setBannerActive(true);
+                      }}
+                      className="text-xs px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition-colors"
+                    >
+                      Cancel Edit
+                    </button>
+                  )}
                 </div>
-                <form onSubmit={handleSetBanner} className="space-y-4">
+
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!bannerMessage.trim()) return;
+                  setBannering(true);
+                  try {
+                    const payload = {
+                      message: bannerMessage.trim(),
+                      isActive: bannerActive,
+                      type: bannerType,
+                      startAt: bannerStart ? new Date(bannerStart).toISOString() : null,
+                      endAt: bannerEnd ? new Date(bannerEnd).toISOString() : null,
+                    };
+                    if (editingBannerId) {
+                      await adminService.updateBanner(editingBannerId, payload);
+                      alert('Banner updated successfully!');
+                    } else {
+                      await adminService.createBanner(payload);
+                      alert('New banner created successfully!');
+                    }
+                    setEditingBannerId(null);
+                    setBannerMessage('');
+                    setBannerStart('');
+                    setBannerEnd('');
+                    setBannerActive(true);
+                    const res = await adminService.getAllBanners();
+                    if (res?.success && Array.isArray(res.data)) {
+                      setAllBanners(res.data);
+                    }
+                  } catch (err: unknown) {
+                    console.error(err);
+                    alert(getErrorMessage(err, 'Failed to save banner.'));
+                  } finally {
+                    setBannering(false);
+                  }
+                }} className="space-y-4">
                   <div>
                     <label htmlFor="banner-message" className="block text-xs text-slate-400 mb-1">Banner Message</label>
-                    <input id="banner-message" type="text" placeholder="Banner Message (Max 200 chars)" value={bannerMessage} onChange={(e) => setBannerMessage(e.target.value)} required={bannerActive} maxLength={200} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none" />
+                    <input id="banner-message" type="text" placeholder="Banner Message (Max 200 chars)" value={bannerMessage} onChange={(e) => setBannerMessage(e.target.value)} required maxLength={200} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none" />
                   </div>
                   <div>
-                    <label htmlFor="banner-type" className="block text-xs text-slate-400 mb-1">Banner Color</label>
+                    <label htmlFor="banner-type" className="block text-xs text-slate-400 mb-1">Banner Color / Style</label>
                     <select id="banner-type" value={bannerType} onChange={(e) => setBannerType(e.target.value)} className="w-full bg-[#0B0F1A] text-white px-3 py-2 rounded-lg border border-[#1A2235] focus:border-[#00D4FF] focus:outline-none">
                       <option value="info-blue">Info (Blue)</option>
                       <option value="info-cyan">Info (Cyan)</option>
@@ -1759,17 +1830,134 @@ export default function AdminDashboard() {
                   <label className="flex items-center justify-between cursor-pointer admin-soft-panel px-4 py-3">
                     <div>
                       <p className="text-sm font-semibold text-white">Banner Active</p>
-                      <p className="text-xs text-slate-400">Turn on/off the global banner</p>
+                      <p className="text-xs text-slate-400">Turn on/off this banner</p>
                     </div>
                     <span className="relative inline-flex items-center">
-                    <input id="banner-active" type="checkbox" className="sr-only peer" checked={bannerActive} disabled={togglingBanner || bannering} onChange={(e) => handleBannerActiveToggle(e.target.checked)} />
+                      <input id="banner-active" type="checkbox" className="sr-only peer" checked={bannerActive} onChange={(e) => setBannerActive(e.target.checked)} />
                       <span className="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00D4FF]"></span>
                     </span>
                   </label>
-                  <button type="submit" disabled={bannering || togglingBanner} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-white font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
-                    {bannering ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Update Banner'}
+                  <button type="submit" disabled={bannering} className="w-full py-2 bg-[#00D4FF] hover:bg-[#00b5d8] text-white font-bold rounded-lg transition-colors flex justify-center items-center mt-auto">
+                    {bannering ? <RefreshCw className="h-4 w-4 animate-spin" /> : (editingBannerId ? 'Save Changes' : 'Create Banner')}
                   </button>
                 </form>
+
+                {/* Banners List Section (At Bottom) */}
+                <div className="mt-8 pt-6 border-t border-[#1A2235]">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">All Created Banners ({allBanners.length})</h3>
+                    <button type="button" onClick={async () => {
+                      const res = await adminService.getAllBanners();
+                      if (res?.success && Array.isArray(res.data)) setAllBanners(res.data);
+                    }} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+                      <RefreshCw className="h-3 w-3" /> Refresh
+                    </button>
+                  </div>
+
+                  {allBanners.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-500 rounded-xl border border-dashed border-[#1A2235]">
+                      No banners created yet. Use the form above to add your first banner.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {allBanners.map((banner) => (
+                        <div key={banner._id} className="p-4 rounded-xl border border-[#1A2235] bg-[#0B0F1A] flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-[#00D4FF]/40 transition-colors">
+                          <div className="space-y-1 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={cn(
+                                "text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded border",
+                                banner.type.includes('red') || banner.type.includes('rose') ? "bg-red-500/10 text-red-400 border-red-500/20" :
+                                banner.type.includes('amber') || banner.type.includes('gold') ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :
+                                banner.type.includes('green') ? "bg-green-500/10 text-green-400 border-green-500/20" :
+                                banner.type.includes('purple') ? "bg-purple-500/10 text-purple-400 border-purple-500/20" :
+                                "bg-sky-500/10 text-sky-400 border-sky-500/20"
+                              )}>
+                                {banner.type}
+                              </span>
+                              <span className={cn(
+                                "text-[10px] font-semibold px-2 py-0.5 rounded-full border",
+                                banner.isActive ? "bg-green-500/10 text-green-400 border-green-500/20" : "bg-slate-700/20 text-slate-400 border-slate-700/30"
+                              )}>
+                                {banner.isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </div>
+                            <p className="text-sm font-medium text-white line-clamp-2">{banner.message}</p>
+                            {(banner.startAt || banner.endAt) && (
+                              <p className="text-[11px] text-slate-500">
+                                {banner.startAt ? `From: ${new Date(banner.startAt).toLocaleString()}` : ''} {banner.endAt ? `To: ${new Date(banner.endAt).toLocaleString()}` : ''}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 self-end sm:self-center">
+                            {/* Active Toggle Button per banner */}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await adminService.toggleBannerStatus(banner._id);
+                                  const res = await adminService.getAllBanners();
+                                  if (res?.success && Array.isArray(res.data)) setAllBanners(res.data);
+                                } catch (err) {
+                                  alert(getErrorMessage(err, 'Failed to toggle banner.'));
+                                }
+                              }}
+                              className={cn(
+                                "text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors",
+                                banner.isActive
+                                  ? "border-green-500/40 bg-green-500/10 text-green-300 hover:bg-green-500/20"
+                                  : "border-slate-700 bg-slate-800 text-slate-400 hover:text-white"
+                              )}
+                            >
+                              {banner.isActive ? 'Active' : 'Inactive'}
+                            </button>
+
+                            {/* Edit Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingBannerId(banner._id);
+                                setBannerMessage(banner.message || '');
+                                setBannerActive(banner.isActive);
+                                setBannerType(banner.type || 'info-blue');
+                                setBannerStart(banner.startAt ? new Date(banner.startAt).toISOString().slice(0, 16) : '');
+                                setBannerEnd(banner.endAt ? new Date(banner.endAt).toISOString().slice(0, 16) : '');
+                              }}
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[#1A2235] bg-[#111827] text-slate-200 hover:border-[#00D4FF] hover:text-[#00D4FF] transition-colors"
+                            >
+                              Edit
+                            </button>
+
+                            {/* Delete Button */}
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!confirm('Are you sure you want to delete this banner?')) return;
+                                try {
+                                  await adminService.deleteBanner(banner._id);
+                                  if (editingBannerId === banner._id) {
+                                    setEditingBannerId(null);
+                                    setBannerMessage('');
+                                    setBannerStart('');
+                                    setBannerEnd('');
+                                    setBannerActive(true);
+                                  }
+                                  const res = await adminService.getAllBanners();
+                                  if (res?.success && Array.isArray(res.data)) setAllBanners(res.data);
+                                } catch (err) {
+                                  alert(getErrorMessage(err, 'Failed to delete banner.'));
+                                }
+                              }}
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* System Config (Beta Mode) */}
